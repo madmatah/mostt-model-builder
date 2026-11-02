@@ -1,0 +1,53 @@
+[project]
+name = "mostt-model-builder"
+version = "0.1.0"
+description = "Reproducible, confined builds of speech recognition models from their original weights: export, quantization and FLEURS verification."
+requires-python = ">=3.12,<3.13"
+license = "MIT"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "import-linter==2.15",
+    "mypy==2.4.1",
+    "pytest==9.2.0",
+    "ruff==0.17.3",
+]
+
+# The project is never distributed as a package, so it needs no build backend;
+# and no package is ever built from its source on the host, where its build
+# code would run outside a container.
+[tool.uv]
+package = false
+no-build = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B", "UP", "SIM", "PT", "ARG", "RUF"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+files = ["src", "tests"]
+mypy_path = "src"
+
+[tool.pytest.ini_options]
+minversion = "9.0"
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = ["--strict-markers", "--strict-config"]
+filterwarnings = ["error"]
+
+[tool.importlinter]
+root_package = "mostt_model_builder"
+
+[[tool.importlinter.contracts]]
+name = "Dependencies point inward: the host's composition root, then the adapters, the application and the domain"
+type = "layers"
+containers = ["mostt_model_builder"]
+layers = ["(host_main)", "(adapters)", "(application)", "(domain)"]
