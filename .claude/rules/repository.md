@@ -2,7 +2,7 @@
 
 ## What belongs in the repository
 
-- **The repository holds the current state of the project, and nothing else.** Never commit project-management material, which lives in the separate, private `.pm` repository that this project shares with mostt:
+- **The repository holds the current state of the project, and nothing else.** Never commit project-management material, which lives in a separate, private repository, `.pm/`:
   - status or tracking files;
   - decision records;
   - roadmaps;
