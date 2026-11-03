@@ -10,7 +10,7 @@
   - handoffs;
   - meeting or research notes;
   - the task markers `TODO`, `FIXME`, `XXX` and `HACK`, in a comment or a document.
-- **No secret, credential, `.env` file or personal data:** no token, such as a Hugging Face or PyPI token, no name, no e-mail address, no path into a home directory and no machine-specific identifier. A test or a document that needs one uses a placeholder, such as `<user>` or `~`.
+- **No secret, credential, `.env` file or personal data:** no token, such as a Hugging Face or PyPI token, no name, no e-mail address, no path into a home directory and no machine-specific identifier, except the name of a rights holder in a license notice copied verbatim, as [External work](#external-work) asks, and the name of whoever made a work that `CREDITS.md` credits or that `docs/foundations.md` > References cites, beside that work, since crediting a work is giving its maker's name. A test or a document that needs one uses a placeholder, such as `<user>` or `~`.
 - **No file committed by accident:** build output, logs, temporary captures, and the files a build fetches or writes, such as model weights, datasets, exported models and their reports, which live in a work directory outside the clone.
 - **A change updates every document that describes what it changes, in the same change:** the rules file of a rule, `docs/foundations.md` for the design and its reasons, `docs/model-build.md` for the detail of the build, the skill of a procedure, `README.md` for setup, usage and scripts, and `CLAUDE.md` for how a session works.
 

@@ -2,8 +2,8 @@
 
 mostt-model-builder is the tooling of reproducible, confined builds of speech recognition models from their original weights: export, quantization and FLEURS verification.
 
-- **Built:** the command line, `model-build.sh`, which runs on the host's Python and the standard library, isolated from the environment and the site packages, and refuses to run as root; `fetch`, which downloads the pinned sources into a work directory, each checked by its size and its SHA-256; the confined containers in which every step runs, with their images, the lock of the images' libraries, and the check of the FLEURS bench; `clean`; and the first recipe, `parakeet-tdt`, for the Parakeet TDT family, which builds Parakeet Ultra: its sources, its export image and `describe`, which lists the tensors of Moondream's weights and of NeMo's model.
-- **Planned:** the rest of the build: Parakeet Ultra's export to ONNX, its checks against NeMo and Transformers, its variants and its transcription of FLEURS; in the core, the checks of the formats and their inspection, the measures of the FLEURS bench and their acceptance. The checked files land in a candidate directory laid out for Hugging Face, where the maintainer publishes them, and mostt, the local dictation project, pins them by hash.
+- **Built:** the command line, `model-build.sh`, which runs on the host's Python and the standard library, isolated from the environment and the site packages, and refuses to run as root; `fetch`, which downloads the pinned sources into a work directory, each checked by its size and its SHA-256; the confined containers in which every step runs, with their images, the lock of the images' libraries, and the check of the FLEURS bench; `clean`; and the first recipe, `parakeet-tdt`, for the Parakeet TDT family, which builds Parakeet Ultra: its sources, its export image, `describe`, which lists the tensors of Moondream's weights and of NeMo's model, and `export`, which writes Parakeet Ultra's FP32 ONNX files and measures the encoder against NeMo's.
+- **Planned:** the rest of the build: Parakeet Ultra's check against Transformers, its variants and its transcription of FLEURS; in the core, the checks of the formats and their inspection, the measures of the FLEURS bench and their acceptance. The checked files land in a candidate directory laid out for Hugging Face, where the maintainer publishes them, and mostt, the local dictation project, pins them by hash.
 
 ## Requirements
 
@@ -46,6 +46,7 @@ Every other step runs in a confined container, from an image that `images` build
 ./model-build.sh --work /data/model-build --recipe parakeet-tdt images
 ./model-build.sh --work /data/model-build --recipe parakeet-tdt step fleurs-check
 ./model-build.sh --work /data/model-build --recipe parakeet-tdt step describe
+./model-build.sh --work /data/model-build --recipe parakeet-tdt step export
 ```
 
 | Image | Size | Holds |
@@ -54,7 +55,7 @@ Every other step runs in a confined container, from an image that `images` build
 | `mostt-model-builder-core-uv` | 261 MB | The same, with uv, for the lock of the images' libraries |
 | `mostt-model-builder-parakeet-tdt-export` | 10.7 GB | NeMo, torch and the ONNX exporters, with the core's and the recipe's code, for the steps that read NVIDIA's archive |
 
-`step fleurs-check` checks, before any recipe reads them, that every recording of the FLEURS index is in its archive, once, in a format the bench reads, and reports their durations. `step describe` lists the tensors of Moondream's weights and of the model that NeMo builds from the configuration of NVIDIA's archive, without loading the archive's checkpoint. A step writes its outputs under `runs/` in the work directory, and refuses to run again over them: `clean` removes them, through a container, since some of their files belong to the containers' user.
+`step fleurs-check` checks, before any recipe reads them, that every recording of the FLEURS index is in its archive, once, in a format the bench reads, and reports their durations. `step describe` lists the tensors of Moondream's weights and of the model that NeMo builds from the configuration of NVIDIA's archive, without loading the archive's checkpoint. `step export` writes Parakeet Ultra's encoder, with its external data, its decoder and joint, and its vocabulary, in ONNX, in about a minute and up to 14 GiB of memory, and prints the largest difference between the exported encoder and NeMo's on 20 utterances of FLEURS fr, beside its tolerance. A step writes its outputs under `runs/` in the work directory, and refuses to run again over them: `clean` removes them, through a container, since some of their files belong to the containers' user.
 
 ```sh
 ./model-build.sh --work /data/model-build --recipe parakeet-tdt clean describe
@@ -87,6 +88,7 @@ The rest of the build comes with the core and its first recipe (planned).
 | `./model-build.sh --work <dir> --recipe <name> images` | Builds the images of the core's containers and the recipe's from a clean clone, labeled with the tree of HEAD. |
 | `./model-build.sh --work <dir> --recipe <name> step fleurs-check` | Checks the FLEURS bench in its container: every indexed recording in its archive, once, in a format the bench reads. |
 | `./model-build.sh --work <dir> --recipe parakeet-tdt step describe` | Lists the tensors of Moondream's weights and of the model that NeMo builds from the configuration of NVIDIA's archive. |
+| `./model-build.sh --work <dir> --recipe parakeet-tdt step export` | Exports Parakeet Ultra's FP32 encoder, decoder and joint to ONNX, with its vocabulary, and measures the encoder against NeMo's. |
 | `./model-build.sh --work <dir> --recipe <name> clean [<step>]` | Removes the outputs, the request and the log of a step at HEAD's commit, or of every step of the core and the recipe. |
 | `./model-build.sh --work <dir> lock` | Resolves the lock of the images' libraries in its container, checks it, prints its change and writes it to `images/uv.lock`. |
 | `uv sync --frozen` | Installs the development tools from the lockfile, without changing it. Run uv at the root only, never in `images/`. |

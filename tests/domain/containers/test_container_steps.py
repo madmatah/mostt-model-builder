@@ -18,6 +18,7 @@ from mostt_model_builder.domain.containers.container_steps import (
     OUTPUT_IN_THE_CONTAINER,
     PEAKS_FILE_NAME,
     REQUEST_IN_THE_CONTAINER,
+    SCRATCH_IN_THE_CONTAINER,
     TEMPORARY_DIRECTORY_IN_THE_CONTAINER,
     BindMount,
     ContainerImage,
@@ -369,12 +370,17 @@ class TestTheContainerSteps:
                     BindMount(PLACEMENT.output_directory, OUTPUT_IN_THE_CONTAINER, False, False)
                 ]
 
-            def test_should_give_a_tmp_of_the_rows_size(
+            def test_should_give_a_tmp_and_any_scratch_of_the_rows_sizes(
                 self, container_run: ContainerRun, row: StepRow
             ) -> None:
                 assert container_run.temporary_filesystems == (
                     TemporaryFilesystem(
                         TEMPORARY_DIRECTORY_IN_THE_CONTAINER, row.limits.temporary_directory_mib
+                    ),
+                    *(
+                        (TemporaryFilesystem(SCRATCH_IN_THE_CONTAINER, row.limits.scratch_mib),)
+                        if row.limits.scratch_mib is not None
+                        else ()
                     ),
                 )
 
@@ -410,7 +416,7 @@ class TestTheContainerSteps:
                 ) == (len(row.sources), [])
 
             def test_should_keep_every_cache_and_home_under_tmp_and_the_hub_offline(
-                self, container_run: ContainerRun
+                self, container_run: ContainerRun, row: StepRow
             ) -> None:
                 assert {
                     name: setting
@@ -422,6 +428,7 @@ class TestTheContainerSteps:
                     "HF_HOME": "/tmp/huggingface",
                     "HF_HUB_OFFLINE": "1",
                     "HF_HUB_DISABLE_TELEMETRY": "1",
+                    **({"TMPDIR": "/scratch"} if row.limits.scratch_mib is not None else {}),
                 }
 
         class TestWhenTheFleursCheckIsPlanned:

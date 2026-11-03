@@ -29,8 +29,13 @@ from mostt_model_builder.application.resolve_lock import (
     LockResolution,
     resolve_lock,
 )
-from mostt_model_builder.application.run_recipe_step import RecipeStepRun, run_recipe_step
+from mostt_model_builder.application.run_recipe_step import (
+    MeasuredParity,
+    RecipeStepRun,
+    run_recipe_step,
+)
 from mostt_model_builder.application.run_step import HostIdentity, StepError
+from mostt_model_builder.domain.acceptance.parity_reports import ParityReportError
 from mostt_model_builder.domain.bench.fleurs_check_report import FleursCheckReportError
 from mostt_model_builder.domain.containers.account_ranges import (
     AccountRangeError,
@@ -122,6 +127,7 @@ COMMAND_ERRORS = (
     GitError,
     ImageBuildError,
     FleursCheckReportError,
+    ParityReportError,
     RecipeContractError,
     LockError,
     LockFreshnessError,
@@ -280,6 +286,15 @@ def describe_lock_resolution(resolution: LockResolution) -> str:
     )
 
 
+def describe_parity(parity: MeasuredParity) -> str:
+    report = parity.report
+    return (
+        f"parity {report.name}: a maximum absolute difference of "
+        f"{report.maximum_absolute_difference:.3g} over {report.compared_count} compared, "
+        f"against a tolerance of {parity.absolute_difference_tolerance:.3g}"
+    )
+
+
 def fetch(recipe: JudgedRecipe, work_directory: WorkDirectory, files: WorkFiles) -> None:
     downloader = CurlDownloader()
     for pin in recipe.pins:
@@ -333,7 +348,7 @@ def run_step_of_recipe(
 ) -> None:
     clone_root = PurePosixPath(CLONE_ROOT)
     git_tree = GitTree(clone_root)
-    outputs = run_recipe_step(
+    outcome = run_recipe_step(
         RecipeStepRun(
             row=row,
             recipe_name=recipe.name,
@@ -342,13 +357,16 @@ def run_step_of_recipe(
             work_root=PurePosixPath(work_directory.path),
             head_tree=git_tree.find_head_tree(),
             host=read_host_identity(),
+            parities=recipe.parities,
         ),
         DockerEngine(clone_root),
         files,
     )
-    for name, size_bytes in sorted(outputs.sizes_bytes.items()):
+    for name, size_bytes in sorted(outcome.outputs.sizes_bytes.items()):
         print(f"wrote {name}, {size_bytes} bytes", flush=True)
-    print(describe_peaks(outputs.peaks), flush=True)
+    for parity in outcome.parities:
+        print(describe_parity(parity), flush=True)
+    print(describe_peaks(outcome.outputs.peaks), flush=True)
 
 
 def run_named_step(
