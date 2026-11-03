@@ -4,7 +4,7 @@ This document describes the build part by part: what each command does, and the 
 
 ## The core
 
-The core holds what every model family shares. Built: the work directory, the sources, the confined containers and their boundary with the host, the images and their lock, the check of the FLEURS bench, the recipe contract and the names of the formats, which the sections below describe. Planned: the checks of the formats and their inspection, the candidate, the measures of the FLEURS bench and its acceptance.
+The core holds what every model family shares. Built: the work directory, the sources, the confined containers and their boundary with the host, the images and their lock, the check of the FLEURS bench, the recipe contract, the names of the formats and the parity reports, which the sections below describe. Planned: the checks of the formats and their inspection, the candidate, the measures of the FLEURS bench and its acceptance.
 
 Every command runs as `./model-build.sh --work <dir> --recipe <name> <command>`, on the host's Python and its standard library, isolated from the environment and the site packages. `--recipe` names the model family to build, [Recipes](#recipes) lists them, and every command needs it but `lock`, which resolves the libraries of every recipe's images at once.
 
@@ -137,10 +137,13 @@ A recipe gives the core plain data, `RECIPE` in its `recipe.py`, of the type `Re
 | `images` | Its images, each with its name, never one of the core's, its device, `cpu` or `gpu`, and its extra of the images' environment, `<recipe>-<image>`; at most one of them reads the sources that run code when they load |
 | `steps` | Its rows of the step table, each with its name, never one of the core's, its image, the recipe's or the core's, its entry module inside the recipe's `steps` package, or the core's for a core image, its mounts, its outputs with their size bounds, its limits, and whether it uses the GPU |
 | `candidate` | The files of the candidate, each with its name, its format, the variants it serves, and where it comes from: a declared output of a step, or a content that the host writes, such as a small configuration file a runtime reads (planned: the candidate's assembly) |
+| `parities` | The parities of its exports against their reference framework, each with its name, `[a-z0-9][a-z0-9-]{0,63}`, the step and the declared output that holds its report, never `peaks.json`, and its tolerance on the maximum absolute difference, `absolute_difference_tolerance`, a finite number above 0 |
 
 A mount names either a pinned file of the core's or the recipe's sources, by its repository and its path, or a declared output of an earlier step of the recipe, by the step and the file's name. A directory is never mounted, so that a step sees only the files its row names.
 
-Fields for the parities, the runs and their readers, and the comparisons of the measures come with the parts of the build that read them (planned).
+A parity report is a JSON object of exactly three keys: `name`, the parity's own; `maximum_absolute_difference`, a finite decimal number of at least 0; and `compared_count`, the count of outputs compared, from 1 to 1 000 000. Once its step has run, the host reads each parity report of that step through its strict parser, `domain/acceptance/parity_reports.py`, which refuses a report that names another parity, and prints its difference beside its tolerance; the acceptance that fails a build beyond it comes with the measures (planned).
+
+Fields for the runs and their readers, and the comparisons of the measures come with the parts of the build that read them (planned).
 
 ## The formats
 
@@ -156,7 +159,7 @@ Whatever its format, a candidate's name follows the grammar of a published file 
 
 ## The published layout
 
-The published files are the contract with mostt, which pins them by hash: their names, their formats and their structure. The two repositories share no code, and the names and the suffixes that this one refuses are those of mostt's model store, so that every published file passes it. The candidate of Parakeet TDT, laid out for onnx-asr (planned: the files below are the target of its build, which writes none of them yet):
+The published files are the contract with mostt, which pins them by hash: their names, their formats and their structure. The two repositories share no code, and the names and the suffixes that this one refuses are those of mostt's model store, so that every published file passes it. The candidate of Parakeet TDT, laid out for onnx-asr (planned: the files below are the target of its build, whose export writes the FP32 encoder, its external data, the decoder and joint and `vocab.txt`, and which converts none of them yet nor assembles the candidate):
 
 | File | Format |
 |---|---|
@@ -185,6 +188,34 @@ The published files are the contract with mostt, which pins them by hash: their 
 |---|---|---|---|---|---|---|
 | `describe` | `export` | 5 120 | 128 | 8 | 512 | NeMo's build of the model, with Moondream's weights loaded, peaked at 3.4 GiB and 60 processes |
 
-Its outputs, `moondream-tensors` and `nemo-state-dict`, give one tensor per line, its name, its type and its shape, separated by tabs.
+Its outputs, `moondream-tensors` and `nemo-state-dict`, give one tensor per line, its name, its type and its shape, separated by tabs, in printable ASCII. Copies of them are committed in `recipes/parakeet-tdt/tests/fixtures/`, where the recipe's tests read them through their strict parser, `domain/export/tensor_fixtures.py`, to check the mapping of the weights' names and the names of the pointwise convolutions against the real names; a change of the sources runs `describe` again and replaces them.
 
-The export, its checks against NeMo and Transformers, the variants, and the transcription of FLEURS with onnx-asr come with the rest of the build (planned).
+**`export`** builds the FP32 ONNX files of Parakeet Ultra from NeMo's model, as parakeet-rs's export of Parakeet TDT does, at its commit `cadebd4469921ff426bf179e1cfd78fbe6fd9e05`: NeMo describes the model, and parakeet-rs's export is the one whose graph, speed and accuracy the files were measured against.
+
+1. NeMo builds the model from the `.nemo`'s configuration alone, as for `describe`, and copies Moondream's weights into its own tensors, one by one, so that no second float32 copy of the weights is held beside the model: each name of Moondream's file but those of its voice activity head, `vad_head.*`, which serves Moondream's own runtime, is mapped onto NeMo's by the rules of parakeet-rs, `recipes/parakeet-tdt/src/mostt_recipe_parakeet_tdt/domain/export/weight_names.py`, and the mapping refuses a name that NeMo's model does not hold, a shape that differs, two names onto one, and any name of NeMo's model left to its construction but the filter bank and the window of its preprocessor, which NeMo computes. Moondream stores most weights in float16, widened to the float32 of NeMo's model. Moondream's tokenizer must begin with the pieces of NeMo's, since `vocab.txt` comes from NeMo's. torch runs on as many threads as the row has CPUs.
+2. The unpatched encoder's outputs on the first 20 utterances of FLEURS fr's index are kept as the reference of the parity.
+3. The 48 convolutions of kernel size 1 of the encoder's Conformer layers, two per layer, which `domain/export/pointwise_convolutions.py` names, run as matrix products, as NVIDIA-NeMo/Speech #16052 runs them, on features kept channel-last, with no added transpose, and with their weights made 2-D before the export: each product then reads its weight as a plain 2-D initializer, the form a quantization of 8-bit blocks converts, where parakeet-rs's graph reads `Transpose(Squeeze(<3-D initializer>))`, which a quantizer leaves in FP32. NeMo 3.0.0 predates that pull request, so the step patches the forward of each `ConformerConvolution` rather than build NeMo from git, which the images' lock and `--no-build` refuse.
+4. The attention runs through torch's `scaled_dot_product_attention`, as parakeet-rs's export of Parakeet TDT does, so that each layer exports as one ONNX `Attention` node. The positional encoding takes its rows with `narrow()`, the `exact_position_slices` of parakeet-rs's `onnx_export.py`, which its export of Parakeet TDT does not call: it is the configuration whose graph, parity and speed were measured, and it spares the graph one `Add`.
+5. torch's dynamo exporter writes the encoder at opset 23, which writes attention as `Attention` and keeps the LSTMs as `LSTM`, folded by its default optimization, into `/scratch`, and the step refuses an export that fixed an axis it was given as dynamic, the batch and the time of `audio_signal` and the batch of `length`. Once the decoder and joint and `vocab.txt` are written, the step frees NeMo's model, and only then loads the raw encoder, so that the two never hold the weights at the same time, and saves it as `encoder-model.onnx`, with every tensor of 1 KiB or more in `encoder-model.onnx.data`, since ONNX Runtime cannot read the exporter's small shape constants from external data, and a single file would pass the 2 GB limit of a protobuf.
+6. The decoder and joint of one prediction step are exported the same way, from NeMo's own example inputs, names and dynamic axes once its exportable modules are prepared, then folded with onnxscript's optimizer, which turns the weights of the LSTMs, which the exporter builds at run time, into plain initializers, into `decoder_joint-model.onnx`.
+7. Before each file is saved, the step strips the `metadata_props` of every node, in the graph, its subgraphs and its functions: the exporter records there the stack trace and the module of each node, with paths of the container, which a published file must not carry.
+8. `vocab.txt` lists NeMo's pieces and `<blk>` last, one `<piece> <id>` per line.
+9. ONNX Runtime's CPU provider runs the exported encoder on the 20 utterances, and the step writes the maximum absolute difference with the reference as the parity `encoder-onnx-against-nemo`, in `encoder-parity.json`, through the core's `domain/acceptance/parity_reports.py`, which refuses a difference that is not finite: Python's `max()` would drop a NaN that is not first. Its tolerance is 5e-5: the trial build measured 4.18e-6, and the tolerance leaves ten times that, while a wrong weight or a wrong graph differs by orders of magnitude more.
+
+The export is the same to the byte from one run to the next under `-I`, without a fixed `PYTHONHASHSEED`.
+
+| Row | Image | Memory MiB | Processes | CPUs | `/tmp` MiB | `/scratch` MiB | Reason of the limits |
+|---|---|---|---|---|---|---|---|
+| `export` | `export` | 14 336 | 128 | 8 | 512 | 3 072 | the trial build's export peaked at 11.1 GiB, its `/scratch` included, 66 processes and 2.37 GiB of `/scratch` |
+
+It binds Moondream's tokenizer and weights, the `.nemo`, and FLEURS fr's index and audio, the files it reads. Its outputs:
+
+| Output | Holds |
+|---|---|
+| `encoder-model.onnx` | The encoder's graph |
+| `encoder-model.onnx.data` | The encoder's external data |
+| `decoder_joint-model.onnx` | The decoder and joint of one prediction step |
+| `vocab.txt` | The vocabulary of Parakeet TDT 0.6B v3 |
+| `encoder-parity.json` | The parity of the encoder against NeMo's |
+
+The check against Transformers, the variants, and the transcription of FLEURS with onnx-asr come with the rest of the build (planned).

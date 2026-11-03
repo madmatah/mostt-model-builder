@@ -27,6 +27,49 @@ mostt-model-builder reuses the work below. Each entry says what is reused, where
 > LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 > OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 > SOFTWARE.
+- **parakeet-rs**, https://github.com/altunenes/parakeet-rs, at its commit `cadebd4469921ff426bf179e1cfd78fbe6fd9e05`: the export of Parakeet TDT to ONNX, ported from its `scripts/onnx_export.py` and `scripts/export_parakeet_tdt.py` into the export step of Parakeet TDT: the rules that map the names of Moondream's weights onto NeMo's (`recipes/parakeet-tdt/src/mostt_recipe_parakeet_tdt/domain/export/weight_names.py`); the loading of Moondream's weights and the check of its tokenizer (`recipes/parakeet-tdt/src/mostt_recipe_parakeet_tdt/steps/nemo_model.py`); `use_sdpa` and `exact_position_slices`, the dynamo export at opset 23 with its check of the dynamic axes, the export of the decoder and joint with its folding of constants, and the saving with external data (`recipes/parakeet-tdt/src/mostt_recipe_parakeet_tdt/steps/onnx_export.py`); and the writing of `vocab.txt` (`recipes/parakeet-tdt/src/mostt_recipe_parakeet_tdt/steps/nemo_export.py`). MIT OR Apache-2.0, taken under MIT, with this notice:
+
+> MIT License
+>
+> Copyright (c) 2025 Enes Altun
+>
+> Permission is hereby granted, free of charge, to any person obtaining a copy
+> of this software and associated documentation files (the "Software"), to deal
+> in the Software without restriction, including without limitation the rights
+> to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+> copies of the Software, and to permit persons to whom the Software is
+> furnished to do so, subject to the following conditions:
+>
+> The above copyright notice and this permission notice shall be included in all
+> copies or substantial portions of the Software.
+>
+> THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+> IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+> FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+> AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+> LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+> OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+> SOFTWARE.
+
+- **NVIDIA-NeMo/Speech #16052**, https://github.com/NVIDIA-NeMo/Speech/pull/16052, merged as `4fcff72`: the forward of `ConformerConvolution`, which runs its convolutions of kernel size 1 as matrix products, ported onto NeMo 3.0.0 with the weights made 2-D before the export (`recipes/parakeet-tdt/src/mostt_recipe_parakeet_tdt/steps/pointwise_forward.py`). Apache-2.0, under the notice of the file it changes, `nemo/collections/asr/parts/submodules/conformer_modules.py`:
+
+> Copyright (c) 2020, NVIDIA CORPORATION.  All rights reserved.
+>
+> Licensed under the Apache License, Version 2.0 (the "License");
+> you may not use this file except in compliance with the License.
+> You may obtain a copy of the License at
+>
+>     http://www.apache.org/licenses/LICENSE-2.0
+>
+> Unless required by applicable law or agreed to in writing, software
+> distributed under the License is distributed on an "AS IS" BASIS,
+> WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+> See the License for the specific language governing permissions and
+> limitations under the License.
+
+## Data
+
+- **The names and shapes of the tensors** of Moondream's Parakeet Ultra, https://huggingface.co/moondream/parakeet-ultra, and of NVIDIA's Parakeet TDT 0.6B v3, https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3, as `describe` lists them, without any weight: `recipes/parakeet-tdt/tests/fixtures/moondream-tensors` and `recipes/parakeet-tdt/tests/fixtures/nemo-state-dict`, which test the mapping of the weights' names. Both models are under CC-BY-4.0, https://creativecommons.org/licenses/by/4.0/: Parakeet Ultra by Moondream, and Parakeet TDT 0.6B v3 by NVIDIA.
 
 ## Libraries
 

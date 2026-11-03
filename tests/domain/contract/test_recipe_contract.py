@@ -21,6 +21,7 @@ from mostt_model_builder.domain.contract.recipe_contract import (
     EarlierOutputMount,
     HostContentOrigin,
     JudgedRecipe,
+    Parity,
     RecipeContract,
     RecipeContractError,
     RecipeFacts,
@@ -82,11 +83,13 @@ NAMES_FILE = CandidateFile("names.txt", "text", ("float32",), StepOutputOrigin("
 CONFIGURATION_FILE = CandidateFile(
     "config.json", "text", ("float32", "float16"), HostContentOrigin(b"{}")
 )
+NAMES_PARITY = Parity("names-against-reference", "describe", "names", 1e-3)
 CONTRACT = RecipeContract(
     name=RECIPE_NAME,
     images=(EXPORT_IMAGE, TRANSCRIBE_IMAGE),
     steps=(DESCRIBE_STEP, TRANSCRIBE_STEP),
     candidate=(NAMES_FILE, CONFIGURATION_FILE),
+    parities=(NAMES_PARITY,),
 )
 FACTS = RecipeFacts(
     core_pins=(BENCH_PIN,),
@@ -112,6 +115,10 @@ def change_image(image_index: int, **fields: object) -> RecipeContract:
 
 def change_candidate(**fields: object) -> RecipeContract:
     return replace(CONTRACT, candidate=(replace(NAMES_FILE, **fields),))  # type: ignore[arg-type]  # the test feeds a value outside the contract's types, on purpose
+
+
+def change_parity(**fields: object) -> RecipeContract:
+    return replace(CONTRACT, parities=(replace(NAMES_PARITY, **fields),))  # type: ignore[arg-type]  # the test feeds a value outside the contract's types, on purpose
 
 
 REFUSED_CONTRACTS = {
@@ -299,6 +306,46 @@ REFUSED_CONTRACTS = {
         change_candidate(origin=HostContentOrigin(b"")),
         "has a content of 0 bytes, outside 1 to 1048576",
     ),
+    "a parity name outside the grammar": (
+        change_parity(name="Names"),
+        "its parity 'Names' is not named under",
+    ),
+    "a parity declared twice": (
+        replace(CONTRACT, parities=(NAMES_PARITY, NAMES_PARITY)),
+        "its parity 'names-against-reference' is declared twice",
+    ),
+    "a parity report that its step does not declare": (
+        change_parity(output="parity.json"),
+        "reads its report from 'parity.json' of 'describe', which no step of the recipe declares",
+    ),
+    "a parity report of a step the recipe does not declare": (
+        change_parity(step="export"),
+        "reads its report from 'names' of 'export', which no step of the recipe declares",
+    ),
+    "a parity report read from the peaks": (
+        change_parity(output="peaks.json"),
+        "reads its report from peaks.json, the peaks of its step",
+    ),
+    "a tolerance of zero": (
+        change_parity(absolute_difference_tolerance=0.0),
+        "has the tolerance 0.0, not a finite number above 0",
+    ),
+    "a negative tolerance": (
+        change_parity(absolute_difference_tolerance=-5e-5),
+        "has the tolerance -5e-05, not a finite number above 0",
+    ),
+    "a tolerance that is not a number": (
+        change_parity(absolute_difference_tolerance=float("nan")),
+        "has the tolerance nan, not a finite number above 0",
+    ),
+    "an infinite tolerance": (
+        change_parity(absolute_difference_tolerance=float("inf")),
+        "has the tolerance inf, not a finite number above 0",
+    ),
+    "a boolean tolerance": (
+        change_parity(absolute_difference_tolerance=True),
+        "has the tolerance True, not a finite number above 0",
+    ),
 }
 
 
@@ -356,6 +403,11 @@ class TestTheRecipeContract:
             ) -> None:
                 assert judged_recipe.pins == (BENCH_PIN, WEIGHTS_PIN, NESTED_PIN, ARCHIVE_PIN)
 
+            def test_should_keep_each_parity_with_its_tolerance(
+                self, judged_recipe: JudgedRecipe
+            ) -> None:
+                assert judged_recipe.parities == (NAMES_PARITY,)
+
             def test_should_read_the_format_of_each_candidate_file(
                 self, judged_recipe: JudgedRecipe
             ) -> None:
@@ -390,6 +442,7 @@ class TestTheRecipeContract:
                             ),
                         ),
                         candidate=(),
+                        parities=(),
                     ),
                     FACTS,
                 )

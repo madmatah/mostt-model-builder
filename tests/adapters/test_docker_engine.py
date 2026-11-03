@@ -200,11 +200,16 @@ class TestTheDockerEngine:
                     read_option_values(run_arguments, "--cpus"),
                 ) == ([str(row.limits.process_count)], [str(row.limits.cpu_count)])
 
-            def test_should_mount_tmp_as_a_bounded_temporary_filesystem_that_runs_nothing(
+            def test_should_mount_tmp_and_any_scratch_as_bounded_filesystems_that_run_nothing(
                 self, run_arguments: list[str], row: StepRow
             ) -> None:
                 assert read_option_values(run_arguments, "--tmpfs") == [
-                    f"/tmp:rw,noexec,nosuid,nodev,size={row.limits.temporary_directory_mib}m"
+                    f"/tmp:rw,noexec,nosuid,nodev,size={row.limits.temporary_directory_mib}m",
+                    *(
+                        [f"/scratch:rw,noexec,nosuid,nodev,size={row.limits.scratch_mib}m"]
+                        if row.limits.scratch_mib is not None
+                        else []
+                    ),
                 ]
 
             def test_should_give_the_network_to_the_lock_alone(

@@ -15,8 +15,18 @@ from run_step_fakes import (
     build_step_output,
 )
 
-from mostt_model_builder.application.run_recipe_step import RecipeStepRun, run_recipe_step
-from mostt_model_builder.application.run_step import HostIdentity, ImageFacts, StepOutputs
+from mostt_model_builder.application.run_recipe_step import (
+    MeasuredParity,
+    RecipeStepOutcome,
+    RecipeStepRun,
+    run_recipe_step,
+)
+from mostt_model_builder.application.run_step import HostIdentity, ImageFacts
+from mostt_model_builder.domain.acceptance.parity_reports import (
+    ParityReport,
+    ParityReportError,
+    render_parity_report,
+)
 from mostt_model_builder.domain.containers.account_ranges import HostAccounts
 from mostt_model_builder.domain.containers.base_images import ENVIRONMENT_PYTHON
 from mostt_model_builder.domain.containers.container_steps import (
@@ -34,6 +44,7 @@ from mostt_model_builder.domain.containers.container_steps import (
 )
 from mostt_model_builder.domain.containers.step_peaks import StepPeaks, render_step_peaks
 from mostt_model_builder.domain.containers.work_directory import WorkDirectoryError
+from mostt_model_builder.domain.contract.recipe_contract import Parity
 from mostt_model_builder.domain.sources.source_pins import RepositoryType, SourcePin
 
 WORK_ROOT = PurePosixPath("/data/builds/work")
@@ -53,6 +64,10 @@ NAMES_OUTPUT = DeclaredOutput("names", 1024)
 PEAKS = StepPeaks(memory_peak_bytes=64 * 2**20, process_count_peak=6)
 ENCODER_DATA_OUTPUT = DeclaredOutput("encoder-model.onnx.data", 3 * 2**30)
 ENCODER_DATA = bytes(4096)
+PARITY_OUTPUT = DeclaredOutput("encoder-parity.json", 4096)
+ENCODER_PARITY = Parity("encoder-against-reference", "export", PARITY_OUTPUT.name, 5e-5)
+DESCRIBE_PARITY = Parity("names-against-reference", "describe", NAMES_OUTPUT.name, 1e-3)
+ENCODER_PARITY_REPORT = ParityReport("encoder-against-reference", 4.18e-6, 20)
 EXPORT_ROW = StepRow(
     name="export",
     image=EXPORT_IMAGE,
@@ -79,7 +94,7 @@ RUN = RecipeStepRun(
 
 @dataclass(frozen=True)
 class CompletedRecipeStep:
-    outputs: StepOutputs
+    outcome: RecipeStepOutcome
     runs: list[ContainerRun]
     files: FakeStepFiles
 
@@ -95,14 +110,25 @@ def build_files() -> FakeStepFiles:
     return files
 
 
-def build_engine(files: FakeStepFiles) -> FakeContainerEngine:
+def build_engine(files: FakeStepFiles, parity_report: bytes | None = None) -> FakeContainerEngine:
+    step_outputs = {
+        ENCODER_DATA_OUTPUT.name: build_step_output(ENCODER_DATA),
+        PEAKS_FILE_NAME: build_step_output(render_step_peaks(PEAKS)),
+    }
+    if parity_report is not None:
+        step_outputs[PARITY_OUTPUT.name] = build_step_output(parity_report)
     return FakeContainerEngine(
         files=files,
         images={EXPORT_IMAGE.tag: ImageFacts(IMAGE_ID, HEAD_TREE)},
-        step_outputs={
-            ENCODER_DATA_OUTPUT.name: build_step_output(ENCODER_DATA),
-            PEAKS_FILE_NAME: build_step_output(render_step_peaks(PEAKS)),
-        },
+        step_outputs=step_outputs,
+    )
+
+
+def build_parity_run() -> RecipeStepRun:
+    return replace(
+        RUN,
+        row=replace(EXPORT_ROW, outputs=(ENCODER_DATA_OUTPUT, PARITY_OUTPUT, PEAKS_OUTPUT)),
+        parities=(DESCRIBE_PARITY, ENCODER_PARITY),
     )
 
 
@@ -116,7 +142,12 @@ class TestTheRecipeStepRun:
                 return CompletedRecipeStep(run_recipe_step(RUN, engine, files), engine.runs, files)
 
             def test_should_give_back_its_peaks(self, recipe_step: CompletedRecipeStep) -> None:
-                assert recipe_step.outputs.peaks == PEAKS
+                assert recipe_step.outcome.outputs.peaks == PEAKS
+
+            def test_should_measure_no_parity_since_its_recipe_declares_none(
+                self, recipe_step: CompletedRecipeStep
+            ) -> None:
+                assert recipe_step.outcome.parities == ()
 
             def test_should_read_its_peaks_alone_since_no_parser_of_the_host_reads_the_rest(
                 self, recipe_step: CompletedRecipeStep
@@ -128,7 +159,7 @@ class TestTheRecipeStepRun:
             def test_should_give_back_the_size_of_the_outputs_it_does_not_read(
                 self, recipe_step: CompletedRecipeStep
             ) -> None:
-                assert recipe_step.outputs.sizes_bytes == {
+                assert recipe_step.outcome.outputs.sizes_bytes == {
                     ENCODER_DATA_OUTPUT.name: len(ENCODER_DATA)
                 }
 
@@ -170,14 +201,57 @@ class TestTheRecipeStepRun:
                     is_written_by_a_step=True,
                 ) in [mount for run in recipe_step.runs for mount in run.mounts]
 
+        class TestWhenTheStepWritesTheReportOfAParity:
+            @pytest.fixture
+            def recipe_step(self) -> CompletedRecipeStep:
+                files = build_files()
+                engine = build_engine(files, render_parity_report(ENCODER_PARITY_REPORT))
+                outcome = run_recipe_step(build_parity_run(), engine, files)
+                return CompletedRecipeStep(outcome, engine.runs, files)
+
+            def test_should_read_the_parities_of_that_step_alone_with_their_tolerance(
+                self, recipe_step: CompletedRecipeStep
+            ) -> None:
+                assert recipe_step.outcome.parities == (
+                    MeasuredParity(ENCODER_PARITY_REPORT, 5e-5),
+                )
+
+            def test_should_read_the_report_and_the_peaks_alone_of_its_outputs(
+                self, recipe_step: CompletedRecipeStep
+            ) -> None:
+                assert recipe_step.files.read_paths == [
+                    WORK_ROOT / RUN_DIRECTORY / "export" / PARITY_OUTPUT.name,
+                    WORK_ROOT / RUN_DIRECTORY / "export" / PEAKS_FILE_NAME,
+                ]
+
+        class TestWhenTheReportOfAParityNamesAnotherParity:
+            @pytest.fixture
+            def run_act(self) -> Callable[[], RecipeStepOutcome]:
+                files = build_files()
+                report = render_parity_report(replace(ENCODER_PARITY_REPORT, name="other"))
+                return partial(
+                    run_recipe_step, build_parity_run(), build_engine(files, report), files
+                )
+
+            def test_should_refuse_it_since_the_host_trusts_no_report_it_did_not_ask_for(
+                self, run_act: Callable[[], RecipeStepOutcome]
+            ) -> None:
+                with pytest.raises(
+                    ParityReportError,
+                    match=re.escape(
+                        "the parity report names the parity 'other', not encoder-against-reference"
+                    ),
+                ):
+                    run_act()
+
         class TestWhenNoPinGivesASourceOfTheRow:
             @pytest.fixture
-            def run_act(self) -> Callable[[], StepOutputs]:
+            def run_act(self) -> Callable[[], RecipeStepOutcome]:
                 files = build_files()
                 return partial(run_recipe_step, replace(RUN, pins=()), build_engine(files), files)
 
             def test_should_refuse_it_and_name_the_source(
-                self, run_act: Callable[[], StepOutputs]
+                self, run_act: Callable[[], RecipeStepOutcome]
             ) -> None:
                 with pytest.raises(
                     WorkDirectoryError,

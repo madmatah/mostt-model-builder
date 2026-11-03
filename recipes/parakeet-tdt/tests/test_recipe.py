@@ -4,7 +4,12 @@ import pytest
 
 from mostt_model_builder.domain.contract.recipe_contract import SourceMount
 from mostt_model_builder.domain.sources.source_pins import SourcePin, parse_source_pins
-from mostt_recipe_parakeet_tdt.recipe import DESCRIBE_STEP, EXPORT_IMAGE_NAME, RECIPE
+from mostt_recipe_parakeet_tdt.recipe import (
+    DESCRIBE_STEP,
+    EXPORT_IMAGE_NAME,
+    EXPORT_STEP,
+    RECIPE,
+)
 
 RECIPE_SOURCES_PATH = Path(__file__).resolve().parent.parent / "sources.toml"
 ULTRA_REPOSITORY = "moondream/parakeet-ultra"
@@ -18,6 +23,22 @@ PINNED_FILES = {
     (ULTRA_REPOSITORY, ULTRA_REVISION, "model.safetensors"),
     NEMO_ARCHIVE,
 }
+FLEURS_REPOSITORY = "google/fleurs"
+EXPORTED_FILES = {
+    SourceMount(ULTRA_REPOSITORY, "tokenizer.json"),
+    SourceMount(ULTRA_REPOSITORY, "model.safetensors"),
+    SourceMount(NEMO_REPOSITORY, "parakeet-tdt-0.6b-v3.nemo"),
+    SourceMount(FLEURS_REPOSITORY, "data/fr_fr/test.tsv"),
+    SourceMount(FLEURS_REPOSITORY, "data/fr_fr/audio/test.tar.gz"),
+}
+EXPORT_OUTPUTS = [
+    "encoder-model.onnx",
+    "encoder-model.onnx.data",
+    "decoder_joint-model.onnx",
+    "vocab.txt",
+    "encoder-parity.json",
+    "peaks.json",
+]
 DESCRIBED_FILES = {
     SourceMount(ULTRA_REPOSITORY, "model.safetensors"),
     SourceMount(NEMO_REPOSITORY, "parakeet-tdt-0.6b-v3.nemo"),
@@ -61,3 +82,27 @@ class TestTheParakeetTdtRecipe:
 
         def test_should_run_in_the_export_image(self) -> None:
             assert DESCRIBE_STEP.image == EXPORT_IMAGE_NAME
+
+    class TestItsExportStep:
+        def test_should_bind_moondreams_tokenizer_and_weights_the_nemo_and_the_french_bench_alone(
+            self,
+        ) -> None:
+            assert set(EXPORT_STEP.mounts) == EXPORTED_FILES
+
+        def test_should_bind_each_file_once(self) -> None:
+            assert len(EXPORT_STEP.mounts) == len(EXPORTED_FILES)
+
+        def test_should_run_in_the_export_image(self) -> None:
+            assert EXPORT_STEP.image == EXPORT_IMAGE_NAME
+
+        def test_should_write_the_files_of_onnx_asr_its_parity_and_its_peaks(self) -> None:
+            assert [output.name for output in EXPORT_STEP.outputs] == EXPORT_OUTPUTS
+
+    class TestItsParities:
+        def test_should_hold_the_encoder_against_nemo_within_5e_5_from_the_exports_report(
+            self,
+        ) -> None:
+            assert [
+                (parity.step, parity.output, parity.absolute_difference_tolerance)
+                for parity in RECIPE.parities
+            ] == [("export", "encoder-parity.json", 5e-5)]

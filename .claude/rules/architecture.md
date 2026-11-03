@@ -32,7 +32,7 @@ The project follows Clean Architecture, in four layers, and applies SOLID to mod
 
 ## Stored and shared data
 
-- **What is stored, sent, or crosses a thread or a process is plain data:** values in the types of the inner side that survive a round trip through their serialized form unchanged, with no handle, no closure, and nothing the serialization drops or alters. It then saves, travels and replays as it is. Elsewhere, a type may hold behavior. The project's data of this kind: the pins of the sources; the request the host writes for a container step, such as the files of the FLEURS check; the reports a step writes back, such as the FLEURS check's durations; the peaks of each step; and, planned, the candidate files with their hashes.
+- **What is stored, sent, or crosses a thread or a process is plain data:** values in the types of the inner side that survive a round trip through their serialized form unchanged, with no handle, no closure, and nothing the serialization drops or alters. It then saves, travels and replays as it is. Elsewhere, a type may hold behavior. The project's data of this kind: the pins of the sources; the request the host writes for a container step, such as the files of the FLEURS check; the reports a step writes back, such as the FLEURS check's durations; the parity reports, such as the export's against NeMo; the peaks of each step; and, planned, the candidate files with their hashes.
 
 ## SOLID
 

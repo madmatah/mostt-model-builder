@@ -1,8 +1,10 @@
+import math
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 
+from mostt_model_builder.domain.acceptance.parity_reports import PARITY_NAME_GRAMMAR
 from mostt_model_builder.domain.containers.base_images import BASE_PYTHON, ENVIRONMENT_PYTHON
 from mostt_model_builder.domain.containers.container_steps import (
     CLEAN_STEP_NAME,
@@ -12,6 +14,7 @@ from mostt_model_builder.domain.containers.container_steps import (
     ENTRY_MODULE_GRAMMAR,
     FLEURS_CHECK_STEP_NAME,
     LOCK_STEP_NAME,
+    PEAKS_FILE_NAME,
     RUNNABLE_CORE_ROWS,
     STEP_NAME_GRAMMAR,
     ContainerImage,
@@ -109,11 +112,20 @@ class CandidateFile:
 
 
 @dataclass(frozen=True, slots=True)
+class Parity:
+    name: str
+    step: str
+    output: str
+    absolute_difference_tolerance: float
+
+
+@dataclass(frozen=True, slots=True)
 class RecipeContract:
     name: str
     images: tuple[RecipeImage, ...]
     steps: tuple[RecipeStep, ...]
     candidate: tuple[CandidateFile, ...]
+    parities: tuple[Parity, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,6 +151,7 @@ class JudgedRecipe:
     images: tuple[ContainerImage, ...]
     rows: tuple[StepRow, ...]
     candidate: tuple[JudgedCandidateFile, ...]
+    parities: tuple[Parity, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -193,6 +206,7 @@ def judge_recipe(contract: RecipeContract, facts: RecipeFacts) -> JudgedRecipe:
         images=tuple(images.by_name[image.name] for image in contract.images),
         rows=rows,
         candidate=judge_candidate(contract.candidate, rows, where),
+        parities=judge_parities(contract.parities, rows, where),
     )
 
 
@@ -448,4 +462,43 @@ def judge_origin(
         raise RecipeContractError(
             f"{where} comes from {origin.output!a} of {origin.step!a}, which no step of the "
             "recipe declares"
+        )
+
+
+def judge_parities(
+    parities: Sequence[Parity], rows: Sequence[StepRow], where: str
+) -> tuple[Parity, ...]:
+    outputs_by_step = {row.name: {output.name for output in row.outputs} for row in rows}
+    names: set[str] = set()
+    for parity in parities:
+        parity_where = f"{where}: its parity {parity.name!a}"
+        if not PARITY_NAME_GRAMMAR.fullmatch(parity.name):
+            raise RecipeContractError(
+                f"{parity_where} is not named under {PARITY_NAME_GRAMMAR.pattern}"
+            )
+        if parity.name in names:
+            raise RecipeContractError(f"{parity_where} is declared twice")
+        names.add(parity.name)
+        if parity.output not in outputs_by_step.get(parity.step, set()):
+            raise RecipeContractError(
+                f"{parity_where} reads its report from {parity.output!a} of {parity.step!a}, "
+                "which no step of the recipe declares"
+            )
+        if parity.output == PEAKS_FILE_NAME:
+            raise RecipeContractError(
+                f"{parity_where} reads its report from {PEAKS_FILE_NAME}, the peaks of its step"
+            )
+        judge_tolerance(parity.absolute_difference_tolerance, parity_where)
+    return tuple(parities)
+
+
+def judge_tolerance(tolerance: float, where: str) -> None:
+    if (
+        not isinstance(tolerance, int | float)
+        or isinstance(tolerance, bool)
+        or not math.isfinite(tolerance)
+        or tolerance <= 0
+    ):
+        raise RecipeContractError(
+            f"{where} has the tolerance {tolerance!a}, not a finite number above 0"
         )

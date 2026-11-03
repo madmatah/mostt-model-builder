@@ -39,7 +39,24 @@ mypy_path = ["src", "recipes/parakeet-tdt/src"]
 # The libraries of the steps are installed in their images alone, never on the host, where mypy
 # runs: a step uses them untyped, through composition, never through a subclass of their classes.
 [[tool.mypy.overrides]]
-module = ["nemo", "nemo.*", "torch", "torch.*"]
+module = [
+    "nemo",
+    "nemo.*",
+    "numpy",
+    "numpy.*",
+    "onnx",
+    "onnx.*",
+    "onnx_ir",
+    "onnx_ir.*",
+    "onnxruntime",
+    "onnxruntime.*",
+    "onnxscript",
+    "onnxscript.*",
+    "safetensors",
+    "safetensors.*",
+    "torch",
+    "torch.*",
+]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
