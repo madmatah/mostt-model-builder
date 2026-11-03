@@ -1,8 +1,13 @@
 import subprocess
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import pytest
+
+from mostt_model_builder.application.resolve_lock import LockResolution
+from mostt_model_builder.domain.containers.step_peaks import StepPeaks
+from mostt_model_builder.domain.lock.lock_check import CheckedLock, LockedPackage
+from mostt_model_builder.host_main import describe_lock_resolution
 
 BOOTSTRAP_PATH = (
     Path(__file__).resolve().parent.parent / "src" / "mostt_model_builder" / "bootstrap.py"
@@ -10,10 +15,20 @@ BOOTSTRAP_PATH = (
 HOST_ENTRY_MODULE = "mostt_model_builder.host_main"
 USAGE_START = "usage: model-build.sh"
 UNKNOWN_COMMAND = "unknown-command"
-COMMANDS = ("fetch",)
+COMMANDS = ("fetch", "lock", "images", "step", "clean")
 ARGUMENT_ERROR_EXIT_STATUS = 2
 COMMAND_FAILURE_EXIT_STATUS = 1
 COMMAND_LINE_TIMEOUT_S = 60
+LOCKED_PACKAGES = (LockedPackage("numpy", "2.3.4"), LockedPackage("torch", "2.9.0"))
+RECORDED_EXTRAS = ("export", "inspect", "transcribe")
+LOCK_RUN = PurePosixPath("runs/lock/run-1")
+LOCK_RESOLUTION = LockResolution(
+    lock_run=LOCK_RUN,
+    checked_lock=CheckedLock(root_name="mostt-model-builder-images", packages=LOCKED_PACKAGES),
+    recorded_extras=RECORDED_EXTRAS,
+    change_lines=(),
+    peaks=StepPeaks(memory_peak_bytes=0, process_count_peak=0),
+)
 
 
 def run_command_line(arguments: list[str]) -> subprocess.CompletedProcess[str]:
@@ -92,3 +107,16 @@ class TestTheHostMain:
 
             def test_should_fail(self, fetch_run: subprocess.CompletedProcess[str]) -> None:
                 assert fetch_run.returncode == COMMAND_FAILURE_EXIT_STATUS
+
+    class TestTheDescribeLockResolutionFunction:
+        @pytest.fixture
+        def lock_description(self) -> str:
+            return describe_lock_resolution(LOCK_RESOLUTION)
+
+        def test_should_count_the_packages_and_the_extras_the_lock_records_and_name_its_run(
+            self, lock_description: str
+        ) -> None:
+            assert lock_description == (
+                f"wrote images/uv.lock, {len(LOCKED_PACKAGES)} packages, "
+                f"{len(RECORDED_EXTRAS)} extras, from {LOCK_RUN}; review its change in the diff"
+            )

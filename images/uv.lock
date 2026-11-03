@@ -1,0 +1,17 @@
+version = 1
+revision = 3
+requires-python = "==3.12.*"
+resolution-markers = [
+    "platform_machine == 'x86_64' and sys_platform == 'linux'",
+]
+supported-markers = [
+    "platform_machine == 'x86_64' and sys_platform == 'linux'",
+]
+
+[options]
+exclude-newer = "2026-11-02T16:10:00Z"
+
+[[package]]
+name = "mostt-model-builder-images"
+version = "0.1.0"
+source = { virtual = "." }

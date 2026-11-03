@@ -1,0 +1,21 @@
+# The images' environment: the libraries of every image of the build, one extra per image that
+# installs any, so that one lock pins one version of each library across a build. It is not a
+# module and builds nothing. Only `./model-build.sh lock` resolves its lock, in a container, and
+# only an image's build installs from it; uv never runs here on the host.
+[project]
+name = "mostt-model-builder-images"
+version = "0.1.0"
+description = "The libraries of the images of mostt-model-builder's build."
+requires-python = "==3.12.*"
+dependencies = []
+
+# A package published as an sdist alone, which uv refuses under no-build = true even with its
+# dependency metadata declared, is built in a build stage of its image, without network.
+# required-version makes every other version of uv refuse this project rather than resolve or
+# build here; exclude-newer holds the transitive dependencies to what the build measured.
+[tool.uv]
+package = false
+no-build = false
+environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
+exclude-newer = "2026-11-02T16:10:00Z"
+required-version = "==0.13.7"

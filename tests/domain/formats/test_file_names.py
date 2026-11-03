@@ -1,6 +1,10 @@
 import pytest
 
-from mostt_model_builder.domain.formats.file_names import REFUSED_SUFFIXES, find_refused_suffixes
+from mostt_model_builder.domain.formats.file_names import (
+    REFUSED_SUFFIXES,
+    find_refused_suffixes,
+    is_file_name,
+)
 
 STEM = "model"
 LAST_SUFFIX = ".txt"
@@ -44,6 +48,29 @@ REFUSED_NAMES = [
 ]
 
 
+ALPHANUMERIC_CHARACTERS = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+)
+LATER_ONLY_CHARACTERS = frozenset("._-")
+ASCII_CHARACTERS = [chr(code_point) for code_point in range(128)]
+CHARACTERS_BEYOND_ASCII = {
+    "an accented letter": "\u00e9",
+    "a no-break space": "\u00a0",
+    "a right-to-left override": "\u202e",
+}
+GRAMMAR_STEM = "m"
+LONGEST_LENGTH = 128
+DOT_NAMES = (".", "..")
+
+
+def describe_character(character: str) -> str:
+    return f"U+{ord(character):04X}"
+
+
+def build_name_of_length(length: int) -> str:
+    return GRAMMAR_STEM * length
+
+
 class TestTheFileNames:
     class TestTheFindRefusedSuffixesFunction:
         @pytest.mark.parametrize(("name", "suffix"), REFUSED_NAMES)
@@ -85,3 +112,72 @@ class TestTheFileNames:
             self,
         ) -> None:
             assert MOSTT_STORE_REFUSED_SUFFIXES == REFUSED_SUFFIXES
+
+    class TestTheIsFileNameFunction:
+        @pytest.mark.parametrize("character", ASCII_CHARACTERS, ids=describe_character)
+        class TestWhenAnAsciiCharacterComesFirst:
+            @pytest.fixture
+            def is_accepted(self, character: str) -> bool:
+                return is_file_name(character + GRAMMAR_STEM)
+
+            def test_should_accept_only_a_letter_or_a_digit_so_no_name_hides_or_reads_as_an_option(
+                self, is_accepted: bool, character: str
+            ) -> None:
+                assert is_accepted is (character in ALPHANUMERIC_CHARACTERS)
+
+        @pytest.mark.parametrize("character", ASCII_CHARACTERS, ids=describe_character)
+        class TestWhenAnAsciiCharacterComesLater:
+            @pytest.fixture
+            def is_accepted(self, character: str) -> bool:
+                return is_file_name(GRAMMAR_STEM + character)
+
+            def test_should_accept_only_a_letter_a_digit_a_dot_an_underscore_or_a_dash(
+                self, is_accepted: bool, character: str
+            ) -> None:
+                assert is_accepted is (character in ALPHANUMERIC_CHARACTERS | LATER_ONLY_CHARACTERS)
+
+        @pytest.mark.parametrize(
+            "character",
+            list(CHARACTERS_BEYOND_ASCII.values()),
+            ids=list(CHARACTERS_BEYOND_ASCII.keys()),
+        )
+        class TestWhenACharacterBeyondAsciiAppears:
+            @pytest.fixture
+            def acceptances(self, character: str) -> tuple[bool, bool]:
+                return (
+                    is_file_name(character + GRAMMAR_STEM),
+                    is_file_name(GRAMMAR_STEM + character),
+                )
+
+            def test_should_refuse_it_first_and_later(self, acceptances: tuple[bool, bool]) -> None:
+                assert acceptances == (False, False)
+
+        @pytest.mark.parametrize(
+            ("length", "is_expected"),
+            [
+                pytest.param(0, False, id="no character"),
+                pytest.param(1, True, id="one character"),
+                pytest.param(LONGEST_LENGTH, True, id="128 characters"),
+                pytest.param(LONGEST_LENGTH + 1, False, id="129 characters"),
+            ],
+        )
+        class TestWhenANameHasALength:
+            @pytest.fixture
+            def is_accepted(self, length: int) -> bool:
+                return is_file_name(build_name_of_length(length))
+
+            def test_should_accept_one_to_128_characters(
+                self, is_accepted: bool, is_expected: bool
+            ) -> None:
+                assert is_accepted is is_expected
+
+        @pytest.mark.parametrize("name", DOT_NAMES)
+        class TestWhenTheNameIsADotSegment:
+            @pytest.fixture
+            def is_accepted(self, name: str) -> bool:
+                return is_file_name(name)
+
+            def test_should_refuse_it_so_that_no_name_points_at_a_directory(
+                self, is_accepted: bool
+            ) -> None:
+                assert is_accepted is False

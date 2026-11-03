@@ -4,7 +4,7 @@ mostt-model-builder reuses the work below. Each entry says what is reused, where
 
 ## Adapted code
 
-- **mostt's model store**, at its commit `920e03b`: the suffixes that mark code, a pickle, an archive or a format that runs code when it loads, and the check of every suffix of a file name whatever its case, adapted from `REFUSED_SUFFIXES` and `refused_suffixes_of` in `server/src/mostt_server/domain/catalogue.py`, with the cases of its tests, so that every file this project publishes passes the store that installs it (`src/mostt_model_builder/domain/formats/file_names.py`). MIT, under this notice:
+- **mostt's model store**, at its commit `920e03b`: the grammar of a file name, `FILE_NAME_GRAMMAR`, the suffixes that mark code, a pickle, an archive or a format that runs code when it loads, and the check of every suffix of a file name whatever its case, adapted from `FILE_NAME_GRAMMAR`, `REFUSED_SUFFIXES` and `refused_suffixes_of` in `server/src/mostt_server/domain/catalogue.py`, with the cases of its tests, so that every file this project publishes passes the store that installs it (`src/mostt_model_builder/domain/formats/file_names.py`). MIT, under this notice:
 
 > MIT License
 >
@@ -30,4 +30,4 @@ mostt-model-builder reuses the work below. Each entry says what is reused, where
 
 ## Libraries
 
-None yet.
+- **uv** 0.13.7, by Astral, https://github.com/astral-sh/uv: its binary, copied from its image `ghcr.io/astral-sh/uv:0.13.7`, pinned by digest, into the `uv` image of the build (`images/uv/Containerfile`), which resolves the lock of the images' libraries. The images are never shipped. MIT OR Apache-2.0.

@@ -1,0 +1,4 @@
+*
+!src/mostt_model_builder
+**/__pycache__
+**/*.pyc

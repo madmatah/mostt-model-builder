@@ -98,3 +98,53 @@ forbidden_modules = [
     "mostt_model_builder.host_main",
     "mostt_model_builder.bootstrap",
 ]
+
+[[tool.importlinter.contracts]]
+name = "A container step runs on the core's domain and the shared step modules alone"
+type = "forbidden"
+source_modules = ["mostt_model_builder.steps"]
+forbidden_modules = [
+    "mostt_model_builder.application",
+    "mostt_model_builder.adapters",
+    "mostt_model_builder.host_main",
+    "mostt_model_builder.bootstrap",
+]
+
+[[tool.importlinter.contracts]]
+name = "The host never imports a container step, which runs only in its container"
+type = "forbidden"
+source_modules = ["mostt_model_builder.host_main"]
+forbidden_modules = ["mostt_model_builder.steps"]
+
+[[tool.importlinter.contracts]]
+name = "The libraries of the models load only in the steps that need them, never on the host"
+type = "forbidden"
+source_modules = [
+    "mostt_model_builder.bootstrap",
+    "mostt_model_builder.host_main",
+    "mostt_model_builder.adapters",
+    "mostt_model_builder.application",
+    "mostt_model_builder.domain",
+    "mostt_model_builder.steps.fleurs_audio",
+    "mostt_model_builder.steps.fleurs_check",
+    "mostt_model_builder.steps.clean_output",
+    "mostt_model_builder.steps.output_modes",
+    "mostt_model_builder.steps.control_group_peaks",
+    "mostt_model_builder.steps.lock_resolution",
+]
+forbidden_modules = [
+    "torch",
+    "nemo",
+    "transformers",
+    "onnx",
+    "onnxscript",
+    "onnx_ir",
+    "onnxruntime",
+    "onnxconverter_common",
+    "ml_dtypes",
+    "onnx_asr",
+    "numpy",
+    "safetensors",
+    "huggingface_hub",
+    "librosa",
+]

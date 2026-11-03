@@ -9,9 +9,18 @@ import pytest
 
 from mostt_model_builder.adapters.work_files import WorkFiles
 from mostt_model_builder.application.fetch_sources import FileDigest, SourceFileError
+from mostt_model_builder.application.run_step import WrittenFile, WrittenOutputs
+from mostt_model_builder.domain.containers.container_files import (
+    FileFacts,
+    FileKind,
+    PathComponent,
+)
 from mostt_model_builder.domain.containers.work_directory import DirectoryFacts, EntryKind
 
 FILE_CONTENT = b"id\tfile\ttranscription\n"
+MAX_SIZE_BYTES = 4096
+# A sparse file as large as the encoder's external data, which no parser of the host reads.
+UNPARSED_SIZE_BYTES = 2_476_376_064
 
 
 def build_work_root(tmp_path: Path) -> Path:
@@ -173,3 +182,193 @@ class TestTheWorkFiles:
                 self, file_mode: int
             ) -> None:
                 assert file_mode == 0o444
+
+    class TestTheMakeStepDirectoryMethod:
+        class TestWhenTheDirectoryIsNew:
+            @pytest.fixture
+            def made_mode(self, tmp_path: Path) -> tuple[bool, int]:
+                is_made = WorkFiles().make_step_directory(PurePosixPath(tmp_path / "step"), 0o2770)
+                return is_made, stat.S_IMODE((tmp_path / "step").stat().st_mode)
+
+            def test_should_make_it_in_the_mode_asked_whatever_the_umask(
+                self, made_mode: tuple[bool, int]
+            ) -> None:
+                assert made_mode == (True, 0o2770)
+
+        class TestWhenTheDirectoryExists:
+            @pytest.fixture
+            def is_made(self, tmp_path: Path) -> bool:
+                (tmp_path / "step").mkdir()
+                return WorkFiles().make_step_directory(PurePosixPath(tmp_path / "step"), 0o2770)
+
+            def test_should_say_it_made_none(self, is_made: bool) -> None:
+                assert is_made is False
+
+    class TestTheInspectComponentsMethod:
+        class TestWhenALinkStandsOnThePath:
+            @pytest.fixture
+            def components(self, tmp_path: Path) -> tuple[PathComponent, ...]:
+                (tmp_path / "elsewhere").mkdir()
+                (tmp_path / "linked").symlink_to(tmp_path / "elsewhere")
+                return WorkFiles().inspect_components(
+                    PurePosixPath(tmp_path), PurePosixPath("linked/file")
+                )
+
+            def test_should_stop_at_the_link_and_say_what_it_is(
+                self, components: tuple[PathComponent, ...]
+            ) -> None:
+                assert [component.facts.kind for component in components] == [FileKind.LINK]
+
+        class TestWhenTheLeafIsMissing:
+            @pytest.fixture
+            def components(self, tmp_path: Path) -> tuple[PathComponent, ...]:
+                (tmp_path / "runs").mkdir(mode=0o700)
+                return WorkFiles().inspect_components(
+                    PurePosixPath(tmp_path), PurePosixPath("runs/step")
+                )
+
+            def test_should_see_the_directory_then_the_missing_leaf(
+                self, components: tuple[PathComponent, ...]
+            ) -> None:
+                assert [component.facts.kind for component in components] == [
+                    FileKind.DIRECTORY,
+                    FileKind.MISSING,
+                ]
+
+    class TestTheReadWrittenOutputsMethod:
+        class TestWhenTheOutputsHoldAFileALinkAndAFifo:
+            @pytest.fixture
+            def written_outputs(self, tmp_path: Path) -> WrittenOutputs:
+                (tmp_path / "peaks.json").write_bytes(FILE_CONTENT)
+                (tmp_path / "peaks.json").chmod(0o640)
+                (tmp_path / "report.json").symlink_to("/etc/passwd")
+                os.mkfifo(tmp_path / "pipe")
+                return WorkFiles().read_written_outputs(
+                    PurePosixPath(tmp_path),
+                    {"peaks.json": MAX_SIZE_BYTES, "report.json": MAX_SIZE_BYTES, "pipe": 1},
+                    frozenset({"peaks.json", "report.json", "pipe"}),
+                )
+
+            def test_should_list_every_entry(self, written_outputs: WrittenOutputs) -> None:
+                assert written_outputs.entry_names == ("peaks.json", "pipe", "report.json")
+
+            def test_should_read_the_regular_file_with_its_facts(
+                self, written_outputs: WrittenOutputs
+            ) -> None:
+                assert (
+                    written_outputs.files["peaks.json"].facts,
+                    written_outputs.files["peaks.json"].content,
+                ) == (
+                    FileFacts(FileKind.REGULAR, os.getuid(), 0o640, len(FILE_CONTENT), 1),
+                    FILE_CONTENT,
+                )
+
+            def test_should_follow_neither_the_link_nor_the_fifo(
+                self, written_outputs: WrittenOutputs
+            ) -> None:
+                assert [
+                    (written_outputs.files[name].facts.kind, written_outputs.files[name].content)
+                    for name in ("report.json", "pipe")
+                ] == [(FileKind.LINK, None), (FileKind.FIFO, None)]
+
+        class TestWhenAFileExceedsItsBound:
+            @pytest.fixture
+            def written_outputs(self, tmp_path: Path) -> WrittenOutputs:
+                (tmp_path / "peaks.json").write_bytes(FILE_CONTENT)
+                return WorkFiles().read_written_outputs(
+                    PurePosixPath(tmp_path), {"peaks.json": 4}, frozenset({"peaks.json"})
+                )
+
+            def test_should_read_none_of_it(self, written_outputs: WrittenOutputs) -> None:
+                assert written_outputs.files["peaks.json"].content is None
+
+        class TestWhenAFileGrowsBeyondItsBoundAfterItsFactsAreRead:
+            @pytest.fixture
+            def written_file(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> WrittenFile:
+                bound_bytes = len(FILE_CONTENT) - 1
+                (tmp_path / "peaks.json").write_bytes(FILE_CONTENT)
+                read_status = os.fstat
+
+                def read_status_before_the_file_grew(descriptor: int) -> os.stat_result:
+                    status_fields = list(read_status(descriptor))
+                    status_fields[stat.ST_SIZE] = bound_bytes
+                    return os.stat_result(status_fields)
+
+                monkeypatch.setattr(os, "fstat", read_status_before_the_file_grew)
+                written_outputs = WorkFiles().read_written_outputs(
+                    PurePosixPath(tmp_path), {"peaks.json": bound_bytes}, frozenset({"peaks.json"})
+                )
+                return written_outputs.files["peaks.json"]
+
+            def test_should_read_none_of_it_and_give_the_size_it_read_so_it_is_refused(
+                self, written_file: WrittenFile
+            ) -> None:
+                assert (written_file.facts.size_bytes, written_file.content) == (
+                    len(FILE_CONTENT),
+                    None,
+                )
+
+        class TestWhenAnOutputIsNotOneTheHostParses:
+            @pytest.fixture
+            def written_outputs(self, tmp_path: Path) -> WrittenOutputs:
+                with (tmp_path / "encoder-model.onnx.data").open("wb") as stream:
+                    stream.truncate(UNPARSED_SIZE_BYTES)
+                (tmp_path / "encoder-model.onnx.data").chmod(0o640)
+                return WorkFiles().read_written_outputs(
+                    PurePosixPath(tmp_path),
+                    {"encoder-model.onnx.data": UNPARSED_SIZE_BYTES},
+                    frozenset({"peaks.json"}),
+                )
+
+            def test_should_judge_it_by_its_facts_alone(
+                self, written_outputs: WrittenOutputs
+            ) -> None:
+                assert written_outputs.files["encoder-model.onnx.data"].facts == FileFacts(
+                    FileKind.REGULAR, os.getuid(), 0o640, UNPARSED_SIZE_BYTES, 1
+                )
+
+            def test_should_read_none_of_it_since_no_parser_of_the_host_reads_it(
+                self, written_outputs: WrittenOutputs
+            ) -> None:
+                assert written_outputs.files["encoder-model.onnx.data"].content is None
+
+        class TestWhenTheDirectoryIsALink:
+            @pytest.fixture
+            def read_act(self, tmp_path: Path) -> Callable[[], WrittenOutputs]:
+                (tmp_path / "outputs").mkdir()
+                (tmp_path / "linked").symlink_to(tmp_path / "outputs")
+                return partial(
+                    WorkFiles().read_written_outputs,
+                    PurePosixPath(tmp_path / "linked"),
+                    {},
+                    frozenset(),
+                )
+
+            def test_should_refuse_to_open_it(self, read_act: Callable[[], WrittenOutputs]) -> None:
+                with pytest.raises(NotADirectoryError):
+                    read_act()
+
+    class TestTheReplaceFileMethod:
+        class TestWhenTheFileExists:
+            @pytest.fixture
+            def replaced(self, tmp_path: Path) -> tuple[bytes, list[str]]:
+                (tmp_path / "uv.lock").write_bytes(b"old")
+                WorkFiles().replace_file(PurePosixPath(tmp_path / "uv.lock"), FILE_CONTENT)
+                return (tmp_path / "uv.lock").read_bytes(), sorted(os.listdir(tmp_path))
+
+            def test_should_replace_its_content_in_one_step_and_leave_nothing_beside_it(
+                self, replaced: tuple[bytes, list[str]]
+            ) -> None:
+                assert replaced == (FILE_CONTENT, ["uv.lock"])
+
+    class TestTheRemoveRequestDirectoryMethod:
+        class TestWhenTheRequestHoldsFiles:
+            @pytest.fixture
+            def entries_left(self, tmp_path: Path) -> list[str]:
+                (tmp_path / "request").mkdir()
+                (tmp_path / "request" / "request.json").write_bytes(FILE_CONTENT)
+                WorkFiles().remove_request_directory(PurePosixPath(tmp_path / "request"))
+                return os.listdir(tmp_path)
+
+            def test_should_remove_its_files_and_itself(self, entries_left: list[str]) -> None:
+                assert entries_left == []

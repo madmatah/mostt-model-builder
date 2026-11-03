@@ -1,17 +1,31 @@
+import contextlib
+import errno
 import hashlib
 import os
 import stat
+from collections.abc import Mapping
+from dataclasses import replace
 from pathlib import PurePosixPath
 
 from mostt_model_builder.application.fetch_sources import FileDigest, SourceFileError
+from mostt_model_builder.application.run_step import WrittenFile, WrittenOutputs
+from mostt_model_builder.domain.containers.container_files import (
+    FileFacts,
+    FileKind,
+    PathComponent,
+)
 from mostt_model_builder.domain.containers.work_directory import DirectoryFacts, EntryKind
 
 CREATED_DIRECTORY_MODE = 0o700
 READ_ONLY_FILE_MODE = 0o444
+REPLACED_FILE_MODE = 0o644
 DIGEST_ALGORITHM = "sha256"
 NO_OWNER_ID = -1
 NO_PERMISSION_BITS = 0
 OPEN_WITHOUT_FOLLOWING = os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
+OPEN_DIRECTORY_WITHOUT_FOLLOWING = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+REPLACEMENT_SUFFIX = ".new"
+NO_FACTS = FileFacts(FileKind.MISSING, NO_OWNER_ID, NO_PERMISSION_BITS, 0, 0)
 
 
 class WorkFiles:
@@ -72,6 +86,162 @@ class WorkFiles:
             os.fchmod(descriptor, READ_ONLY_FILE_MODE)
         finally:
             os.close(descriptor)
+
+    def make_step_directory(self, path: PurePosixPath, mode: int) -> bool:
+        try:
+            os.mkdir(path, CREATED_DIRECTORY_MODE)
+        except FileExistsError:
+            return False
+        os.chmod(path, mode, follow_symlinks=False)
+        return True
+
+    def write_new_file(self, path: PurePosixPath, content: bytes, mode: int) -> None:
+        descriptor = os.open(
+            path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, mode
+        )
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(content)
+            os.fchmod(stream.fileno(), mode)
+
+    def inspect_components(
+        self, root: PurePosixPath, relative_path: PurePosixPath
+    ) -> tuple[PathComponent, ...]:
+        components = []
+        path = root
+        for part in relative_path.parts:
+            path = path / part
+            facts = inspect_entry(path)
+            components.append(PathComponent(path, facts))
+            if facts.kind is not FileKind.DIRECTORY:
+                break
+        return tuple(components)
+
+    def read_written_outputs(
+        self,
+        directory: PurePosixPath,
+        max_sizes_bytes: Mapping[str, int],
+        parsed_names: frozenset[str],
+    ) -> WrittenOutputs:
+        directory_descriptor = os.open(directory, OPEN_DIRECTORY_WITHOUT_FOLLOWING)
+        try:
+            entry_names = tuple(sorted(os.listdir(directory_descriptor)))
+            files = {
+                name: read_written_file(
+                    directory_descriptor, name, max_size_bytes, is_parsed=name in parsed_names
+                )
+                for name, max_size_bytes in max_sizes_bytes.items()
+                if name in entry_names
+            }
+        finally:
+            os.close(directory_descriptor)
+        return WrittenOutputs(entry_names, files)
+
+    def list_entry_names(self, directory: PurePosixPath) -> tuple[str, ...]:
+        directory_descriptor = os.open(directory, OPEN_DIRECTORY_WITHOUT_FOLLOWING)
+        try:
+            return tuple(sorted(os.listdir(directory_descriptor)))
+        finally:
+            os.close(directory_descriptor)
+
+    def replace_file(self, path: PurePosixPath, content: bytes) -> None:
+        replacement = path.with_name(path.name + REPLACEMENT_SUFFIX)
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(replacement)
+        descriptor = os.open(
+            replacement,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+            REPLACED_FILE_MODE,
+        )
+        try:
+            with os.fdopen(descriptor, "wb") as stream:
+                stream.write(content)
+            os.replace(replacement, path)
+        except BaseException:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(replacement)
+            raise
+
+    def remove_empty_directory(self, path: PurePosixPath) -> None:
+        os.rmdir(path)
+
+    def remove_request_directory(self, path: PurePosixPath) -> None:
+        directory_descriptor = os.open(path, OPEN_DIRECTORY_WITHOUT_FOLLOWING)
+        try:
+            for name in os.listdir(directory_descriptor):
+                os.unlink(name, dir_fd=directory_descriptor)
+        finally:
+            os.close(directory_descriptor)
+        os.rmdir(path)
+
+    def remove_file_if_present(self, path: PurePosixPath) -> bool:
+        try:
+            os.unlink(path)
+        except FileNotFoundError:
+            return False
+        return True
+
+
+def describe_status(entry_status: os.stat_result) -> FileFacts:
+    return FileFacts(
+        kind=find_file_kind(entry_status.st_mode),
+        owner_id=entry_status.st_uid,
+        permission_bits=stat.S_IMODE(entry_status.st_mode),
+        size_bytes=entry_status.st_size,
+        link_count=entry_status.st_nlink,
+    )
+
+
+def find_file_kind(mode: int) -> FileKind:
+    if stat.S_ISREG(mode):
+        return FileKind.REGULAR
+    if stat.S_ISDIR(mode):
+        return FileKind.DIRECTORY
+    if stat.S_ISLNK(mode):
+        return FileKind.LINK
+    if stat.S_ISFIFO(mode):
+        return FileKind.FIFO
+    if stat.S_ISSOCK(mode):
+        return FileKind.SOCKET
+    return FileKind.DEVICE
+
+
+def inspect_entry(path: PurePosixPath) -> FileFacts:
+    try:
+        return describe_status(os.lstat(path))
+    except FileNotFoundError:
+        return NO_FACTS
+
+
+def read_written_file(
+    directory_descriptor: int, name: str, max_size_bytes: int, *, is_parsed: bool
+) -> WrittenFile:
+    entry_facts = describe_status(os.stat(name, dir_fd=directory_descriptor, follow_symlinks=False))
+    if entry_facts.kind is not FileKind.REGULAR:
+        return WrittenFile(entry_facts, None)
+    try:
+        descriptor = os.open(
+            name, os.O_RDONLY | OPEN_WITHOUT_FOLLOWING, dir_fd=directory_descriptor
+        )
+    except PermissionError:
+        return WrittenFile(replace_kind(entry_facts, FileKind.UNREADABLE), None)
+    except OSError as error:
+        if error.errno == errno.ELOOP:
+            return WrittenFile(replace_kind(entry_facts, FileKind.LINK), None)
+        raise
+    with os.fdopen(descriptor, "rb") as stream:
+        facts = describe_status(os.fstat(stream.fileno()))
+        if not is_parsed or facts.kind is not FileKind.REGULAR or facts.size_bytes > max_size_bytes:
+            return WrittenFile(facts, None)
+        content = stream.read(max_size_bytes + 1)
+    if len(content) > max_size_bytes:
+        return WrittenFile(replace(facts, size_bytes=len(content)), None)
+    return WrittenFile(facts, content)
+
+
+def replace_kind(facts: FileFacts, kind: FileKind) -> FileFacts:
+    return FileFacts(
+        kind, facts.owner_id, facts.permission_bits, facts.size_bytes, facts.link_count
+    )
 
 
 def find_entry_kind(mode: int) -> EntryKind:
