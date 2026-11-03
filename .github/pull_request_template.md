@@ -32,7 +32,7 @@
 
 ### Documentation
 
-- [ ] The documents describe the new state: `docs/foundations.md`, `README.md`, `CLAUDE.md`, `.claude/`.
+- [ ] The documents describe the new state: `docs/foundations.md`, `docs/model-build.md`, `README.md`, `CLAUDE.md`, `.claude/`.
 - [ ] Every external work brought in, including a library shipped in a build, is credited in `CREDITS.md`.
 
 ### Hygiene

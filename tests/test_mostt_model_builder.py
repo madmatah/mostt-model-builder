@@ -16,6 +16,7 @@ STANDARD_LIBRARY_DIRECTORIES = (
 )
 ORIGINS_WITHOUT_A_FILE = ("built-in", "frozen")
 SCRIPT_MODULE_NAME = "__main__"
+PACKAGE_SEPARATOR = "."
 LOADED_MODULES_QUERY = f"""
 import json
 import sys
@@ -54,11 +55,21 @@ def is_trusted_origin(origin: str | None) -> bool:
     return any(origin_path.is_relative_to(directory) for directory in trusted_directories)
 
 
+def is_trusted_module(name: str, origins: dict[str, str | None]) -> bool:
+    origin = origins[name]
+    parent_name, _, _ = name.rpartition(PACKAGE_SEPARATOR)
+    # Python 3.12's typing registers typing.io and typing.re in memory, without a spec: a module
+    # that no file holds is only as trusted as the package that made it.
+    if origin is None and parent_name in origins:
+        return is_trusted_module(parent_name, origins)
+    return is_trusted_origin(origin)
+
+
 def list_foreign_modules(origins: dict[str, str | None]) -> dict[str, str | None]:
     return {
         name: origin
         for name, origin in origins.items()
-        if name != SCRIPT_MODULE_NAME and not is_trusted_origin(origin)
+        if name != SCRIPT_MODULE_NAME and not is_trusted_module(name, origins)
     }
 
 

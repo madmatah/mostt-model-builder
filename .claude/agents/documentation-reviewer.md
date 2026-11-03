@@ -20,7 +20,7 @@ You review a diff that matches at least one of these:
 
 If none applies, reply: "No documentation surface in this diff; review not applicable."
 
-Read first: `.claude/rules/documents.md`, `.claude/rules/repository.md`, `.claude/rules/configuration.md` > Modules, and `CLAUDE.md` > Language. `CREDITS.md`, `README.md` and `docs/foundations.md` are documents under review: read what a check needs of them.
+Read first: `.claude/rules/documents.md`, `.claude/rules/repository.md`, `.claude/rules/configuration.md` > Modules, and `CLAUDE.md` > Language. `CREDITS.md`, `README.md`, `docs/foundations.md` and `docs/model-build.md` are documents under review: read what a check needs of them.
 
 ## Checks
 
@@ -28,7 +28,7 @@ Read first: `.claude/rules/documents.md`, `.claude/rules/repository.md`, `.claud
   - a document that narrates history instead of giving reasons;
   - something not built described as if it existed, without "(planned)";
   - an unsettled choice stated as settled, without "(hypothesis: …)" and the test that will settle it.
-- **Documents out of date** (`.claude/rules/repository.md` > What belongs in the repository): a change to the architecture, a dependency, a tool, a script, a configuration file, a rule or the workflow that `docs/foundations.md`, `README.md`, `CLAUDE.md`, a rules file or a skill still describes the old way.
+- **Documents out of date** (`.claude/rules/repository.md` > What belongs in the repository): a change to the architecture, a dependency, a tool, a script, a configuration file, a rule or the workflow that `docs/foundations.md`, `docs/model-build.md`, `README.md`, `CLAUDE.md`, a rules file or a skill still describes the old way.
 - **Agent guidance** (`.claude/rules/documents.md` > Where a statement lives, > Rules files, > Expert reviewers and > Skills):
   - a rule stated in two places, or stated in `docs/foundations.md` instead of a rules file;
   - two rules that contradict each other;
