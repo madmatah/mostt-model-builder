@@ -1,5 +1,5 @@
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from functools import partial
 from pathlib import PurePosixPath
@@ -15,10 +15,12 @@ from run_step_fakes import (
     build_step_output,
 )
 
+from mostt_model_builder.application.assemble_candidate import CandidateError, CandidateRequest
 from mostt_model_builder.application.run_recipe_step import (
     MeasuredParity,
     RecipeStepOutcome,
     RecipeStepRun,
+    RunShard,
     run_recipe_step,
 )
 from mostt_model_builder.application.run_step import HostIdentity, ImageFacts
@@ -27,9 +29,18 @@ from mostt_model_builder.domain.acceptance.parity_reports import (
     ParityReportError,
     render_parity_report,
 )
+from mostt_model_builder.domain.bench.hypotheses import (
+    RUN_LINES_FILE_NAME,
+    RUN_LINES_MAX_SIZE_BYTES,
+    Hypothesis,
+    HypothesisError,
+    parse_run_lines,
+)
 from mostt_model_builder.domain.containers.account_ranges import HostAccounts
 from mostt_model_builder.domain.containers.base_images import ENVIRONMENT_PYTHON
+from mostt_model_builder.domain.containers.container_files import ContainerFileError
 from mostt_model_builder.domain.containers.container_steps import (
+    INSPECT_STEP_NAME,
     PEAKS_FILE_NAME,
     PEAKS_OUTPUT,
     BindMount,
@@ -44,7 +55,38 @@ from mostt_model_builder.domain.containers.container_steps import (
 )
 from mostt_model_builder.domain.containers.step_peaks import StepPeaks, render_step_peaks
 from mostt_model_builder.domain.containers.work_directory import WorkDirectoryError
-from mostt_model_builder.domain.contract.recipe_contract import Parity
+from mostt_model_builder.domain.contract.derived_rows import (
+    SHARD_REQUEST_FILE_NAME,
+    DeviceRow,
+    ShardedRun,
+    StepTemplate,
+    derive_rows,
+    render_shard_request,
+)
+from mostt_model_builder.domain.contract.recipe_contract import (
+    JudgedCandidateFile,
+    Parity,
+    StepOutputOrigin,
+)
+from mostt_model_builder.domain.formats.file_formats import FileFormat
+from mostt_model_builder.domain.onnx.graph_rules import GraphRuleError
+from mostt_model_builder.domain.onnx.inspection_report import (
+    INSPECTION_REPORT_FILE_NAME,
+    FileInspection,
+    InspectionReport,
+    NodeCount,
+    NodeScope,
+    Opset,
+    render_inspection_report,
+)
+from mostt_model_builder.domain.onnx.node_placement import (
+    PLACEMENT_FILE_NAME,
+    PLACEMENT_MAX_SIZE_BYTES,
+    NodePlacementError,
+    PlacedNodes,
+    PlacementSummary,
+    render_placement_summary,
+)
 from mostt_model_builder.domain.sources.source_pins import RepositoryType, SourcePin
 
 WORK_ROOT = PurePosixPath("/data/builds/work")
@@ -91,12 +133,145 @@ RUN = RecipeStepRun(
     host=HOST,
 )
 
+GPU_IMAGE = ContainerImage(RECIPE_NAME, "bench-gpu", Device.GPU, ENVIRONMENT_PYTHON)
+PROFILE_OUTPUT = DeclaredOutput("profile.json", 4096)
+TRANSCRIBE_TEMPLATE = StepTemplate(
+    name="transcribe",
+    entry_module="mostt_recipe_family.steps.transcribe",
+    sources=(),
+    earlier_outputs=(),
+    binds_candidate=True,
+    outputs=(
+        DeclaredOutput(RUN_LINES_FILE_NAME, RUN_LINES_MAX_SIZE_BYTES),
+        PROFILE_OUTPUT,
+        PEAKS_OUTPUT,
+    ),
+    devices={
+        Device.GPU: DeviceRow(
+            image=GPU_IMAGE,
+            limits=StepLimits(
+                memory_mib=4096, process_count=64, cpu_count=2, temporary_directory_mib=64
+            ),
+            outputs=(DeclaredOutput(PLACEMENT_FILE_NAME, PLACEMENT_MAX_SIZE_BYTES),),
+        )
+    },
+)
+FLEURS_RUN = ShardedRun("fleurs", "int8", Device.GPU, ("fr_fr",), shard_count=2)
+SHARD_ROW = derive_rows(TRANSCRIBE_TEMPLATE, (FLEURS_RUN,))[1]
+SHARD_DIRECTORY = WORK_ROOT / RUN_DIRECTORY / SHARD_ROW.row.name
+VOCABULARY_NAME = "vocab.txt"
+VOCABULARY = b"<blk>\nbon\njour\n"
+ENCODER_NAME = "encoder.onnx"
+ENCODER = b"\x08\x07\x3a\x00"
+CANDIDATE_ROW = replace(
+    EXPORT_ROW,
+    outputs=(
+        DeclaredOutput(ENCODER_NAME, 4096),
+        DeclaredOutput(VOCABULARY_NAME, 4096),
+        PEAKS_OUTPUT,
+    ),
+)
+CANDIDATE_REQUEST = CandidateRequest(
+    recipe_name=RECIPE_NAME,
+    commit=COMMIT,
+    work_root=WORK_ROOT,
+    head_tree=HEAD_TREE,
+    host=HOST,
+    candidate=(
+        JudgedCandidateFile(
+            ENCODER_NAME, FileFormat.ONNX, ("int8",), StepOutputOrigin("export", ENCODER_NAME)
+        ),
+        JudgedCandidateFile(
+            VOCABULARY_NAME,
+            FileFormat.TEXT,
+            ("int8",),
+            StepOutputOrigin("export", VOCABULARY_NAME),
+        ),
+    ),
+    rows=(CANDIDATE_ROW,),
+    conversion_input=None,
+)
+ENCODER_INSPECTION = FileInspection(
+    name=ENCODER_NAME,
+    opsets=(Opset("", 17),),
+    functions=(),
+    nodes=(NodeCount(NodeScope.GRAPH, "", "MatMul", 1),),
+    metadata_props_node_count=0,
+    products=(),
+    external_tensors=(),
+    training_graph_count=0,
+    sparse_initializer_count=0,
+)
+INSPECTION_REPORT = InspectionReport((ENCODER_INSPECTION,))
+REFUSED_INSPECTION_REPORT = InspectionReport(
+    (replace(ENCODER_INSPECTION, metadata_props_node_count=3),)
+)
+FRENCH_LINES = (
+    b'{"language": "fr_fr", "utterance": "1001.wav", "token": 1, "decoding_time_ms": 12.5}\n'
+    b'{"language": "fr_fr", "utterance": "1002.wav", "token": 2, "decoding_time_ms": 9.0}\n'
+)
+ENGLISH_LINES = (
+    b'{"language": "en_us", "utterance": "1001.wav", "token": 1, "decoding_time_ms": 12.5}\n'
+)
+FRENCH_HYPOTHESES = (
+    Hypothesis("fr_fr", "1001.wav", "bon", 0, 12.5),
+    Hypothesis("fr_fr", "1002.wav", "jour", 0, 9.0),
+)
+GPU_PLACEMENT = PlacementSummary(
+    (
+        PlacedNodes("CPUExecutionProvider", "Shape", ("int64",), 4),
+        PlacedNodes("CUDAExecutionProvider", "MatMul", ("float32",), 10),
+    )
+)
+FALLEN_BACK_PLACEMENT = PlacementSummary(
+    (PlacedNodes("CPUExecutionProvider", "MatMul", ("float32",), 3),)
+)
+
+
+def read_tokens_through_the_vocabulary(
+    lines: bytes, candidate_texts: Mapping[str, bytes]
+) -> tuple[Hypothesis, ...]:
+    vocabulary = candidate_texts[VOCABULARY_NAME].decode().splitlines()
+    return tuple(
+        Hypothesis(
+            language=str(line["language"]),
+            utterance_id=str(line["utterance"]),
+            text=vocabulary[int(str(line["token"]))],
+            unknown_token_count=0,
+            decoding_time_ms=float(str(line["decoding_time_ms"])),
+        )
+        for line in parse_run_lines(lines)
+    )
+
+
+SHARD_RUN = RecipeStepRun(
+    row=SHARD_ROW.row,
+    recipe_name=RECIPE_NAME,
+    pins=(),
+    commit=COMMIT,
+    work_root=WORK_ROOT,
+    head_tree=HEAD_TREE,
+    host=HOST,
+    shard=RunShard(
+        SHARD_ROW.request,
+        read_tokens_through_the_vocabulary,
+        {VOCABULARY_NAME: VOCABULARY},
+    ),
+    candidate=CANDIDATE_REQUEST,
+)
+
 
 @dataclass(frozen=True)
 class CompletedRecipeStep:
     outcome: RecipeStepOutcome
     runs: list[ContainerRun]
     files: FakeStepFiles
+
+
+@dataclass(frozen=True)
+class RefusedRecipeStep:
+    run_act: Callable[[], RecipeStepOutcome]
+    engine: FakeContainerEngine
 
 
 def build_files() -> FakeStepFiles:
@@ -122,6 +297,55 @@ def build_engine(files: FakeStepFiles, parity_report: bytes | None = None) -> Fa
         images={EXPORT_IMAGE.tag: ImageFacts(IMAGE_ID, HEAD_TREE)},
         step_outputs=step_outputs,
     )
+
+
+def build_shard_engine(
+    files: FakeStepFiles, lines: bytes, placement: PlacementSummary
+) -> FakeContainerEngine:
+    return FakeContainerEngine(
+        files=files,
+        images={GPU_IMAGE.tag: ImageFacts(IMAGE_ID, HEAD_TREE)},
+        step_outputs={
+            PLACEMENT_FILE_NAME: build_step_output(render_placement_summary(placement)),
+            RUN_LINES_FILE_NAME: build_step_output(lines),
+            PROFILE_OUTPUT.name: build_step_output(b"{}"),
+            PEAKS_FILE_NAME: build_step_output(render_step_peaks(PEAKS)),
+        },
+    )
+
+
+def build_inspected_files(
+    inspection_report: InspectionReport | None = INSPECTION_REPORT,
+) -> FakeStepFiles:
+    files = FakeStepFiles()
+    files.add_directory(WORK_ROOT)
+    candidate_directory = WORK_ROOT / RUN_DIRECTORY / "candidate"
+    files.add_directory(candidate_directory, build_directory_facts(0o750))
+    for name, content in ((ENCODER_NAME, ENCODER), (VOCABULARY_NAME, VOCABULARY)):
+        files.add_file(
+            candidate_directory / name, build_file_facts(len(content), mode=0o444), content
+        )
+    if inspection_report is not None:
+        inspect_directory = WORK_ROOT / RUN_DIRECTORY / INSPECT_STEP_NAME
+        files.add_directory(inspect_directory, build_directory_facts(0o2770))
+        files.add_file(
+            inspect_directory / INSPECTION_REPORT_FILE_NAME,
+            *build_step_output(render_inspection_report(inspection_report)),
+        )
+        files.add_file(
+            inspect_directory / PEAKS_FILE_NAME, *build_step_output(render_step_peaks(PEAKS))
+        )
+    return files
+
+
+def build_shard_act(
+    lines: bytes,
+    placement: PlacementSummary,
+    files: FakeStepFiles | None = None,
+    shard_run: RecipeStepRun = SHARD_RUN,
+) -> Callable[[], RecipeStepOutcome]:
+    files = files or build_inspected_files()
+    return partial(run_recipe_step, shard_run, build_shard_engine(files, lines, placement), files)
 
 
 def build_parity_run() -> RecipeStepRun:
@@ -257,6 +481,130 @@ class TestTheRecipeStepRun:
                     WorkDirectoryError,
                     match=re.escape(
                         "no pin gives model.safetensors of maker/weights, which a step reads"
+                    ),
+                ):
+                    run_act()
+
+        class TestWhenTheRowRunsAShardOfARun:
+            @pytest.fixture
+            def recipe_step(self) -> CompletedRecipeStep:
+                files = build_inspected_files()
+                engine = build_shard_engine(files, FRENCH_LINES, GPU_PLACEMENT)
+                outcome = run_recipe_step(SHARD_RUN, engine, files)
+                return CompletedRecipeStep(outcome, engine.runs, files)
+
+            def test_should_write_the_request_of_the_shard_in_the_request_of_its_row(
+                self, recipe_step: CompletedRecipeStep
+            ) -> None:
+                assert recipe_step.files.contents[
+                    WORK_ROOT
+                    / RUN_DIRECTORY
+                    / "requests"
+                    / SHARD_ROW.row.name
+                    / SHARD_REQUEST_FILE_NAME
+                ] == render_shard_request(SHARD_ROW.request)
+
+            def test_should_give_back_the_hypotheses_that_the_reader_of_the_run_gives(
+                self, recipe_step: CompletedRecipeStep
+            ) -> None:
+                assert recipe_step.outcome.hypotheses == FRENCH_HYPOTHESES
+
+            def test_should_give_back_the_placement_of_the_nodes(
+                self, recipe_step: CompletedRecipeStep
+            ) -> None:
+                assert recipe_step.outcome.placement == GPU_PLACEMENT
+
+            def test_should_read_the_inspection_then_the_placement_the_lines_and_the_peaks_alone(
+                self, recipe_step: CompletedRecipeStep
+            ) -> None:
+                assert recipe_step.files.read_paths == [
+                    WORK_ROOT / RUN_DIRECTORY / INSPECT_STEP_NAME / INSPECTION_REPORT_FILE_NAME,
+                    WORK_ROOT / RUN_DIRECTORY / INSPECT_STEP_NAME / PEAKS_FILE_NAME,
+                    SHARD_DIRECTORY / PLACEMENT_FILE_NAME,
+                    SHARD_DIRECTORY / RUN_LINES_FILE_NAME,
+                    SHARD_DIRECTORY / PEAKS_FILE_NAME,
+                ]
+
+        class TestWhenTheShardPlacesAFloatingPointNodeOnTheCpu:
+            @pytest.fixture
+            def run_act(self) -> Callable[[], RecipeStepOutcome]:
+                return build_shard_act(FRENCH_LINES, FALLEN_BACK_PLACEMENT)
+
+            def test_should_refuse_it_since_a_part_of_the_model_fell_back_to_the_cpu(
+                self, run_act: Callable[[], RecipeStepOutcome]
+            ) -> None:
+                with pytest.raises(
+                    NodePlacementError,
+                    match=re.escape("nodes MatMul run on the CPU with float32 tensors, 3 of them"),
+                ):
+                    run_act()
+
+        class TestWhenTheReaderGivesAHypothesisInALanguageOutsideTheRun:
+            @pytest.fixture
+            def run_act(self) -> Callable[[], RecipeStepOutcome]:
+                return build_shard_act(ENGLISH_LINES, GPU_PLACEMENT)
+
+            def test_should_refuse_it_since_the_run_transcribes_its_own_languages_alone(
+                self, run_act: Callable[[], RecipeStepOutcome]
+            ) -> None:
+                with pytest.raises(
+                    HypothesisError,
+                    match=re.escape(
+                        "the hypothesis of '1001.wav' is in 'en_us', not a language of its run"
+                    ),
+                ):
+                    run_act()
+
+        class TestWhenTheRowBindsACandidateThatItsInspectionRefused:
+            @pytest.fixture
+            def refused_step(self) -> RefusedRecipeStep:
+                files = build_inspected_files(REFUSED_INSPECTION_REPORT)
+                engine = build_shard_engine(files, FRENCH_LINES, GPU_PLACEMENT)
+                return RefusedRecipeStep(partial(run_recipe_step, SHARD_RUN, engine, files), engine)
+
+            def test_should_refuse_it_before_any_container_starts(
+                self, refused_step: RefusedRecipeStep
+            ) -> None:
+                with pytest.raises(
+                    GraphRuleError,
+                    match=re.escape(
+                        f"the graph of {ENCODER_NAME} has 3 nodes that hold metadata_props"
+                    ),
+                ):
+                    refused_step.run_act()
+                assert refused_step.engine.runs == []
+
+        class TestWhenTheRowBindsACandidateThatWasNeverInspected:
+            @pytest.fixture
+            def run_act(self) -> Callable[[], RecipeStepOutcome]:
+                return build_shard_act(
+                    FRENCH_LINES, GPU_PLACEMENT, build_inspected_files(inspection_report=None)
+                )
+
+            def test_should_refuse_it_and_name_step_inspect(
+                self, run_act: Callable[[], RecipeStepOutcome]
+            ) -> None:
+                with pytest.raises(
+                    ContainerFileError,
+                    match=re.escape(f"{RUN_DIRECTORY}/{INSPECT_STEP_NAME} is missing"),
+                ):
+                    run_act()
+
+        class TestWhenTheRunGivesNoCandidateForARowThatBindsIt:
+            @pytest.fixture
+            def run_act(self) -> Callable[[], RecipeStepOutcome]:
+                return build_shard_act(
+                    FRENCH_LINES, GPU_PLACEMENT, shard_run=replace(SHARD_RUN, candidate=None)
+                )
+
+            def test_should_refuse_it_since_only_an_inspected_candidate_reaches_a_run(
+                self, run_act: Callable[[], RecipeStepOutcome]
+            ) -> None:
+                with pytest.raises(
+                    CandidateError,
+                    match=re.escape(
+                        f"the step {SHARD_ROW.row.name} reads the candidate, and was given no "
+                        "request of it"
                     ),
                 ):
                     run_act()

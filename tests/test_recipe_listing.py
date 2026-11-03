@@ -10,6 +10,7 @@ import pytest
 from mostt_model_builder.bootstrap import RECIPE_NAME_GRAMMAR as BOOTSTRAP_RECIPE_NAME_GRAMMAR
 from mostt_model_builder.domain.containers.base_images import (
     BASE_IMAGES,
+    BASE_PYTHON,
     PYTHON_BASE_IMAGE,
     UV_IMAGE,
 )
@@ -44,6 +45,10 @@ CODE_RUNNING_SOURCES = [
 ]
 CORE_CONTAINERFILES = sorted((REPO_ROOT / "images").glob("*/Containerfile"))
 CORE_CONTAINERFILE_IDS = [path.parent.name for path in CORE_CONTAINERFILES]
+BASE_PYTHON_CONTAINERFILES = [
+    REPO_ROOT / str(image.containerfile) for image in CORE_IMAGES if image.python == BASE_PYTHON
+]
+BASE_PYTHON_CONTAINERFILE_IDS = [path.parent.name for path in BASE_PYTHON_CONTAINERFILES]
 RECIPE_CONTAINERFILES = sorted(RECIPES_DIRECTORY.glob("*/images/*/Containerfile"))
 CONTAINERFILES = [*CORE_CONTAINERFILES, *RECIPE_CONTAINERFILES]
 CONTAINERFILE_IDS = [str(path.parent.relative_to(REPO_ROOT)) for path in CONTAINERFILES]
@@ -490,13 +495,15 @@ class TestTheRecipeListing:
         ) -> None:
             assert find_unchecked_wheels(containerfile, instructions) == []
 
-    @pytest.mark.parametrize("containerfile", CORE_CONTAINERFILES, ids=CORE_CONTAINERFILE_IDS)
-    class TestWhenACoreContainerfileIsRead:
+    @pytest.mark.parametrize(
+        "containerfile", BASE_PYTHON_CONTAINERFILES, ids=BASE_PYTHON_CONTAINERFILE_IDS
+    )
+    class TestWhenTheContainerfileOfACoreImageWithoutAnEnvironmentIsRead:
         @pytest.fixture
         def instructions(self, containerfile: Path) -> list[str]:
             return list_instructions(containerfile.read_text(encoding="utf-8"))
 
-        def test_should_run_no_command_since_neither_image_has_a_main_install(
+        def test_should_run_no_command_since_its_steps_run_on_the_bases_python(
             self, instructions: list[str]
         ) -> None:
             assert [line for line in instructions if line.startswith("RUN")] == []

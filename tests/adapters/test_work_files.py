@@ -2,12 +2,13 @@ import hashlib
 import os
 import stat
 from collections.abc import Callable
+from dataclasses import dataclass
 from functools import partial
 from pathlib import Path, PurePosixPath
 
 import pytest
 
-from mostt_model_builder.adapters.work_files import WorkFiles
+from mostt_model_builder.adapters.work_files import COPY_CHUNK_BYTES, WorkFiles
 from mostt_model_builder.application.fetch_sources import FileDigest, SourceFileError
 from mostt_model_builder.application.run_step import WrittenFile, WrittenOutputs
 from mostt_model_builder.domain.containers.container_files import (
@@ -22,12 +23,49 @@ MAX_SIZE_BYTES = 4096
 # A sparse file as large as the encoder's external data, which no parser of the host reads.
 UNPARSED_SIZE_BYTES = 2_476_376_064
 
+# A file of a full chunk and a part of one, so that the copy reads it in two chunks.
+COPIED_CONTENT = bytes(range(256)) * (COPY_CHUNK_BYTES // 256) + FILE_CONTENT
+
+
+@dataclass(frozen=True)
+class FileCopy:
+    facts: FileFacts
+    observed_chunks: list[bytes]
+    copied_content: bytes
+    copied_mode: int
+
+
+@dataclass(frozen=True)
+class SkippedCopy:
+    facts: FileFacts
+    observed_chunks: list[bytes]
+    entry_names: list[str]
+
 
 def build_work_root(tmp_path: Path) -> Path:
     work_root = tmp_path / "work"
     work_root.mkdir(mode=0o700)
     work_root.chmod(0o700)
     return work_root
+
+
+def build_output_directory(tmp_path: Path) -> Path:
+    output_directory = tmp_path / "output"
+    output_directory.mkdir()
+    (tmp_path / "candidate").mkdir()
+    return output_directory
+
+
+def copy_into_the_candidate(tmp_path: Path, name: str, max_size_bytes: int) -> SkippedCopy:
+    observed_chunks: list[bytes] = []
+    facts = WorkFiles().copy_written_file(
+        PurePosixPath(tmp_path / "output"),
+        name,
+        max_size_bytes,
+        PurePosixPath(tmp_path / "candidate" / name),
+        observed_chunks.append,
+    )
+    return SkippedCopy(facts, observed_chunks, os.listdir(tmp_path / "candidate"))
 
 
 class TestTheWorkFiles:
@@ -372,3 +410,163 @@ class TestTheWorkFiles:
 
             def test_should_remove_its_files_and_itself(self, entries_left: list[str]) -> None:
                 assert entries_left == []
+
+    class TestTheCopyWrittenFileMethod:
+        class TestWhenTheFileIsRegularAndWithinItsBound:
+            @pytest.fixture
+            def file_copy(self, tmp_path: Path) -> FileCopy:
+                output_directory = build_output_directory(tmp_path)
+                (output_directory / "encoder-model.onnx").write_bytes(COPIED_CONTENT)
+                (output_directory / "encoder-model.onnx").chmod(0o640)
+                target = tmp_path / "candidate" / "encoder-model.onnx"
+                observed_chunks: list[bytes] = []
+                facts = WorkFiles().copy_written_file(
+                    PurePosixPath(output_directory),
+                    "encoder-model.onnx",
+                    len(COPIED_CONTENT),
+                    PurePosixPath(target),
+                    observed_chunks.append,
+                )
+                return FileCopy(
+                    facts, observed_chunks, target.read_bytes(), stat.S_IMODE(target.stat().st_mode)
+                )
+
+            def test_should_give_back_the_facts_of_the_source(self, file_copy: FileCopy) -> None:
+                assert file_copy.facts == FileFacts(
+                    FileKind.REGULAR, os.getuid(), 0o640, len(COPIED_CONTENT), 1
+                )
+
+            def test_should_copy_it_whole(self, file_copy: FileCopy) -> None:
+                assert file_copy.copied_content == COPIED_CONTENT
+
+            def test_should_leave_the_copy_readable_and_writable_by_no_one(
+                self, file_copy: FileCopy
+            ) -> None:
+                assert file_copy.copied_mode == 0o444
+
+            def test_should_read_it_chunk_by_chunk(self, file_copy: FileCopy) -> None:
+                assert [len(chunk) for chunk in file_copy.observed_chunks] == [
+                    COPY_CHUNK_BYTES,
+                    len(COPIED_CONTENT) - COPY_CHUNK_BYTES,
+                ]
+
+            def test_should_show_the_observer_the_bytes_it_copies(
+                self, file_copy: FileCopy
+            ) -> None:
+                assert b"".join(file_copy.observed_chunks) == COPIED_CONTENT
+
+        class TestWhenTheFileIsALink:
+            @pytest.fixture
+            def skipped_copy(self, tmp_path: Path) -> SkippedCopy:
+                output_directory = build_output_directory(tmp_path)
+                (output_directory / "vocab.txt").symlink_to("/etc/passwd")
+                return copy_into_the_candidate(tmp_path, "vocab.txt", MAX_SIZE_BYTES)
+
+            def test_should_give_back_the_facts_of_the_link(
+                self, skipped_copy: SkippedCopy
+            ) -> None:
+                assert skipped_copy.facts.kind is FileKind.LINK
+
+            def test_should_copy_nothing_since_it_follows_no_link(
+                self, skipped_copy: SkippedCopy
+            ) -> None:
+                assert (skipped_copy.observed_chunks, skipped_copy.entry_names) == ([], [])
+
+        class TestWhenTheFileIsAFifo:
+            @pytest.fixture
+            def skipped_copy(self, tmp_path: Path) -> SkippedCopy:
+                output_directory = build_output_directory(tmp_path)
+                os.mkfifo(output_directory / "vocab.txt")
+                return copy_into_the_candidate(tmp_path, "vocab.txt", MAX_SIZE_BYTES)
+
+            def test_should_give_back_the_facts_of_the_fifo(
+                self, skipped_copy: SkippedCopy
+            ) -> None:
+                assert skipped_copy.facts.kind is FileKind.FIFO
+
+            def test_should_copy_nothing_since_reading_it_could_block(
+                self, skipped_copy: SkippedCopy
+            ) -> None:
+                assert (skipped_copy.observed_chunks, skipped_copy.entry_names) == ([], [])
+
+        class TestWhenTheFileExceedsItsBound:
+            @pytest.fixture
+            def skipped_copy(self, tmp_path: Path) -> SkippedCopy:
+                output_directory = build_output_directory(tmp_path)
+                (output_directory / "vocab.txt").write_bytes(FILE_CONTENT)
+                return copy_into_the_candidate(tmp_path, "vocab.txt", len(FILE_CONTENT) - 1)
+
+            def test_should_give_back_its_size(self, skipped_copy: SkippedCopy) -> None:
+                assert skipped_copy.facts.size_bytes == len(FILE_CONTENT)
+
+            def test_should_copy_none_of_it(self, skipped_copy: SkippedCopy) -> None:
+                assert (skipped_copy.observed_chunks, skipped_copy.entry_names) == ([], [])
+
+        class TestWhenTheTargetExists:
+            @pytest.fixture
+            def copy_act(self, tmp_path: Path) -> Callable[[], SkippedCopy]:
+                output_directory = build_output_directory(tmp_path)
+                (output_directory / "vocab.txt").write_bytes(FILE_CONTENT)
+                (tmp_path / "candidate" / "vocab.txt").write_bytes(b"earlier copy")
+                return partial(copy_into_the_candidate, tmp_path, "vocab.txt", MAX_SIZE_BYTES)
+
+            def test_should_refuse_to_overwrite_it(
+                self, copy_act: Callable[[], SkippedCopy]
+            ) -> None:
+                with pytest.raises(FileExistsError):
+                    copy_act()
+
+        class TestWhenTheDirectoryIsALink:
+            @pytest.fixture
+            def copy_act(self, tmp_path: Path) -> Callable[[], SkippedCopy]:
+                elsewhere = tmp_path / "elsewhere"
+                elsewhere.mkdir()
+                (elsewhere / "vocab.txt").write_bytes(FILE_CONTENT)
+                (tmp_path / "output").symlink_to(elsewhere)
+                (tmp_path / "candidate").mkdir()
+                return partial(copy_into_the_candidate, tmp_path, "vocab.txt", MAX_SIZE_BYTES)
+
+            def test_should_refuse_to_open_it(self, copy_act: Callable[[], SkippedCopy]) -> None:
+                with pytest.raises(NotADirectoryError):
+                    copy_act()
+
+    class TestTheReadHostFileMethod:
+        class TestWhenTheFileIsRegular:
+            @pytest.fixture
+            def host_file(self, tmp_path: Path) -> WrittenFile:
+                (tmp_path / "vocab.txt").write_bytes(FILE_CONTENT)
+                (tmp_path / "vocab.txt").chmod(0o444)
+                return WorkFiles().read_host_file(
+                    PurePosixPath(tmp_path), "vocab.txt", MAX_SIZE_BYTES
+                )
+
+            def test_should_give_its_facts_and_its_content(self, host_file: WrittenFile) -> None:
+                assert host_file == WrittenFile(
+                    FileFacts(FileKind.REGULAR, os.getuid(), 0o444, len(FILE_CONTENT), 1),
+                    FILE_CONTENT,
+                )
+
+        class TestWhenTheFileIsALink:
+            @pytest.fixture
+            def host_file(self, tmp_path: Path) -> WrittenFile:
+                (tmp_path / "vocab.txt").symlink_to("/etc/passwd")
+                return WorkFiles().read_host_file(
+                    PurePosixPath(tmp_path), "vocab.txt", MAX_SIZE_BYTES
+                )
+
+            def test_should_give_no_content_since_it_follows_no_link(
+                self, host_file: WrittenFile
+            ) -> None:
+                assert (host_file.facts.kind, host_file.content) == (FileKind.LINK, None)
+
+        class TestWhenTheFileIsMissing:
+            @pytest.fixture
+            def host_file(self, tmp_path: Path) -> WrittenFile:
+                return WorkFiles().read_host_file(
+                    PurePosixPath(tmp_path), "vocab.txt", MAX_SIZE_BYTES
+                )
+
+            def test_should_say_it_is_missing_so_that_the_caller_names_the_step_that_makes_it(
+                self, host_file: WrittenFile
+            ) -> None:
+                assert (host_file.facts.kind, host_file.content) == (FileKind.MISSING, None)

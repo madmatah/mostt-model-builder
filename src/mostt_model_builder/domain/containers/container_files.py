@@ -4,13 +4,20 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from pathlib import PurePosixPath
 
+from mostt_model_builder.domain.containers.container_steps import INSPECT_STEP_NAME
+
 # Every step leaves its outputs in this mode, readable by the user's group, which the host
 # runs as, since onnx writes its external data in 0600.
 WRITTEN_FILE_MODE = 0o640
+CANDIDATE_FILE_MODE = 0o444
 SINGLE_LINK_COUNT = 1
 
 
 class ContainerFileError(ValueError):
+    pass
+
+
+class MissingCandidateFileError(ContainerFileError):
     pass
 
 
@@ -84,6 +91,25 @@ def judge_written_file(
         )
     if facts.link_count != SINGLE_LINK_COUNT:
         raise ContainerFileError(f"{where} has {facts.link_count} links, not one")
+
+
+def judge_candidate_copy(name: str, facts: FileFacts, max_size_bytes: int, user_id: int) -> None:
+    where = f"the candidate file {name}"
+    if facts.kind is FileKind.MISSING:
+        raise MissingCandidateFileError(
+            f"{where} is missing from the candidate, which the step {INSPECT_STEP_NAME} assembles"
+        )
+    if (
+        facts.kind is not FileKind.REGULAR
+        or facts.owner_id != user_id
+        or facts.permission_bits != CANDIDATE_FILE_MODE
+        or facts.link_count != SINGLE_LINK_COUNT
+        or facts.size_bytes > max_size_bytes
+    ):
+        raise ContainerFileError(
+            f"{where} is not the host's own copy: a regular file of the user's, in mode "
+            f"{CANDIDATE_FILE_MODE:04o}, with a single link, of at most {max_size_bytes} bytes"
+        )
 
 
 def judge_mount(components: Sequence[PathComponent], is_file: bool, user_id: int) -> None:

@@ -20,6 +20,7 @@ IMAGES_UV_KEYS = {
     "exclude-newer",
     "required-version",
     "dependency-metadata",
+    "conflicts",
 }
 EXPORT_REQUIREMENTS = {
     "nemo-toolkit": ("asr",),
@@ -32,6 +33,20 @@ EXPORT_REQUIREMENTS = {
     "torch": (),
 }
 EXPORT_EXTRA = "parakeet-tdt-export"
+TRANSCRIBE_CPU_EXTRA = "parakeet-tdt-transcribe-cpu"
+TRANSCRIBE_GPU_EXTRA = "parakeet-tdt-transcribe-gpu"
+REQUIREMENTS_BY_EXTRA: dict[str, dict[str, tuple[str, ...]]] = {
+    "core-onnx-inspect": {"onnx": ()},
+    EXPORT_EXTRA: EXPORT_REQUIREMENTS,
+    TRANSCRIBE_CPU_EXTRA: {"numpy": (), "onnx-asr": (), "onnxruntime": ()},
+    TRANSCRIBE_GPU_EXTRA: {"numpy": (), "onnx-asr": (), "onnxruntime-gpu": ("cuda", "cudnn")},
+}
+# onnxruntime-gpu and onnxruntime install the same package, onnxruntime, so the extra of the GPU
+# image conflicts with every other extra that installs onnxruntime.
+CONFLICTS = [
+    [{"extra": TRANSCRIBE_GPU_EXTRA}, {"extra": EXPORT_EXTRA}],
+    [{"extra": TRANSCRIBE_GPU_EXTRA}, {"extra": TRANSCRIBE_CPU_EXTRA}],
+]
 CONTAINERFILES = sorted(
     [*REPO_ROOT.glob("images/*/Containerfile"), *REPO_ROOT.glob("recipes/*/images/*/Containerfile")]
 )
@@ -142,6 +157,11 @@ class TestTheProjectManifests:
             assert isinstance(exclude_newer, str)
             assert EXCLUDE_NEWER_GRAMMAR.fullmatch(exclude_newer)
 
+        def test_should_keep_the_onnx_runtime_of_the_gpu_from_any_image_of_the_other(
+            self, images_manifest: dict[str, object]
+        ) -> None:
+            assert read_table(images_manifest, "tool.uv")["conflicts"] == CONFLICTS
+
         def test_should_require_the_uv_of_the_uv_image_so_any_other_uv_refuses_the_project(
             self, images_manifest: dict[str, object]
         ) -> None:
@@ -177,7 +197,21 @@ class TestTheProjectManifests:
         def test_should_read_each_one_as_an_exact_pin_through_the_strict_parser(
             self, requirements: tuple[DeclaredRequirement, ...]
         ) -> None:
-            assert len(requirements) == len(EXPORT_REQUIREMENTS)
+            assert len(requirements) == sum(
+                len(extra_requirements) for extra_requirements in REQUIREMENTS_BY_EXTRA.values()
+            )
+
+        def test_should_give_each_image_exactly_the_libraries_its_steps_import(
+            self, requirements: tuple[DeclaredRequirement, ...]
+        ) -> None:
+            assert {
+                extra: {
+                    requirement.name: requirement.extras
+                    for requirement in requirements
+                    if requirement.extra == extra
+                }
+                for extra in REQUIREMENTS_BY_EXTRA
+            } == REQUIREMENTS_BY_EXTRA
 
         def test_should_give_the_export_image_nemo_torch_and_the_onnx_exporters(
             self, requirements: tuple[DeclaredRequirement, ...]

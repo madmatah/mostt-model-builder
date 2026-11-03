@@ -1,5 +1,5 @@
 import errno
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 
@@ -26,6 +26,10 @@ from mostt_model_builder.domain.containers.container_steps import (
 USER_ID = 1000
 GROUP_ID = 1000
 WRITTEN_MODE = 0o640
+COPY_MODE = 0o444
+# Chunks this small cut a signature or a varint across two chunks, as the chunks of a large file
+# may.
+COPY_CHUNK_BYTES = 3
 MISSING = FileFacts(FileKind.MISSING, -1, 0, 0, 0)
 CLEAN_ENTRY_MODULE = build_clean_row(BENCH_IMAGE).entry_module
 
@@ -120,6 +124,48 @@ class FakeStepFiles:
                 self.read_paths.append(directory / name)
             written_files[name] = WrittenFile(facts, content)
         return WrittenOutputs(entry_names, written_files)
+
+    def copy_written_file(
+        self,
+        directory: PurePosixPath,
+        name: str,
+        max_size_bytes: int,
+        target: PurePosixPath,
+        observe_chunk: Callable[[bytes], None],
+    ) -> FileFacts:
+        self.require_directory(directory)
+        if directory / name not in self.entries:
+            raise FileNotFoundError(errno.ENOENT, "No such file or directory", name)
+        facts = self.entries[directory / name]
+        if facts.kind is not FileKind.REGULAR or facts.size_bytes > max_size_bytes:
+            return facts
+        if target in self.entries:
+            raise FileExistsError(errno.EEXIST, "File exists", str(target))
+        content = self.contents.get(directory / name, b"")
+        if len(content) > max_size_bytes:
+            raise SourceFileError(
+                f"{target.name} grew beyond {max_size_bytes} bytes as it was copied"
+            )
+        for start in range(0, len(content), COPY_CHUNK_BYTES):
+            observe_chunk(content[start : start + COPY_CHUNK_BYTES])
+        self.entries[target] = build_file_facts(len(content), COPY_MODE)
+        self.contents[target] = content
+        self.file_modes[target] = COPY_MODE
+        return facts
+
+    def read_host_file(
+        self, directory: PurePosixPath, name: str, max_size_bytes: int
+    ) -> WrittenFile:
+        self.require_directory(directory)
+        facts = self.entries.get(directory / name, MISSING)
+        if facts.kind is not FileKind.REGULAR or facts.size_bytes > max_size_bytes:
+            return WrittenFile(facts, None)
+        self.read_paths.append(directory / name)
+        return WrittenFile(facts, self.contents.get(directory / name, b""))
+
+    def require_directory(self, directory: PurePosixPath) -> None:
+        if self.entries.get(directory, MISSING).kind is not FileKind.DIRECTORY:
+            raise NotADirectoryError(errno.ENOTDIR, "Not a directory", str(directory))
 
     def list_entry_names(self, directory: PurePosixPath) -> tuple[str, ...]:
         return self.list_children(directory)

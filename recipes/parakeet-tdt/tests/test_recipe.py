@@ -2,13 +2,27 @@ from pathlib import Path
 
 import pytest
 
-from mostt_model_builder.domain.contract.recipe_contract import SourceMount
+from mostt_model_builder.domain.contract.recipe_contract import (
+    CANDIDATE_MOUNT,
+    JudgedRecipe,
+    RecipeFacts,
+    SourceMount,
+    StepOutputOrigin,
+    judge_recipe,
+)
 from mostt_model_builder.domain.sources.source_pins import SourcePin, parse_source_pins
+from mostt_model_builder.host_main import CLONE_ROOT, find_present_entry_modules, read_pins
+from mostt_recipe_parakeet_tdt.domain.transcripts.run_readers import (
+    read_nemo_lines,
+    read_onnx_asr_lines,
+)
 from mostt_recipe_parakeet_tdt.recipe import (
     DESCRIBE_STEP,
     EXPORT_IMAGE_NAME,
     EXPORT_STEP,
     RECIPE,
+    REFERENCE_STEP,
+    TRANSCRIBE_STEP,
 )
 
 RECIPE_SOURCES_PATH = Path(__file__).resolve().parent.parent / "sources.toml"
@@ -39,6 +53,54 @@ EXPORT_OUTPUTS = [
     "encoder-parity.json",
     "peaks.json",
 ]
+BENCH_FILES = {
+    SourceMount(FLEURS_REPOSITORY, "data/fr_fr/test.tsv"),
+    SourceMount(FLEURS_REPOSITORY, "data/fr_fr/audio/test.tar.gz"),
+    SourceMount(FLEURS_REPOSITORY, "data/en_us/test.tsv"),
+    SourceMount(FLEURS_REPOSITORY, "data/en_us/audio/test.tar.gz"),
+}
+REFERENCE_FILES = {
+    SourceMount(ULTRA_REPOSITORY, "tokenizer.json"),
+    SourceMount(ULTRA_REPOSITORY, "model.safetensors"),
+    SourceMount(NEMO_REPOSITORY, "parakeet-tdt-0.6b-v3.nemo"),
+    *BENCH_FILES,
+}
+BOTH_LANGUAGES = ("fr_fr", "en_us")
+RUNS = [
+    ("nemo", "reference", "cpu", "reference", BOTH_LANGUAGES, 1, read_nemo_lines),
+    ("float32-cpu", "transcribe", "cpu", "float32", BOTH_LANGUAGES, 4, read_onnx_asr_lines),
+    ("float32-gpu", "transcribe", "gpu", "float32", BOTH_LANGUAGES, 1, read_onnx_asr_lines),
+]
+DERIVED_ROW_NAMES = [
+    "reference",
+    "transcribe-float32-cpu-0",
+    "transcribe-float32-cpu-1",
+    "transcribe-float32-cpu-2",
+    "transcribe-float32-cpu-3",
+    "transcribe-float32-gpu-0",
+]
+FLOAT32_CANDIDATE = [
+    ("encoder-model.onnx", "onnx", None),
+    ("encoder-model.onnx.data", "onnx-external-data", "encoder-model.onnx"),
+    ("decoder_joint-model.onnx", "onnx", None),
+    ("vocab.txt", "text", None),
+    ("config.json", "text", None),
+]
+HOST_CPU_COUNT = 20
+
+
+def judge_the_recipe() -> JudgedRecipe:
+    return judge_recipe(
+        RECIPE,
+        RecipeFacts(
+            core_pins=read_pins(CLONE_ROOT),
+            recipe_pins=read_pins(RECIPE_SOURCES_PATH.parent),
+            present_entry_modules=find_present_entry_modules(RECIPE),
+            host_cpu_count=HOST_CPU_COUNT,
+        ),
+    )
+
+
 DESCRIBED_FILES = {
     SourceMount(ULTRA_REPOSITORY, "model.safetensors"),
     SourceMount(NEMO_REPOSITORY, "parakeet-tdt-0.6b-v3.nemo"),
@@ -106,3 +168,76 @@ class TestTheParakeetTdtRecipe:
                 (parity.step, parity.output, parity.absolute_difference_tolerance)
                 for parity in RECIPE.parities
             ] == [("export", "encoder-parity.json", 5e-5)]
+
+    class TestItsReferenceStep:
+        def test_should_bind_moondreams_tokenizer_and_weights_the_nemo_and_both_benches_alone(
+            self,
+        ) -> None:
+            assert set(REFERENCE_STEP.mounts) == REFERENCE_FILES
+
+        def test_should_bind_each_file_once(self) -> None:
+            assert len(REFERENCE_STEP.mounts) == len(REFERENCE_FILES)
+
+        def test_should_run_on_the_cpu_in_the_export_image_since_it_reads_the_nemo(self) -> None:
+            assert [(template.device, template.image) for template in REFERENCE_STEP.devices] == [
+                ("cpu", EXPORT_IMAGE_NAME)
+            ]
+
+    class TestItsTranscribeStep:
+        def test_should_bind_the_candidate_and_both_benches_alone(self) -> None:
+            assert set(TRANSCRIBE_STEP.mounts) == {CANDIDATE_MOUNT, *BENCH_FILES}
+
+        def test_should_run_each_device_in_its_own_image(self) -> None:
+            assert [(template.device, template.image) for template in TRANSCRIBE_STEP.devices] == [
+                ("cpu", "transcribe-cpu"),
+                ("gpu", "transcribe-gpu"),
+            ]
+
+    class TestItsRuns:
+        def test_should_run_nemo_and_float32_on_both_devices_in_both_languages(self) -> None:
+            assert [
+                (
+                    run.name,
+                    run.step,
+                    run.device,
+                    run.variant,
+                    run.languages,
+                    run.shard_count,
+                    run.reader,
+                )
+                for run in RECIPE.runs
+            ] == RUNS
+
+    class TestItsCandidate:
+        def test_should_hold_the_float32_files_of_onnx_asr(self) -> None:
+            assert [
+                (candidate_file.name, candidate_file.file_format, candidate_file.external_data_of)
+                for candidate_file in RECIPE.candidate
+            ] == FLOAT32_CANDIDATE
+
+        def test_should_convert_the_exported_encoder(self) -> None:
+            assert RECIPE.conversion_input == StepOutputOrigin("export", "encoder-model.onnx")
+
+    class TestItsJudgment:
+        @pytest.fixture(scope="class")
+        @classmethod
+        def judged_recipe(cls) -> JudgedRecipe:
+            return judge_the_recipe()
+
+        def test_should_derive_one_reference_row_and_a_row_per_shard_of_the_transcriptions(
+            self, judged_recipe: JudgedRecipe
+        ) -> None:
+            assert [
+                derived_row.row.name for derived_row in judged_recipe.derived_rows
+            ] == DERIVED_ROW_NAMES
+
+        def test_should_build_from_the_bench_to_the_transcriptions(
+            self, judged_recipe: JudgedRecipe
+        ) -> None:
+            assert judged_recipe.build_order == (
+                "fleurs-check",
+                "export",
+                "inspect",
+                "reference",
+                "transcribe",
+            )

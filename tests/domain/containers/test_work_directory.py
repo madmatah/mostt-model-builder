@@ -315,13 +315,14 @@ class TestTheWorkDirectory:
             def placement(self) -> StepPlacement:
                 return place_step("core", COMMIT, "fleurs-check")
 
-            def test_should_keep_its_outputs_request_and_log_apart_under_the_commit(
+            def test_should_keep_its_outputs_request_log_and_candidate_apart_under_the_commit(
                 self, placement: StepPlacement
             ) -> None:
                 assert placement == StepPlacement(
                     output_directory=PurePosixPath(f"runs/core/{COMMIT}/fleurs-check"),
                     request_directory=PurePosixPath(f"runs/core/{COMMIT}/requests/fleurs-check"),
                     log_path=PurePosixPath(f"runs/core/{COMMIT}/logs/fleurs-check.log"),
+                    candidate_directory=PurePosixPath(f"runs/core/{COMMIT}/candidate"),
                 )
 
     class TestThePlaceCleanFunction:

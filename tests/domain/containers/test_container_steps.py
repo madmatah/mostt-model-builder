@@ -6,20 +6,25 @@ from pathlib import PurePosixPath
 
 import pytest
 
-from mostt_model_builder.domain.containers.base_images import BASE_PYTHON
+from mostt_model_builder.domain.containers.base_images import BASE_PYTHON, ENVIRONMENT_PYTHON
 from mostt_model_builder.domain.containers.container_steps import (
+    BENCH_IMAGE,
     BOOTSTRAP_IN_THE_IMAGE,
+    CANDIDATE_IN_THE_CONTAINER,
     CLEAN_STEP_NAME,
     CONTAINER_USER_ID,
     CORE_IMAGES,
     FLEURS_CHECK_ROW,
+    INSPECT_ROW,
     LOCK_ROW,
     LOCK_STEP_NAME,
+    ONNX_INSPECT_IMAGE,
     OUTPUT_IN_THE_CONTAINER,
     PEAKS_FILE_NAME,
     REQUEST_IN_THE_CONTAINER,
     SCRATCH_IN_THE_CONTAINER,
     TEMPORARY_DIRECTORY_IN_THE_CONTAINER,
+    UV_CONTAINER_IMAGE,
     BindMount,
     ContainerImage,
     ContainerRun,
@@ -57,6 +62,7 @@ PLACEMENT = StepPlacement(
     output_directory=PurePosixPath("runs/core/c0ffee/step"),
     request_directory=REQUEST_DIRECTORY,
     log_path=PurePosixPath("runs/core/c0ffee/logs/step.log"),
+    candidate_directory=PurePosixPath("runs/core/c0ffee/candidate"),
 )
 BENCH_FILE_COUNT = 4
 REVISION = "70bb2e84b976b7e960aa89f1c648e09c59f894dd"
@@ -92,6 +98,7 @@ CODE_READING_IMAGES = {
 }
 EVERY_ROW = (
     FLEURS_CHECK_ROW,
+    INSPECT_ROW,
     LOCK_ROW,
     *(build_clean_row(image) for image in CORE_IMAGES),
     *(row for recipe in JUDGED_RECIPES for row in recipe.rows),
@@ -335,10 +342,26 @@ class TestTheContainerSteps:
             assert [image.tag for image in CORE_IMAGES] == [
                 "mostt-model-builder-core-bench",
                 "mostt-model-builder-core-uv",
+                "mostt-model-builder-core-onnx-inspect",
             ]
 
-        def test_should_run_the_core_images_on_the_bases_python_without_a_venv(self) -> None:
-            assert {image.python for image in CORE_IMAGES} == {BASE_PYTHON}
+        def test_should_run_the_bench_and_the_uv_images_on_the_bases_python_without_a_venv(
+            self,
+        ) -> None:
+            assert {image.python for image in (BENCH_IMAGE, UV_CONTAINER_IMAGE)} == {BASE_PYTHON}
+
+        def test_should_run_the_inspection_in_the_venv_of_its_image_which_installs_onnx(
+            self,
+        ) -> None:
+            assert ONNX_INSPECT_IMAGE.python == ENVIRONMENT_PYTHON
+
+        def test_should_inspect_the_candidate_within_three_gib_and_two_cpus(self) -> None:
+            assert (INSPECT_ROW.limits, INSPECT_ROW.binds_candidate) == (
+                StepLimits(
+                    memory_mib=3072, process_count=32, cpu_count=2, temporary_directory_mib=64
+                ),
+                True,
+            )
 
     class TestThePlanContainerRunFunction:
         @pytest.mark.parametrize("row", EVERY_ROW, ids=ROW_IDS)
@@ -496,6 +519,42 @@ class TestTheContainerSteps:
                 self, container_run: ContainerRun
             ) -> None:
                 assert ("TMPDIR", "/scratch") in container_run.environment
+
+        class TestWhenARowReadsTheCandidate:
+            @pytest.fixture
+            def container_run(self) -> ContainerRun:
+                return plan_row(INSPECT_ROW)
+
+            def test_should_bind_the_candidate_directory_read_only(
+                self, container_run: ContainerRun
+            ) -> None:
+                assert (
+                    BindMount(
+                        PurePosixPath("runs/core/c0ffee/candidate"),
+                        CANDIDATE_IN_THE_CONTAINER,
+                        is_read_only=True,
+                        is_file=False,
+                    )
+                    in container_run.mounts
+                )
+
+        class TestWhenARowThatReadsTheCandidateIsGivenNone:
+            @pytest.fixture
+            def plan_act(self) -> Callable[[], ContainerRun]:
+                return partial(
+                    plan_container_run,
+                    INSPECT_ROW,
+                    IMAGE_ID,
+                    replace(PLACEMENT, candidate_directory=None),
+                    {},
+                    WORK_ROOT,
+                    GROUP_ID,
+                    {},
+                )
+
+            def test_should_refuse_it(self, plan_act: Callable[[], ContainerRun]) -> None:
+                with pytest.raises(StepTableError, match="reads the candidate, and was given none"):
+                    plan_act()
 
         class TestWhenARowWithARequestIsGivenNone:
             @pytest.fixture

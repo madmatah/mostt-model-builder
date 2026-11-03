@@ -1,11 +1,12 @@
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import replace
 from functools import partial
 from pathlib import PurePosixPath
 
 import pytest
 
+from mostt_model_builder.domain.bench.hypotheses import Hypothesis
 from mostt_model_builder.domain.containers.base_images import BASE_PYTHON, ENVIRONMENT_PYTHON
 from mostt_model_builder.domain.containers.container_steps import (
     FLEURS_CHECK_ROW,
@@ -17,7 +18,10 @@ from mostt_model_builder.domain.containers.container_steps import (
     StepRow,
 )
 from mostt_model_builder.domain.contract.recipe_contract import (
+    CANDIDATE_MOUNT,
+    REFERENCE_VARIANT,
     CandidateFile,
+    DeviceTemplate,
     EarlierOutputMount,
     HostContentOrigin,
     JudgedRecipe,
@@ -27,8 +31,10 @@ from mostt_model_builder.domain.contract.recipe_contract import (
     RecipeFacts,
     RecipeImage,
     RecipeStep,
+    Run,
     SourceMount,
     StepOutputOrigin,
+    find_candidate_file_max_size_bytes,
     find_runnable_row,
     judge_recipe,
     locate_entry_module_file,
@@ -80,8 +86,9 @@ TRANSCRIBE_STEP = RecipeStep(
     uses_gpu=True,
 )
 NAMES_FILE = CandidateFile("names.txt", "text", ("float32",), StepOutputOrigin("describe", "names"))
+CONFIGURATION = b"{}"
 CONFIGURATION_FILE = CandidateFile(
-    "config.json", "text", ("float32", "float16"), HostContentOrigin(b"{}")
+    "config.json", "text", ("float32", "float16"), HostContentOrigin(CONFIGURATION)
 )
 NAMES_PARITY = Parity("names-against-reference", "describe", "names", 1e-3)
 CONTRACT = RecipeContract(
@@ -99,6 +106,83 @@ FACTS = RecipeFacts(
     ),
     host_cpu_count=20,
 )
+
+
+# A reader takes a shard's lines and the candidate's texts; the contract only checks that a run
+# has one, so this one reads nothing.
+def read_no_lines(
+    lines: bytes,  # noqa: ARG001
+    candidate_texts: Mapping[str, bytes],  # noqa: ARG001
+) -> tuple[Hypothesis, ...]:
+    return ()
+
+
+LINES_OUTPUT = DeclaredOutput("lines.jsonl", 2**20)
+PLACEMENT_OUTPUT = DeclaredOutput("placement.json", 2**20)
+SHARD_LIMITS = replace(LIMITS, cpu_count=1)
+TRANSCRIBE_CPU_IMAGE = RecipeImage("transcribe-cpu", "cpu", "family-transcribe-cpu")
+SHARDED_STEP = RecipeStep(
+    name="transcribe-variants",
+    image=None,
+    entry_module=TRANSCRIBE_MODULE,
+    mounts=(CANDIDATE_MOUNT, SourceMount("google/fleurs", "data/test.tsv")),
+    outputs=(PEAKS_OUTPUT,),
+    limits=None,
+    devices=(
+        DeviceTemplate("cpu", "transcribe-cpu", SHARD_LIMITS, (LINES_OUTPUT,)),
+        DeviceTemplate("gpu", "transcribe", LIMITS, (LINES_OUTPUT, PLACEMENT_OUTPUT)),
+    ),
+)
+ENCODER_FILE = CandidateFile(
+    "encoder.onnx", "onnx", ("float32",), StepOutputOrigin("describe", "names")
+)
+ENCODER_DATA_FILE = CandidateFile(
+    "encoder.onnx.data",
+    "onnx-external-data",
+    ("float32",),
+    HostContentOrigin(b"\x00"),
+    external_data_of="encoder.onnx",
+)
+CPU_RUN = Run(
+    "float32-cpu", "transcribe-variants", "cpu", "float32", ("fr_fr", "en_us"), 3, read_no_lines
+)
+GPU_RUN = Run("float32-gpu", "transcribe-variants", "gpu", "float32", ("fr_fr",), 1, read_no_lines)
+RUN_CONTRACT = replace(
+    CONTRACT,
+    images=(EXPORT_IMAGE, TRANSCRIBE_IMAGE, TRANSCRIBE_CPU_IMAGE),
+    steps=(DESCRIBE_STEP, SHARDED_STEP),
+    candidate=(NAMES_FILE, ENCODER_FILE, ENCODER_DATA_FILE),
+    runs=(CPU_RUN, GPU_RUN),
+    conversion_input=StepOutputOrigin("describe", "names"),
+    build_order=("fleurs-check", "describe", "inspect", "transcribe-variants"),
+)
+RUN_FACTS = replace(FACTS, present_entry_modules=FACTS.present_entry_modules | {TRANSCRIBE_MODULE})
+
+
+def change_run(run_index: int, **fields: object) -> RecipeContract:
+    runs = list(RUN_CONTRACT.runs)
+    runs[run_index] = replace(runs[run_index], **fields)  # type: ignore[arg-type]  # the test feeds a value outside the contract's types, on purpose
+    return replace(RUN_CONTRACT, runs=tuple(runs))
+
+
+def change_sharded_step(**fields: object) -> RecipeContract:
+    return replace(
+        RUN_CONTRACT,
+        steps=(DESCRIBE_STEP, replace(SHARDED_STEP, **fields)),  # type: ignore[arg-type]  # the test feeds a value outside the contract's types, on purpose
+    )
+
+
+def change_device_template(device_index: int, **fields: object) -> RecipeContract:
+    devices = list(SHARDED_STEP.devices)
+    devices[device_index] = replace(devices[device_index], **fields)  # type: ignore[arg-type]  # the test feeds a value outside the contract's types, on purpose
+    return change_sharded_step(devices=tuple(devices))
+
+
+def change_external_data(**fields: object) -> RecipeContract:
+    return replace(
+        RUN_CONTRACT,
+        candidate=(NAMES_FILE, ENCODER_FILE, replace(ENCODER_DATA_FILE, **fields)),  # type: ignore[arg-type]  # the test feeds a value outside the contract's types, on purpose
+    )
 
 
 def change_step(step_index: int, **fields: object) -> RecipeContract:
@@ -346,11 +430,223 @@ REFUSED_CONTRACTS = {
         change_parity(absolute_difference_tolerance=True),
         "has the tolerance True, not a finite number above 0",
     ),
+    "a step named like a directory of its run": (
+        change_step(0, name="candidate"),
+        "its step 'candidate' bears the name of a step of the core or of a directory of its run",
+    ),
+    "a run outside the grammar": (
+        change_run(0, name="Float32-cpu"),
+        "its run 'Float32-cpu' is not named under",
+    ),
+    "a run declared twice": (
+        replace(RUN_CONTRACT, runs=(CPU_RUN, CPU_RUN)),
+        "its run 'float32-cpu' is declared twice",
+    ),
+    "a run without a producing step": (
+        change_run(0, step="transcribe-other"),
+        "its run 'float32-cpu' comes from 'transcribe-other', which is not a step of the recipe",
+    ),
+    "a run of a step without a template": (
+        change_run(0, step="describe"),
+        "its step 'describe' produces the run float32-cpu, and has no template of its rows",
+    ),
+    "a run without a reader": (
+        change_run(0, reader=None),
+        "its run 'float32-cpu' has no reader of its lines",
+    ),
+    "a run on an unknown device": (
+        change_run(0, device="tpu"),
+        "its run 'float32-cpu' runs on 'tpu', neither cpu nor gpu",
+    ),
+    "a run on a device that its template does not give": (
+        change_sharded_step(devices=(SHARDED_STEP.devices[0],)),
+        "its run float32-gpu runs on the gpu, which its template does not give",
+    ),
+    "a run that reads a variant the candidate lacks": (
+        change_run(0, variant="float16"),
+        "its run 'float32-cpu' reads the variant 'float16', which no file of the candidate serves",
+    ),
+    "two runs whose rows share a name": (
+        replace(
+            RUN_CONTRACT,
+            steps=(
+                DESCRIBE_STEP,
+                replace(SHARDED_STEP, name="a"),
+                replace(SHARDED_STEP, name="a-b"),
+            ),
+            runs=(replace(CPU_RUN, name="b-c", step="a"), replace(CPU_RUN, name="c", step="a-b")),
+        ),
+        "its step 'a-b' derives the row a-b-c-0, which another row already holds",
+    ),
+    "a run that reads no language": (
+        change_run(0, languages=()),
+        "its run 'float32-cpu' reads no language",
+    ),
+    "a run that reads a language outside the bench": (
+        change_run(0, languages=("de_de",)),
+        "its run 'float32-cpu' reads 'de_de', which is not a language of the bench",
+    ),
+    "a run that names a language twice": (
+        change_run(0, languages=("fr_fr", "fr_fr")),
+        "its run 'float32-cpu' names a language twice",
+    ),
+    "a run of no shard": (
+        change_run(0, shard_count=0),
+        "its run 'float32-cpu' has 0 shards, outside 1 to 16",
+    ),
+    "a run of 17 shards": (
+        change_run(0, shard_count=17),
+        "its run 'float32-cpu' has 17 shards, outside 1 to 16",
+    ),
+    "a template whose device does not match its image": (
+        change_device_template(0, image="transcribe"),
+        "its template for 'cpu' runs in the gpu image mostt-model-builder-family-transcribe",
+    ),
+    "a template on an unknown device": (
+        change_device_template(0, device="tpu"),
+        "its template for 'tpu' names no device among cpu, gpu",
+    ),
+    "a template whose shard writes no lines": (
+        change_device_template(0, outputs=()),
+        "its template for 'cpu' writes no lines.jsonl, the lines of a run",
+    ),
+    "a template of the gpu whose shard writes no placement": (
+        change_device_template(1, outputs=(LINES_OUTPUT,)),
+        "its template for 'gpu' writes no placement.json, the placement of its nodes on the GPU",
+    ),
+    "a template of the cpu whose shard writes a placement": (
+        change_device_template(0, outputs=(LINES_OUTPUT, PLACEMENT_OUTPUT)),
+        "its template for 'cpu' writes placement.json, which only a run on the GPU writes",
+    ),
+    "a step with a template and its own image": (
+        change_sharded_step(image="transcribe"),
+        "has a template of its rows, which gives each device its image, its limits and the GPU",
+    ),
+    "a step with a template and no run": (
+        replace(RUN_CONTRACT, runs=()),
+        "its step 'transcribe-variants' has a template of its rows, and no run",
+    ),
+    "a step with neither an image nor a template": (
+        change_step(0, image=None),
+        "its step 'describe' has neither an image and limits nor a template",
+    ),
+    "external data that names no onnx file": (
+        change_external_data(external_data_of=None),
+        "its candidate file encoder.onnx.data holds external data, and names no onnx file",
+    ),
+    "external data of a file that is not onnx": (
+        change_external_data(external_data_of="names.txt"),
+        "holds the tensors of 'names.txt', which is not an onnx file of the candidate",
+    ),
+    "external data whose onnx file serves another variant": (
+        change_external_data(variants=("float16",)),
+        "serves float16, and its onnx file encoder.onnx serves float32",
+    ),
+    "a file of another format that names an onnx file": (
+        replace(RUN_CONTRACT, candidate=(replace(NAMES_FILE, external_data_of="encoder.onnx"),)),
+        "is text, and names the onnx file whose tensors it holds",
+    ),
+    "conversions that read no onnx file of the candidate": (
+        replace(RUN_CONTRACT, conversion_input=StepOutputOrigin("describe", "peaks.json")),
+        "its conversions read 'peaks.json' of 'describe', which no onnx file of the candidate",
+    ),
+    "a build that runs an unknown step": (
+        replace(RUN_CONTRACT, build_order=("fleurs-check", "publish")),
+        "its build runs 'publish', which neither the core nor the recipe builds with",
+    ),
+    "a build that runs a step twice": (
+        replace(RUN_CONTRACT, build_order=("describe", "describe")),
+        "its build runs a step twice",
+    ),
 }
 
 
 class TestTheRecipeContract:
     class TestTheJudgeRecipeFunction:
+        class TestWhenTheContractDeclaresRuns:
+            @pytest.fixture
+            def judged_recipe(self) -> JudgedRecipe:
+                return judge_recipe(RUN_CONTRACT, RUN_FACTS)
+
+            def test_should_derive_a_row_per_shard_named_after_its_step_run_and_shard(
+                self, judged_recipe: JudgedRecipe
+            ) -> None:
+                assert [derived_row.row.name for derived_row in judged_recipe.derived_rows] == [
+                    "transcribe-variants-float32-cpu-0",
+                    "transcribe-variants-float32-cpu-1",
+                    "transcribe-variants-float32-cpu-2",
+                    "transcribe-variants-float32-gpu-0",
+                ]
+
+            def test_should_put_the_derived_rows_among_the_rows_of_the_recipe(
+                self, judged_recipe: JudgedRecipe
+            ) -> None:
+                assert [row.name for row in judged_recipe.rows][1:] == [
+                    derived_row.row.name for derived_row in judged_recipe.derived_rows
+                ]
+
+            def test_should_run_each_row_in_the_image_of_its_device(
+                self, judged_recipe: JudgedRecipe
+            ) -> None:
+                assert {
+                    (derived_row.request.device.value, derived_row.row.image.name)
+                    for derived_row in judged_recipe.derived_rows
+                } == {("cpu", "transcribe-cpu"), ("gpu", "transcribe")}
+
+            def test_should_give_the_gpu_to_the_rows_of_the_gpu_run_alone(
+                self, judged_recipe: JudgedRecipe
+            ) -> None:
+                assert [
+                    derived_row.row.name
+                    for derived_row in judged_recipe.derived_rows
+                    if derived_row.row.uses_gpu
+                ] == ["transcribe-variants-float32-gpu-0"]
+
+            def test_should_bind_the_candidate_in_every_row_of_the_step(
+                self, judged_recipe: JudgedRecipe
+            ) -> None:
+                assert {
+                    derived_row.row.binds_candidate for derived_row in judged_recipe.derived_rows
+                } == {True}
+
+            def test_should_keep_the_runs_with_their_readers(
+                self, judged_recipe: JudgedRecipe
+            ) -> None:
+                assert [(run.name, run.reader) for run in judged_recipe.runs] == [
+                    ("float32-cpu", read_no_lines),
+                    ("float32-gpu", read_no_lines),
+                ]
+
+            def test_should_keep_the_external_data_with_the_onnx_file_it_serves(
+                self, judged_recipe: JudgedRecipe
+            ) -> None:
+                assert [
+                    (candidate_file.name, candidate_file.external_data_of)
+                    for candidate_file in judged_recipe.candidate
+                    if candidate_file.external_data_of is not None
+                ] == [("encoder.onnx.data", "encoder.onnx")]
+
+            def test_should_keep_the_order_of_the_build(self, judged_recipe: JudgedRecipe) -> None:
+                assert judged_recipe.build_order == (
+                    "fleurs-check",
+                    "describe",
+                    "inspect",
+                    "transcribe-variants",
+                )
+
+        class TestWhenARunReadsTheReference:
+            @pytest.fixture
+            def judged_recipe(self) -> JudgedRecipe:
+                return judge_recipe(change_run(0, variant=REFERENCE_VARIANT), RUN_FACTS)
+
+            def test_should_accept_it_since_a_reference_framework_reads_no_variant_of_the_candidate(
+                self, judged_recipe: JudgedRecipe
+            ) -> None:
+                assert [run.variant for run in judged_recipe.runs] == [
+                    REFERENCE_VARIANT,
+                    "float32",
+                ]
+
         class TestWhenTheContractKeepsWithinItsBounds:
             @pytest.fixture
             def judged_recipe(self) -> JudgedRecipe:
@@ -549,3 +845,26 @@ class TestTheRecipeContract:
                     match="neither the core nor the recipe family has a step named 'clean'",
                 ):
                     find_act()
+
+    class TestTheFindCandidateFileMaxSizeBytesFunction:
+        @pytest.fixture
+        def judged_recipe(self) -> JudgedRecipe:
+            return judge_recipe(CONTRACT, FACTS)
+
+        class TestWhenTheFileIsCopiedFromTheOutputOfAStep:
+            @pytest.fixture
+            def max_size_bytes(self, judged_recipe: JudgedRecipe) -> int:
+                return find_candidate_file_max_size_bytes(NAMES_FILE.origin, judged_recipe.rows)
+
+            def test_should_give_the_bound_its_step_declares(self, max_size_bytes: int) -> None:
+                assert max_size_bytes == NAMES_OUTPUT.max_size_bytes
+
+        class TestWhenTheFileHoldsContentOfTheHost:
+            @pytest.fixture
+            def max_size_bytes(self, judged_recipe: JudgedRecipe) -> int:
+                return find_candidate_file_max_size_bytes(
+                    CONFIGURATION_FILE.origin, judged_recipe.rows
+                )
+
+            def test_should_give_the_length_of_that_content(self, max_size_bytes: int) -> None:
+                assert max_size_bytes == len(CONFIGURATION)

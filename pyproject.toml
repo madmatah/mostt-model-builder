@@ -44,8 +44,12 @@ module = [
     "nemo.*",
     "numpy",
     "numpy.*",
+    "omegaconf",
+    "omegaconf.*",
     "onnx",
     "onnx.*",
+    "onnx_asr",
+    "onnx_asr.*",
     "onnx_ir",
     "onnx_ir.*",
     "onnxruntime",
@@ -175,6 +179,7 @@ forbidden_modules = [
     "mostt_model_builder.steps.fleurs_check",
     "mostt_model_builder.steps.clean_output",
     "mostt_model_builder.steps.lock_resolution",
+    "mostt_model_builder.steps.onnx_inspection",
 ]
 
 [[tool.importlinter.contracts]]
@@ -211,4 +216,5 @@ forbidden_modules = [
     "safetensors",
     "huggingface_hub",
     "librosa",
+    "omegaconf",
 ]
