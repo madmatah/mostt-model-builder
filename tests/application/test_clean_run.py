@@ -20,6 +20,7 @@ from mostt_model_builder.application.clean_run import (
     CleanRequest,
     clean_step,
     remove_candidate,
+    remove_verification_report,
 )
 from mostt_model_builder.application.run_step import HostIdentity, ImageFacts, StepError
 from mostt_model_builder.domain.containers.account_ranges import HostAccounts
@@ -56,6 +57,7 @@ CLEAN_LOG_PATH = WORK_ROOT / RUN_DIRECTORY / "logs/clean-fleurs-check.log"
 LINK_FACTS = FileFacts(FileKind.LINK, USER_ID, 0o777, 10, 1)
 CANDIDATE_DIRECTORY = WORK_ROOT / RUN_DIRECTORY / "candidate"
 CANDIDATE_FILE_NAMES = ("encoder-model.onnx", "vocab.txt")
+REPORT_PATH = WORK_ROOT / RUN_DIRECTORY / "verification.json"
 HOST = HostIdentity(USER_ID, GROUP_ID, 20, HostAccounts(False, (), ()))
 INSPECT_REQUEST = CleanRequest(INSPECT_ROW, RECIPE_NAME, COMMIT, WORK_ROOT, HEAD_TREE, HOST)
 REQUEST = CleanRequest(FLEURS_CHECK_ROW, RECIPE_NAME, COMMIT, WORK_ROOT, HEAD_TREE, HOST)
@@ -113,6 +115,12 @@ def build_refused_clean(link_path: PurePosixPath) -> RefusedClean:
 
 @dataclass(frozen=True)
 class CandidateRemoval:
+    outcome: CleanOutcome
+    files: FakeStepFiles
+
+
+@dataclass(frozen=True)
+class ReportRemoval:
     outcome: CleanOutcome
     files: FakeStepFiles
 
@@ -340,6 +348,59 @@ class TestTheCleanRun:
                     ContainerFileError,
                     match=re.escape(
                         f"{CANDIDATE_DIRECTORY} is a link, where a directory is declared"
+                    ),
+                ):
+                    remove_act()
+
+    class TestTheRemoveVerificationReportFunction:
+        class TestWhenTheRunHoldsAReport:
+            @pytest.fixture
+            def removal(self) -> ReportRemoval:
+                files = build_files_with_a_run()
+                files.add_file(REPORT_PATH, build_file_facts(2, 0o644), b"{}")
+                return ReportRemoval(remove_verification_report(REQUEST, files), files)
+
+            def test_should_remove_it(self, removal: ReportRemoval) -> None:
+                assert REPORT_PATH not in removal.files.entries
+
+            def test_should_say_it_cleaned(self, removal: ReportRemoval) -> None:
+                assert removal.outcome is CleanOutcome.CLEANED
+
+        class TestWhenTheRunHoldsNoReport:
+            @pytest.fixture
+            def outcome(self) -> CleanOutcome:
+                return remove_verification_report(REQUEST, build_files_with_a_run())
+
+            def test_should_say_there_was_nothing_to_clean(self, outcome: CleanOutcome) -> None:
+                assert outcome is CleanOutcome.NOTHING_TO_CLEAN
+
+        class TestWhenTheRunNeverRan:
+            @pytest.fixture
+            def outcome(self) -> CleanOutcome:
+                files = FakeStepFiles()
+                files.add_directory(WORK_ROOT)
+                return remove_verification_report(REQUEST, files)
+
+            def test_should_say_there_was_nothing_to_clean(self, outcome: CleanOutcome) -> None:
+                assert outcome is CleanOutcome.NOTHING_TO_CLEAN
+
+        class TestWhenTheRunIsALink:
+            @pytest.fixture
+            def remove_act(self) -> Callable[[], CleanOutcome]:
+                files = FakeStepFiles()
+                files.add_directory(WORK_ROOT / RUN_DIRECTORY.parent)
+                files.entries[WORK_ROOT / RUN_DIRECTORY] = FileFacts(
+                    FileKind.LINK, USER_ID, 0o777, 9, 1
+                )
+                return partial(remove_verification_report, REQUEST, files)
+
+            def test_should_refuse_to_follow_it(
+                self, remove_act: Callable[[], CleanOutcome]
+            ) -> None:
+                with pytest.raises(
+                    ContainerFileError,
+                    match=re.escape(
+                        f"{WORK_ROOT / RUN_DIRECTORY} is a link, where a directory is declared"
                     ),
                 ):
                     remove_act()

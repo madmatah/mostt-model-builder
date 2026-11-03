@@ -6,6 +6,12 @@ from pathlib import PurePosixPath
 
 import pytest
 
+from mostt_model_builder.domain.acceptance.acceptance import (
+    REPORTED_ONLY,
+    Comparison,
+    Equivalence,
+    NonInferiority,
+)
 from mostt_model_builder.domain.bench.hypotheses import Hypothesis
 from mostt_model_builder.domain.containers.base_images import BASE_PYTHON, ENVIRONMENT_PYTHON
 from mostt_model_builder.domain.containers.container_steps import (
@@ -167,6 +173,8 @@ RUN_CONTRACT = replace(
     build_order=("fleurs-check", "describe", "inspect", "transcribe-variants"),
 )
 RUN_FACTS = replace(FACTS, present_entry_modules=FACTS.present_entry_modules | {TRANSCRIBE_MODULE})
+CROSS_DEVICE_COMPARISON = Comparison("float32-gpu", "float32-cpu", Equivalence(0.99, 0.10))
+COMPARISON_CONTRACT = replace(RUN_CONTRACT, comparisons=(CROSS_DEVICE_COMPARISON,))
 
 
 CONVERTED_SIZE_BOUND_BYTES = 2**31
@@ -250,6 +258,10 @@ def change_run(run_index: int, **fields: object) -> RecipeContract:
     runs = list(RUN_CONTRACT.runs)
     runs[run_index] = replace(runs[run_index], **fields)  # type: ignore[arg-type]  # the test feeds a value outside the contract's types, on purpose
     return replace(RUN_CONTRACT, runs=tuple(runs))
+
+
+def compare(*comparisons: Comparison) -> RecipeContract:
+    return replace(RUN_CONTRACT, comparisons=comparisons)
 
 
 def change_sharded_step(**fields: object) -> RecipeContract:
@@ -758,6 +770,36 @@ REFUSED_CONTRACTS = {
         ),
         "its conversion to the variant float16 writes encoder.fp16.onnx, which no onnx file",
     ),
+    "a comparison of a run that the recipe does not declare": (
+        compare(Comparison("float16-gpu", "float32-gpu", NonInferiority(0.20))),
+        "its comparison of 'float16-gpu' against 'float32-gpu' names 'float16-gpu', which is not "
+        "a run of the recipe",
+    ),
+    "a comparison against a run that the recipe does not declare": (
+        compare(Comparison("float32-gpu", "nemo", Equivalence(0.99, 0.10))),
+        "names 'nemo', which is not a run of the recipe",
+    ),
+    "a comparison of a run with itself": (
+        compare(Comparison("float32-cpu", "float32-cpu", REPORTED_ONLY)),
+        "its comparison of 'float32-cpu' against 'float32-cpu' compares a run with itself",
+    ),
+    "a comparison declared twice": (
+        compare(CROSS_DEVICE_COMPARISON, replace(CROSS_DEVICE_COMPARISON, rule=REPORTED_ONLY)),
+        "its comparison of 'float32-gpu' against 'float32-cpu' is declared twice",
+    ),
+    "a comparison of runs that share no language": (
+        replace(
+            change_run(0, languages=("en_us",)),
+            comparisons=(CROSS_DEVICE_COMPARISON,),
+        ),
+        "its comparison of 'float32-gpu' against 'float32-cpu' compares runs that share no "
+        "language",
+    ),
+    "a comparison whose rule leaves its bounds": (
+        compare(Comparison("float32-gpu", "float32-cpu", NonInferiority(0.0))),
+        "its comparison of 'float32-gpu' against 'float32-cpu': a non-inferiority bounds the "
+        "difference of word error rates at 0.0 points",
+    ),
 }
 
 
@@ -846,6 +888,16 @@ class TestTheRecipeContract:
                     REFERENCE_VARIANT,
                     "float32",
                 ]
+
+        class TestWhenTheContractComparesItsRuns:
+            @pytest.fixture
+            def judged_recipe(self) -> JudgedRecipe:
+                return judge_recipe(COMPARISON_CONTRACT, RUN_FACTS)
+
+            def test_should_keep_each_comparison_with_its_rule(
+                self, judged_recipe: JudgedRecipe
+            ) -> None:
+                assert judged_recipe.comparisons == (CROSS_DEVICE_COMPARISON,)
 
         class TestWhenTheContractConvertsItsVariants:
             @pytest.fixture

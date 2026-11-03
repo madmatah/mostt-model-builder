@@ -4,6 +4,11 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 
+from mostt_model_builder.domain.acceptance.acceptance import (
+    AcceptanceError,
+    Comparison,
+    judge_comparison_rule,
+)
 from mostt_model_builder.domain.acceptance.parity_reports import PARITY_NAME_GRAMMAR
 from mostt_model_builder.domain.bench.fleurs_index import BENCH_LANGUAGES
 from mostt_model_builder.domain.bench.hypotheses import RUN_LINES_FILE_NAME, RunReader
@@ -201,6 +206,7 @@ class RecipeContract:
     conversion_input: StepOutputOrigin | None = None
     build_order: tuple[str, ...] = ()
     conversions: tuple[VariantConversion, ...] = ()
+    comparisons: tuple[Comparison, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -244,6 +250,7 @@ class JudgedRecipe:
     conversion_input: StepOutputOrigin | None = None
     build_order: tuple[str, ...] = ()
     conversions: tuple[VariantConversion, ...] = ()
+    comparisons: tuple[Comparison, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -363,6 +370,7 @@ def judge_recipe(contract: RecipeContract, facts: RecipeFacts) -> JudgedRecipe:
             contract.build_order, contract.steps, bool(contract.conversions), where
         ),
         conversions=contract.conversions,
+        comparisons=judge_comparisons(contract.comparisons, runs, where),
     )
 
 
@@ -1006,3 +1014,34 @@ def judge_tolerance(tolerance: float, where: str) -> None:
         raise RecipeContractError(
             f"{where} has the tolerance {tolerance!a}, not a finite number above 0"
         )
+
+
+def judge_comparisons(
+    comparisons: Sequence[Comparison], runs: Sequence[JudgedRun], where: str
+) -> tuple[Comparison, ...]:
+    languages_by_run = {run.name: run.languages for run in runs}
+    pairs: set[tuple[str, str]] = set()
+    for comparison in comparisons:
+        comparison_where = (
+            f"{where}: its comparison of {comparison.run!a} against {comparison.reference_run!a}"
+        )
+        for run_name in (comparison.run, comparison.reference_run):
+            if run_name not in languages_by_run:
+                raise RecipeContractError(
+                    f"{comparison_where} names {run_name!a}, which is not a run of the recipe"
+                )
+        if comparison.run == comparison.reference_run:
+            raise RecipeContractError(f"{comparison_where} compares a run with itself")
+        pair = (comparison.run, comparison.reference_run)
+        if pair in pairs:
+            raise RecipeContractError(f"{comparison_where} is declared twice")
+        pairs.add(pair)
+        if not set(languages_by_run[comparison.run]) & set(
+            languages_by_run[comparison.reference_run]
+        ):
+            raise RecipeContractError(f"{comparison_where} compares runs that share no language")
+        try:
+            judge_comparison_rule(comparison.rule)
+        except AcceptanceError as error:
+            raise RecipeContractError(f"{comparison_where}: {error}") from error
+    return tuple(comparisons)

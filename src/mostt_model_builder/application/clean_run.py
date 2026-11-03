@@ -10,13 +10,18 @@ from mostt_model_builder.application.run_step import (
     prepare_container,
     run_judged_container,
 )
+from mostt_model_builder.domain.acceptance.verification import VERIFICATION_REPORT_FILE_NAME
 from mostt_model_builder.domain.containers.container_files import FileKind, judge_mount
 from mostt_model_builder.domain.containers.container_steps import (
     StepRow,
     build_clean_row,
     plan_container_run,
 )
-from mostt_model_builder.domain.containers.work_directory import place_clean, place_step
+from mostt_model_builder.domain.containers.work_directory import (
+    locate_run,
+    place_clean,
+    place_step,
+)
 
 
 class CleanFiles(StepFiles, Protocol):
@@ -102,3 +107,17 @@ def remove_candidate(request: CleanRequest, files: CleanFiles) -> CleanOutcome:
         return CleanOutcome.NOTHING_TO_CLEAN
     files.remove_request_directory(request.work_root / candidate_directory)
     return CleanOutcome.CLEANED
+
+
+# The host writes the verification's report itself, from the outputs of every step, so it removes
+# it itself, at any cleaning, since a report of outputs that are gone would vouch for what no longer
+# exists.
+def remove_verification_report(request: CleanRequest, files: CleanFiles) -> CleanOutcome:
+    run_directory = locate_run(request.recipe_name, request.commit)
+    if not is_judged_directory(request, run_directory, files):
+        return CleanOutcome.NOTHING_TO_CLEAN
+    if files.remove_file_if_present(
+        request.work_root / run_directory / VERIFICATION_REPORT_FILE_NAME
+    ):
+        return CleanOutcome.CLEANED
+    return CleanOutcome.NOTHING_TO_CLEAN

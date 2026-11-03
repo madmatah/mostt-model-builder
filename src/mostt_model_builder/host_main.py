@@ -25,6 +25,7 @@ from mostt_model_builder.application.clean_run import (
     CleanRequest,
     clean_step,
     remove_candidate,
+    remove_verification_report,
 )
 from mostt_model_builder.application.convert_variants import (
     ConversionOutcome,
@@ -55,9 +56,28 @@ from mostt_model_builder.application.run_recipe_step import (
     run_recipe_step,
 )
 from mostt_model_builder.application.run_step import HostIdentity, StepError
+from mostt_model_builder.application.verify_build import (
+    BuildRejectedError,
+    VerificationRequest,
+    refuse_rejected_build,
+    verify_build,
+)
+from mostt_model_builder.domain.acceptance.acceptance import AcceptanceError, name_rule
+from mostt_model_builder.domain.acceptance.paired_comparison import PairedComparisonError
 from mostt_model_builder.domain.acceptance.parity_reports import ParityReportError
+from mostt_model_builder.domain.acceptance.verification import (
+    ComparisonMeasure,
+    ParityMeasure,
+    RunMeasure,
+    Verification,
+    VerificationError,
+    compute_run_word_error_rate_percent,
+    compute_run_word_error_rate_with_unknown_tokens_percent,
+)
 from mostt_model_builder.domain.bench.fleurs_check_report import FleursCheckReportError
 from mostt_model_builder.domain.bench.hypotheses import Hypothesis, HypothesisError
+from mostt_model_builder.domain.bench.run_coverage import RunCoverageError
+from mostt_model_builder.domain.bench.word_error_rate import WordErrorRateError
 from mostt_model_builder.domain.containers.account_ranges import (
     AccountRangeError,
     HostAccounts,
@@ -136,6 +156,7 @@ FETCH_COMMAND = "fetch"
 IMAGES_COMMAND = "images"
 STEP_COMMAND = "step"
 BUILD_COMMAND = "build"
+VERIFY_COMMAND = "verify"
 CPU_PROVIDER = "CPUExecutionProvider"
 CUDA_PROVIDER = "CUDAExecutionProvider"
 RECIPES = {contract.name: contract for contract in (PARAKEET_TDT_RECIPE,)}
@@ -180,6 +201,12 @@ COMMAND_ERRORS = (
     HypothesisError,
     ConversionRequestError,
     ConversionReportError,
+    VerificationError,
+    RunCoverageError,
+    PairedComparisonError,
+    AcceptanceError,
+    WordErrorRateError,
+    BuildRejectedError,
     ValueError,
     OSError,
 )
@@ -231,10 +258,16 @@ def build_argument_parser() -> argparse.ArgumentParser:
         "step", choices=STEP_NAMES, metavar="<step>", help=", ".join(STEP_NAMES)
     )
     commands.add_parser(
+        VERIFY_COMMAND,
+        add_help=False,
+        help="measure the runs on FLEURS, hold the parities, the runs and their comparisons to "
+        "the recipe's rules, and write verification.json",
+    )
+    commands.add_parser(
         BUILD_COMMAND,
         add_help=False,
         help="run every step of the recipe's build, in its order, each row of a run in its own "
-        "container",
+        "container, then verify it",
     )
     clean_parser = commands.add_parser(
         CLEAN_STEP_NAME,
@@ -606,6 +639,66 @@ def build(recipe: JudgedRecipe, work_directory: WorkDirectory, files: WorkFiles)
     for step_name in recipe.build_order:
         print(f"== {step_name}", flush=True)
         run_named_step(recipe, step_name, work_directory, files)
+    print(f"== {VERIFY_COMMAND}", flush=True)
+    verify(recipe, work_directory, files)
+
+
+def verify(recipe: JudgedRecipe, work_directory: WorkDirectory, files: WorkFiles) -> None:
+    context = read_build_context(work_directory)
+    verified = verify_build(
+        VerificationRequest(
+            candidate=build_candidate_request(recipe, context),
+            pins=recipe.pins,
+            runs=recipe.runs,
+            derived_rows=recipe.derived_rows,
+            parities=recipe.parities,
+            comparisons=recipe.comparisons,
+        ),
+        files,
+    )
+    for line in describe_verification(verified.verification):
+        print(line, flush=True)
+    print(f"wrote {verified.report_path}", flush=True)
+    refuse_rejected_build(verified)
+
+
+def describe_verification(verification: Verification) -> list[str]:
+    return [
+        *(describe_parity_measure(measure) for measure in verification.parities),
+        *(describe_run_measure(measure) for measure in verification.runs),
+        *(describe_comparison_measure(measure) for measure in verification.comparisons),
+    ]
+
+
+def describe_parity_measure(measure: ParityMeasure) -> str:
+    verdict = "accepted" if measure.failure is None else "REFUSED"
+    return (
+        f"parity {measure.report.name}: {measure.report.maximum_absolute_difference:.3g} against "
+        f"{measure.absolute_difference_tolerance:.3g}, {verdict}"
+    )
+
+
+def describe_run_measure(measure: RunMeasure) -> str:
+    return (
+        f"run {measure.run}, {measure.language}: {measure.utterance_count} utterances, word "
+        f"error rate {compute_run_word_error_rate_percent(measure):.2f} % without its unknown "
+        f"tokens, {compute_run_word_error_rate_with_unknown_tokens_percent(measure):.2f} % with "
+        f"them; {measure.unknown_token_count} unknown tokens; "
+        f"{measure.decoding_time_ms / 1000:.1f} s of decoding"
+    )
+
+
+def describe_comparison_measure(measure: ComparisonMeasure) -> str:
+    paired = measure.paired
+    verdict = "accepted" if not measure.failures else "REFUSED: " + "; ".join(measure.failures)
+    return (
+        f"{measure.run} against {measure.reference_run}, {measure.language}: identical token ids "
+        f"{measure.identical_count}/{measure.compared_count} "
+        f"({measure.identical_count / measure.compared_count:.1%}), difference of word error "
+        f"rates {paired.difference_points:+.2f} points "
+        f"[{paired.interval_low_points:+.2f}, {paired.interval_high_points:+.2f}], "
+        f"{name_rule(measure.rule)}, {verdict}"
+    )
 
 
 def clean(
@@ -613,19 +706,27 @@ def clean(
 ) -> None:
     clone_root = PurePosixPath(CLONE_ROOT)
     git_tree = GitTree(clone_root)
+    commit = git_tree.find_head_commit()
+    head_tree = git_tree.find_head_tree()
+    host = read_host_identity()
     rows = list_runnable_rows(recipe) if step_name is None else list_rows_of_step(recipe, step_name)
-    for row in rows:
-        request = CleanRequest(
+    requests = [
+        CleanRequest(
             row=row,
             recipe_name=recipe.name,
-            commit=git_tree.find_head_commit(),
+            commit=commit,
             work_root=PurePosixPath(work_directory.path),
-            head_tree=git_tree.find_head_tree(),
-            host=read_host_identity(),
+            head_tree=head_tree,
+            host=host,
         )
+        for row in rows
+    ]
+    report_outcome = remove_verification_report(requests[0], files)
+    print(f"{CLEAN_OUTCOME_WORDS[report_outcome]} the verification's report", flush=True)
+    for request in requests:
         outcome = clean_step(request, DockerEngine(clone_root), files)
-        print(f"{CLEAN_OUTCOME_WORDS[outcome]} {row.name}", flush=True)
-        if row.name == INSPECT_STEP_NAME:
+        print(f"{CLEAN_OUTCOME_WORDS[outcome]} {request.row.name}", flush=True)
+        if request.row.name == INSPECT_STEP_NAME:
             candidate_outcome = remove_candidate(request, files)
             print(f"{CLEAN_OUTCOME_WORDS[candidate_outcome]} the candidate", flush=True)
 
@@ -667,6 +768,8 @@ def run_command(arguments: argparse.Namespace) -> None:
         run_named_step(recipe, arguments.step, work_directory, files)
     elif arguments.command == CLEAN_STEP_NAME:
         clean(recipe, arguments.step, work_directory, files)
+    elif arguments.command == VERIFY_COMMAND:
+        verify(recipe, work_directory, files)
     elif arguments.command == BUILD_COMMAND:
         build(recipe, work_directory, files)
 

@@ -2,8 +2,7 @@
 
 mostt-model-builder is the tooling of reproducible, confined builds of speech recognition models from their original weights: export, quantization and FLEURS verification.
 
-- **Built:** the command line, `model-build.sh`, which runs on the host's Python and the standard library, isolated from the environment and the site packages, and refuses to run as root; `fetch`, which downloads the pinned sources into a work directory, each checked by its size and its SHA-256; the confined containers in which every step runs, with their images, the lock of the images' libraries, and the check of the FLEURS bench; `clean`; and the first recipe, `parakeet-tdt`, for the Parakeet TDT family, which builds Parakeet Ultra: its sources, its images, `describe`, which lists the tensors of Moondream's weights and of NeMo's model, `export`, which writes Parakeet Ultra's FP32 ONNX files and measures the encoder against NeMo's, `convert`, the core's conversions of the exported encoder to float16, bfloat16 and 8-bit blocks, `inspect`, which copies and checks the candidate and inspects its graphs, `reference`, NeMo's transcription of FLEURS, `transformers-reference`, which checks Moondream's weights in Transformers against NeMo's reference and transcribes FLEURS fr, and `transcribe`, onnx-asr's of each variant from the candidate, on the CPU and the GPU.
-- **Planned:** the rest of the build: in the core, the measures of the FLEURS bench and their acceptance. The checked files land in a candidate directory laid out for Hugging Face, where the maintainer publishes them, and mostt, the local dictation project, pins them by hash.
+- **Built:** the command line, `model-build.sh`, which runs on the host's Python and the standard library, isolated from the environment and the site packages, and refuses to run as root; `fetch`, which downloads the pinned sources into a work directory, each checked by its size and its SHA-256; the confined containers in which every step runs, with their images, the lock of the images' libraries, and the check of the FLEURS bench; `clean`; and the first recipe, `parakeet-tdt`, for the Parakeet TDT family, which builds Parakeet Ultra: its sources, its images, `describe`, which lists the tensors of Moondream's weights and of NeMo's model, `export`, which writes Parakeet Ultra's FP32 ONNX files and measures the encoder against NeMo's, `convert`, the core's conversions of the exported encoder to float16, bfloat16 and 8-bit blocks, `inspect`, which copies and checks the candidate and inspects its graphs, `reference`, NeMo's transcription of FLEURS, `transformers-reference`, which checks Moondream's weights in Transformers against NeMo's reference and transcribes FLEURS fr, `transcribe`, onnx-asr's of each variant from the candidate, on the CPU and the GPU; and `verify`, which measures every run on FLEURS and holds the parities, the runs and their comparisons to the recipe's rules. The checked files land in a candidate directory laid out for Hugging Face, where the maintainer publishes them, and mostt, the local dictation project, pins them by hash.
 
 ## Requirements
 
@@ -94,7 +93,11 @@ docker image rm mostt-model-builder-core-bench mostt-model-builder-core-uv \
     mostt-model-builder-parakeet-tdt-transcribe-gpu mostt-model-builder-parakeet-tdt-transcribe-cpu
 ```
 
-The acceptance of the measures comes with the rest of the build (planned).
+`build` ends with `verify`, which measures the build on FLEURS from the outputs of its steps, on the host, once it has checked again that `inspect` accepted the candidate and that no file of the candidate changed since: it rates every run on each of its languages, without and with its unknown tokens, compares the runs that the recipe pairs, and holds each parity, each run and each comparison to the recipe's rules. It prints its figures, writes them to `runs/<recipe>/<commit>/verification.json` in the work directory, and fails, naming each broken rule, when the build does not pass. Run it alone after a step you ran again:
+
+```sh
+./model-build.sh --work /data/model-build --recipe parakeet-tdt verify
+```
 
 `docs/model-build.md` describes each step and the reasons behind its method.
 
@@ -113,8 +116,9 @@ The acceptance of the measures comes with the rest of the build (planned).
 | `./model-build.sh --work <dir> --recipe parakeet-tdt step reference` | Transcribes FLEURS fr and en with NeMo, on the CPU, as the reference of the export. |
 | `./model-build.sh --work <dir> --recipe parakeet-tdt step transformers-reference` | Measures Moondream's weights in Transformers against NeMo's reference, and transcribes FLEURS fr with Transformers. |
 | `./model-build.sh --work <dir> --recipe parakeet-tdt step transcribe` | Transcribes FLEURS fr and en with onnx-asr from the candidate, on the CPU and on the GPU. |
-| `./model-build.sh --work <dir> --recipe <name> build` | Runs every step of the recipe's build, in its order. |
-| `./model-build.sh --work <dir> --recipe <name> clean [<step>]` | Removes the outputs, the request and the log of a step at HEAD's commit, or of every step of the core and the recipe. |
+| `./model-build.sh --work <dir> --recipe <name> verify` | Measures every run on FLEURS, holds the parities, the runs and their comparisons to the recipe's rules, and writes `verification.json`. |
+| `./model-build.sh --work <dir> --recipe <name> build` | Runs every step of the recipe's build, in its order, then `verify`. |
+| `./model-build.sh --work <dir> --recipe <name> clean [<step>]` | Removes the outputs, the request and the log of a step at HEAD's commit, or of every step of the core and the recipe, and the verification's report. |
 | `./model-build.sh --work <dir> lock` | Resolves the lock of the images' libraries in its container, checks it, prints its change and writes it to `images/uv.lock`. |
 | `uv sync --frozen` | Installs the development tools from the lockfile, without changing it. Run uv at the root only, never in `images/`. |
 | `uv run --locked pytest` | Runs the tests. |

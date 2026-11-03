@@ -14,6 +14,9 @@ RUN_LINES_MAX_SIZE_BYTES = 16 * 2**20
 MAX_LINE_COUNT = 20_000
 MAX_LINE_SIZE_BYTES = 64 * 1024
 MAX_TEXT_LENGTH = 4096
+MAX_TOKEN_COUNT = 4096
+# Token ids are compared, never read: the bound only refuses an id that no vocabulary holds.
+MAX_TOKEN_ID = 2**31 - 1
 MAX_DECODING_TIME_MS = 3_600_000.0
 LINE_SEPARATOR = b"\n"
 TEXT_ENCODING = "utf-8"
@@ -30,13 +33,16 @@ class HypothesisError(ValueError):
 class Hypothesis:
     language: str
     utterance_id: str
+    token_ids: tuple[int, ...]
     text: str
+    text_without_unknown_tokens: str
     unknown_token_count: int
     decoding_time_ms: float
 
 
 type RunLine = Mapping[str, object]
-# The reader of a run is the recipe's, so that the core never sees a token of the model.
+# The reader of a run is the recipe's, so that the core never reads a token of the model: it
+# compares the ids of two runs, and measures the texts.
 type RunReader = Callable[[bytes, Mapping[str, bytes]], tuple[Hypothesis, ...]]
 
 
@@ -100,10 +106,9 @@ def judge_hypothesis(hypothesis: Hypothesis, languages: Collection[str]) -> None
         raise HypothesisError(
             f"{where}: its utterance id does not match {RECORDING_NAME_GRAMMAR.pattern}"
         )
-    if len(hypothesis.text) > MAX_TEXT_LENGTH:
-        raise HypothesisError(f"{where} holds more than {MAX_TEXT_LENGTH} characters")
-    if has_invisible_character(hypothesis.text):
-        raise HypothesisError(f"{where} holds a character a reader cannot see")
+    judge_token_ids(hypothesis.token_ids, where)
+    judge_text(hypothesis.text, where)
+    judge_text(hypothesis.text_without_unknown_tokens, f"{where}, without its unknown tokens,")
     if (
         isinstance(hypothesis.unknown_token_count, bool)
         or not isinstance(hypothesis.unknown_token_count, int)
@@ -112,6 +117,15 @@ def judge_hypothesis(hypothesis: Hypothesis, languages: Collection[str]) -> None
         raise HypothesisError(
             f"{where} counts {hypothesis.unknown_token_count!a} unknown tokens, not a count"
         )
+    if hypothesis.unknown_token_count > len(hypothesis.token_ids):
+        raise HypothesisError(
+            f"{where} counts {hypothesis.unknown_token_count} unknown tokens among "
+            f"{len(hypothesis.token_ids)} tokens"
+        )
+    if hypothesis.unknown_token_count == 0 and (
+        hypothesis.text != hypothesis.text_without_unknown_tokens
+    ):
+        raise HypothesisError(f"{where} counts no unknown token, and its two texts differ")
     decoding_time_ms = hypothesis.decoding_time_ms
     if (
         isinstance(decoding_time_ms, bool)
@@ -122,6 +136,30 @@ def judge_hypothesis(hypothesis: Hypothesis, languages: Collection[str]) -> None
         raise HypothesisError(
             f"{where} took {decoding_time_ms!a} ms, outside 0 to {MAX_DECODING_TIME_MS:.0f}"
         )
+
+
+def judge_token_ids(token_ids: object, where: str) -> None:
+    if not isinstance(token_ids, tuple):
+        raise HypothesisError(f"{where}: its token ids are not a tuple")
+    if len(token_ids) > MAX_TOKEN_COUNT:
+        raise HypothesisError(f"{where} holds more than {MAX_TOKEN_COUNT} tokens")
+    for token_id in token_ids:
+        if (
+            isinstance(token_id, bool)
+            or not isinstance(token_id, int)
+            or not 0 <= token_id <= MAX_TOKEN_ID
+        ):
+            raise HypothesisError(
+                f"{where} holds the token id {token_id!a}, not a whole number from 0 to "
+                f"{MAX_TOKEN_ID}"
+            )
+
+
+def judge_text(text: str, where: str) -> None:
+    if len(text) > MAX_TEXT_LENGTH:
+        raise HypothesisError(f"{where} holds more than {MAX_TEXT_LENGTH} characters")
+    if has_invisible_character(text):
+        raise HypothesisError(f"{where} holds a character a reader cannot see")
 
 
 def has_invisible_character(text: str) -> bool:

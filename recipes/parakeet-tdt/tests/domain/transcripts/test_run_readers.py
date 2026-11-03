@@ -27,8 +27,16 @@ MAX_TOKEN_COUNT = 4096
 FRENCH_DECODING_TIME_MS = 12.5
 ENGLISH_DECODING_TIME_MS = 3
 EXPECTED_HYPOTHESES = (
-    Hypothesis("fr_fr", "1.wav", "the cats sleep", 0, FRENCH_DECODING_TIME_MS),
-    Hypothesis("en_us", "2.wav", "the<unk> cat", 1, ENGLISH_DECODING_TIME_MS),
+    Hypothesis(
+        "fr_fr",
+        "1.wav",
+        (1, 2, 3, 4),
+        "the cats sleep",
+        "the cats sleep",
+        0,
+        FRENCH_DECODING_TIME_MS,
+    ),
+    Hypothesis("en_us", "2.wav", (1, 0, 2), "the<unk> cat", "the cat", 1, ENGLISH_DECODING_TIME_MS),
 )
 
 

@@ -45,6 +45,11 @@ from mostt_recipe_parakeet_tdt.domain.variants.candidate_layout import (
     name_decoder_joint_file,
     name_encoder_file,
 )
+from mostt_recipe_parakeet_tdt.domain.variants.comparisons import (
+    COMPARISONS,
+    NEMO_RUN_NAME,
+    TRANSFORMERS_RUN_NAME,
+)
 from mostt_recipe_parakeet_tdt.domain.variants.variants import (
     CONVERTED_ENCODER_MAX_SIZE_BYTES,
     FLOAT32_VARIANT,
@@ -77,12 +82,10 @@ REFERENCE_STEP_NAME = "reference"
 REFERENCE_TENSORS_FILE_NAME = "reference.safetensors"
 REFERENCE_STEPS_FILE_NAME = "reference.json"
 TRANSCRIBE_STEP_NAME = "transcribe"
-NEMO_RUN_NAME = "nemo"
 ENCODER_PARITY_FILE_NAME = "encoder-parity.json"
 ENCODER_PARITY_NAME = "encoder-onnx-against-nemo"
 PARITY_LANGUAGE = "fr_fr"
 TRANSFORMERS_STEP_NAME = "transformers-reference"
-TRANSFORMERS_RUN_NAME = "transformers"
 TRANSFORMERS_ENCODER_PARITY_FILE_NAME = "transformers-encoder-parity.json"
 TRANSFORMERS_ENCODER_PARITY_NAME = "encoder-transformers-against-nemo"
 TRANSFORMERS_JOINT_PARITY_FILE_NAME = "transformers-joint-parity.json"
@@ -382,6 +385,7 @@ RECIPE = RecipeContract(
     runs=RUNS,
     conversion_input=ENCODER_ORIGIN,
     conversions=CONVERSIONS,
+    comparisons=COMPARISONS,
     build_order=(
         "fleurs-check",
         EXPORT_STEP_NAME,
