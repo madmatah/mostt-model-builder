@@ -1,6 +1,7 @@
 import argparse
 import os
 import pwd
+import stat
 import sys
 from collections.abc import Sequence
 from pathlib import Path, PurePosixPath
@@ -28,6 +29,7 @@ from mostt_model_builder.application.resolve_lock import (
     LockResolution,
     resolve_lock,
 )
+from mostt_model_builder.application.run_recipe_step import RecipeStepRun, run_recipe_step
 from mostt_model_builder.application.run_step import HostIdentity, StepError
 from mostt_model_builder.domain.bench.fleurs_check_report import FleursCheckReportError
 from mostt_model_builder.domain.containers.account_ranges import (
@@ -43,8 +45,8 @@ from mostt_model_builder.domain.containers.container_steps import (
     FLEURS_CHECK_STEP_NAME,
     LOCK_STEP_NAME,
     RUNNABLE_CORE_ROWS,
+    StepRow,
     StepTableError,
-    find_runnable_core_row,
 )
 from mostt_model_builder.domain.containers.provenance import ProvenanceError
 from mostt_model_builder.domain.containers.step_peaks import StepPeaks, StepPeaksError
@@ -52,6 +54,18 @@ from mostt_model_builder.domain.containers.work_directory import (
     WorkDirectory,
     WorkDirectoryError,
     locate_source,
+)
+from mostt_model_builder.domain.contract.recipe_contract import (
+    RECIPES_DIRECTORY_NAME,
+    JudgedRecipe,
+    RecipeContract,
+    RecipeContractError,
+    RecipeFacts,
+    find_runnable_row,
+    judge_recipe,
+    list_entry_modules,
+    list_runnable_rows,
+    locate_entry_module_file,
 )
 from mostt_model_builder.domain.lock.lock_check import (
     LOCK_FILE_NAME,
@@ -64,6 +78,7 @@ from mostt_model_builder.domain.sources.source_pins import (
     SourcePinError,
     parse_source_pins,
 )
+from mostt_recipe_parakeet_tdt.recipe import RECIPE as PARAKEET_TDT_RECIPE
 
 PROGRAM_NAME = "model-build.sh"
 DESCRIPTION = (
@@ -78,6 +93,11 @@ SUBORDINATE_GROUP_IDS_PATH = Path("/etc/subgid")
 FETCH_COMMAND = "fetch"
 IMAGES_COMMAND = "images"
 STEP_COMMAND = "step"
+RECIPES = {contract.name: contract for contract in (PARAKEET_TDT_RECIPE,)}
+STEP_NAMES = sorted(
+    {row.name for row in RUNNABLE_CORE_ROWS}
+    | {step.name for contract in RECIPES.values() for step in contract.steps}
+)
 TEXT_ENCODING = "utf-8"
 FAILURE_EXIT_STATUS = 1
 NO_ACCOUNT_HOME = ""
@@ -102,6 +122,7 @@ COMMAND_ERRORS = (
     GitError,
     ImageBuildError,
     FleursCheckReportError,
+    RecipeContractError,
     LockError,
     LockFreshnessError,
     OSError,
@@ -119,6 +140,13 @@ def build_argument_parser() -> argparse.ArgumentParser:
         metavar="<dir>",
         help="the work directory: an existing directory of yours, in mode 0700, outside the "
         "home directory and the clone",
+    )
+    parser.add_argument(
+        "--recipe",
+        choices=sorted(RECIPES),
+        metavar="<name>",
+        help=f"the recipe of the model family to build, which every command but {LOCK_STEP_NAME} "
+        f"needs: {', '.join(sorted(RECIPES))}",
     )
     commands = parser.add_subparsers(dest="command", required=True, metavar="<command>")
     commands.add_parser(
@@ -138,12 +166,13 @@ def build_argument_parser() -> argparse.ArgumentParser:
         add_help=False,
         help="build the images of the containers from a clean clone, labeled with its tree",
     )
-    step_names = [row.name for row in RUNNABLE_CORE_ROWS]
     step_parser = commands.add_parser(
-        STEP_COMMAND, add_help=False, help="run a step in its confined container"
+        STEP_COMMAND,
+        add_help=False,
+        help="run a step of the core or of the recipe in its container",
     )
     step_parser.add_argument(
-        "step", choices=step_names, metavar="<step>", help=", ".join(step_names)
+        "step", choices=STEP_NAMES, metavar="<step>", help=", ".join(STEP_NAMES)
     )
     clean_parser = commands.add_parser(
         CLEAN_STEP_NAME,
@@ -151,7 +180,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help="remove the outputs, the request and the log of a step, or of every step",
     )
     clean_parser.add_argument(
-        "step", nargs="?", choices=step_names, metavar="<step>", help=", ".join(step_names)
+        "step", nargs="?", choices=STEP_NAMES, metavar="<step>", help=", ".join(STEP_NAMES)
     )
     return parser
 
@@ -206,8 +235,37 @@ def open_requested_work_directory(path: str, files: WorkFiles) -> WorkDirectory:
     return open_work_directory(request, files)
 
 
-def read_core_pins() -> tuple[SourcePin, ...]:
-    return parse_source_pins((CLONE_ROOT / SOURCES_FILE_NAME).read_text(encoding=TEXT_ENCODING))
+def read_pins(directory: Path) -> tuple[SourcePin, ...]:
+    return parse_source_pins((directory / SOURCES_FILE_NAME).read_text(encoding=TEXT_ENCODING))
+
+
+def is_regular_file(path: Path) -> bool:
+    try:
+        return stat.S_ISREG(path.lstat().st_mode)
+    except FileNotFoundError:
+        return False
+
+
+def find_present_entry_modules(contract: RecipeContract) -> frozenset[str]:
+    present_entry_modules = set()
+    for entry_module in list_entry_modules(contract):
+        module_file = locate_entry_module_file(entry_module, contract.name)
+        if module_file is not None and is_regular_file(CLONE_ROOT / module_file):
+            present_entry_modules.add(entry_module)
+    return frozenset(present_entry_modules)
+
+
+def load_recipe(name: str) -> JudgedRecipe:
+    contract = RECIPES[name]
+    return judge_recipe(
+        contract,
+        RecipeFacts(
+            core_pins=read_pins(CLONE_ROOT),
+            recipe_pins=read_pins(CLONE_ROOT / RECIPES_DIRECTORY_NAME / contract.name),
+            present_entry_modules=find_present_entry_modules(contract),
+            host_cpu_count=len(os.sched_getaffinity(0)),
+        ),
+    )
 
 
 def describe_peaks(peaks: StepPeaks) -> str:
@@ -222,19 +280,21 @@ def describe_lock_resolution(resolution: LockResolution) -> str:
     )
 
 
-def fetch(work_directory: WorkDirectory, files: WorkFiles) -> None:
+def fetch(recipe: JudgedRecipe, work_directory: WorkDirectory, files: WorkFiles) -> None:
     downloader = CurlDownloader()
-    for pin in read_core_pins():
+    for pin in recipe.pins:
         source_path = locate_source(pin)
         print(f"checking {source_path}, {pin.size_bytes} bytes", flush=True)
         outcome = fetch_source(pin, work_directory, downloader, files)
         print(f"{OUTCOME_WORDS[outcome]} {source_path}", flush=True)
 
 
-def build_container_images(work_directory: WorkDirectory, files: WorkFiles) -> None:
+def build_container_images(
+    recipe: JudgedRecipe, work_directory: WorkDirectory, files: WorkFiles
+) -> None:
     clone_root = PurePosixPath(CLONE_ROOT)
     built_images = build_images(
-        CORE_IMAGES,
+        (*CORE_IMAGES, *recipe.images),
         PurePosixPath(work_directory.path),
         GitTree(clone_root),
         DockerEngine(clone_root),
@@ -244,12 +304,13 @@ def build_container_images(work_directory: WorkDirectory, files: WorkFiles) -> N
         print(f"built {image.tag}, {image.image_id}", flush=True)
 
 
-def check_fleurs(work_directory: WorkDirectory, files: WorkFiles) -> None:
+def check_fleurs(recipe: JudgedRecipe, work_directory: WorkDirectory, files: WorkFiles) -> None:
     clone_root = PurePosixPath(CLONE_ROOT)
     git_tree = GitTree(clone_root)
     outcome = check_fleurs_bench(
         FleursCheckRun(
-            pins=read_core_pins(),
+            pins=recipe.pins,
+            recipe_name=recipe.name,
             commit=git_tree.find_head_commit(),
             work_root=PurePosixPath(work_directory.path),
             head_tree=git_tree.find_head_tree(),
@@ -267,14 +328,51 @@ def check_fleurs(work_directory: WorkDirectory, files: WorkFiles) -> None:
     print(describe_peaks(outcome.peaks), flush=True)
 
 
-def clean(step_name: str | None, work_directory: WorkDirectory, files: WorkFiles) -> None:
+def run_step_of_recipe(
+    recipe: JudgedRecipe, row: StepRow, work_directory: WorkDirectory, files: WorkFiles
+) -> None:
     clone_root = PurePosixPath(CLONE_ROOT)
     git_tree = GitTree(clone_root)
-    rows = RUNNABLE_CORE_ROWS if step_name is None else (find_runnable_core_row(step_name),)
+    outputs = run_recipe_step(
+        RecipeStepRun(
+            row=row,
+            recipe_name=recipe.name,
+            pins=recipe.pins,
+            commit=git_tree.find_head_commit(),
+            work_root=PurePosixPath(work_directory.path),
+            head_tree=git_tree.find_head_tree(),
+            host=read_host_identity(),
+        ),
+        DockerEngine(clone_root),
+        files,
+    )
+    for name, size_bytes in sorted(outputs.sizes_bytes.items()):
+        print(f"wrote {name}, {size_bytes} bytes", flush=True)
+    print(describe_peaks(outputs.peaks), flush=True)
+
+
+def run_named_step(
+    recipe: JudgedRecipe, step_name: str, work_directory: WorkDirectory, files: WorkFiles
+) -> None:
+    if step_name == FLEURS_CHECK_STEP_NAME:
+        check_fleurs(recipe, work_directory, files)
+    else:
+        run_step_of_recipe(recipe, find_runnable_row(recipe, step_name), work_directory, files)
+
+
+def clean(
+    recipe: JudgedRecipe, step_name: str | None, work_directory: WorkDirectory, files: WorkFiles
+) -> None:
+    clone_root = PurePosixPath(CLONE_ROOT)
+    git_tree = GitTree(clone_root)
+    rows = (
+        list_runnable_rows(recipe) if step_name is None else (find_runnable_row(recipe, step_name),)
+    )
     for row in rows:
         outcome = clean_step(
             CleanRequest(
                 row=row,
+                recipe_name=recipe.name,
                 commit=git_tree.find_head_commit(),
                 work_root=PurePosixPath(work_directory.path),
                 head_tree=git_tree.find_head_tree(),
@@ -308,26 +406,28 @@ def lock(work_directory: WorkDirectory, files: WorkFiles) -> None:
     print(describe_peaks(resolution.peaks), flush=True)
 
 
-STEP_RUNNERS = {FLEURS_CHECK_STEP_NAME: check_fleurs}
-
-
 def run_command(arguments: argparse.Namespace) -> None:
     files = WorkFiles()
     work_directory = open_requested_work_directory(arguments.work, files)
-    if arguments.command == FETCH_COMMAND:
-        fetch(work_directory, files)
-    elif arguments.command == IMAGES_COMMAND:
-        build_container_images(work_directory, files)
-    elif arguments.command == STEP_COMMAND:
-        STEP_RUNNERS[arguments.step](work_directory, files)
-    elif arguments.command == CLEAN_STEP_NAME:
-        clean(arguments.step, work_directory, files)
-    elif arguments.command == LOCK_STEP_NAME:
+    if arguments.command == LOCK_STEP_NAME:
         lock(work_directory, files)
+        return
+    recipe = load_recipe(arguments.recipe)
+    if arguments.command == FETCH_COMMAND:
+        fetch(recipe, work_directory, files)
+    elif arguments.command == IMAGES_COMMAND:
+        build_container_images(recipe, work_directory, files)
+    elif arguments.command == STEP_COMMAND:
+        run_named_step(recipe, arguments.step, work_directory, files)
+    elif arguments.command == CLEAN_STEP_NAME:
+        clean(recipe, arguments.step, work_directory, files)
 
 
 def main(arguments: Sequence[str]) -> None:
-    parsed_arguments = build_argument_parser().parse_args(arguments)
+    parser = build_argument_parser()
+    parsed_arguments = parser.parse_args(arguments)
+    if parsed_arguments.recipe is None and parsed_arguments.command != LOCK_STEP_NAME:
+        parser.error(f"the command {parsed_arguments.command} needs --recipe <name>")
     try:
         run_command(parsed_arguments)
     except COMMAND_ERRORS as error:

@@ -8,6 +8,8 @@ from mostt_model_builder.domain.lock.lock_check import (
     IMAGES_ROOT_NAME,
     CheckedLock,
     check_lock,
+    is_installable_wheel,
+    load_lock,
 )
 from mostt_model_builder.domain.lock.lock_freshness import check_lock_freshness
 
@@ -18,6 +20,21 @@ LOCKS = {
 }
 IMAGES_MANIFEST_PATH = REPO_ROOT / "images" / "pyproject.toml"
 IMAGES_LOCK_PATH = REPO_ROOT / "images" / "uv.lock"
+# Published as an sdist alone, it is built by a stage of the export image, without network.
+PACKAGES_BUILT_BY_A_STAGE = ["antlr4-python3-runtime"]
+
+
+def list_packages_without_an_installable_wheel(lock_text: str, root_name: str) -> list[str]:
+    packages = load_lock(lock_text).get("package")
+    return sorted(
+        str(package["name"])
+        for package in (packages if isinstance(packages, list) else [])
+        if package["name"] != root_name
+        and not any(
+            is_installable_wheel(str(wheel["url"]).rsplit("/", 1)[-1])
+            for wheel in package.get("wheels", [])
+        )
+    )
 
 
 def count_packages_besides_the_root(lock_path: Path) -> int:
@@ -56,3 +73,15 @@ class TestTheLockfiles:
             self, fresh_extras: tuple[str, ...]
         ) -> None:
             assert fresh_extras == tuple(sorted(read_manifest_extras()))
+
+    class TestWhenThePackagesOfTheImagesLockAreListed:
+        @pytest.fixture
+        def packages_without_a_wheel(self) -> list[str]:
+            return list_packages_without_an_installable_wheel(
+                IMAGES_LOCK_PATH.read_text(encoding="utf-8"), IMAGES_ROOT_NAME
+            )
+
+        def test_should_find_antlr4_alone_without_a_wheel_since_a_stage_builds_it(
+            self, packages_without_a_wheel: list[str]
+        ) -> None:
+            assert packages_without_a_wheel == PACKAGES_BUILT_BY_A_STAGE

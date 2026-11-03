@@ -9,6 +9,8 @@ from mostt_model_builder.domain.formats.file_names import REFUSED_SUFFIXES, find
 SOURCES_KEY = "sources"
 TOP_LEVEL_KEYS = frozenset({SOURCES_KEY})
 PIN_KEYS = frozenset({"repository_type", "repository", "revision", "path", "size_bytes", "sha256"})
+RUNS_CODE_KEY = "runs_code_when_loaded"
+OPTIONAL_PIN_KEYS = frozenset({RUNS_CODE_KEY})
 REPOSITORY_GRAMMAR = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,95}/[A-Za-z0-9][A-Za-z0-9._-]{0,95}")
 REVISION_GRAMMAR = re.compile(r"[0-9a-f]{40}")
 PATH_SEGMENT_GRAMMAR = re.compile(r"[A-Za-z0-9._-]+")
@@ -41,6 +43,7 @@ class SourcePin:
     path: str
     size_bytes: int
     sha256: str
+    runs_code_when_loaded: bool = False
 
     @property
     def layout_segments(self) -> tuple[str, ...]:
@@ -56,7 +59,7 @@ def parse_source_pins(text: str) -> tuple[SourcePin, ...]:
         document = tomllib.loads(text)
     except (tomllib.TOMLDecodeError, RecursionError) as error:
         raise SourcePinError(f"the sources are not valid TOML: {error}") from error
-    require_exact_keys(document, TOP_LEVEL_KEYS, "the sources")
+    require_keys(document, TOP_LEVEL_KEYS, frozenset(), "the sources")
     entries = document[SOURCES_KEY]
     if not isinstance(entries, list) or not entries:
         raise SourcePinError(f"{SOURCES_KEY} must be a non-empty array of tables")
@@ -71,22 +74,29 @@ def parse_source_pins(text: str) -> tuple[SourcePin, ...]:
 def parse_source_pin(entry: object, where: str) -> SourcePin:
     if not isinstance(entry, dict):
         raise SourcePinError(f"{where} must be a table")
-    require_exact_keys(entry, PIN_KEYS, where)
+    require_keys(entry, PIN_KEYS, OPTIONAL_PIN_KEYS, where)
+    runs_code_when_loaded = parse_flag(entry.get(RUNS_CODE_KEY, False), f"{where}.{RUNS_CODE_KEY}")
     return SourcePin(
         repository_type=parse_repository_type(entry["repository_type"], f"{where}.repository_type"),
         repository=parse_grammar(entry["repository"], REPOSITORY_GRAMMAR, f"{where}.repository"),
         revision=parse_grammar(entry["revision"], REVISION_GRAMMAR, f"{where}.revision"),
-        path=parse_path(entry["path"], f"{where}.path"),
+        path=parse_path(entry["path"], f"{where}.path", runs_code_when_loaded),
         size_bytes=parse_size(entry["size_bytes"], f"{where}.size_bytes"),
         sha256=parse_grammar(entry["sha256"], SHA256_GRAMMAR, f"{where}.sha256"),
+        runs_code_when_loaded=runs_code_when_loaded,
     )
 
 
-def require_exact_keys(table: Mapping[str, object], keys: frozenset[str], where: str) -> None:
-    unknown_keys = sorted(set(table) - keys)
+def require_keys(
+    table: Mapping[str, object],
+    required_keys: frozenset[str],
+    optional_keys: frozenset[str],
+    where: str,
+) -> None:
+    unknown_keys = sorted(set(table) - required_keys - optional_keys)
     if unknown_keys:
         raise SourcePinError(f"{where}: unknown key {unknown_keys[0]!a}")
-    missing_keys = sorted(keys - set(table))
+    missing_keys = sorted(required_keys - set(table))
     if missing_keys:
         raise SourcePinError(f"{where}: missing key {missing_keys[0]}")
 
@@ -98,13 +108,19 @@ def parse_repository_type(field: object, where: str) -> RepositoryType:
     return RepositoryType(field)
 
 
+def parse_flag(field: object, where: str) -> bool:
+    if not isinstance(field, bool):
+        raise SourcePinError(f"{where}: {field!a} is not true or false")
+    return field
+
+
 def parse_grammar(field: object, grammar: re.Pattern[str], where: str) -> str:
     if not isinstance(field, str) or not grammar.fullmatch(field):
         raise SourcePinError(f"{where}: {field!a} does not match {grammar.pattern}")
     return field
 
 
-def parse_path(field: object, where: str) -> str:
+def parse_path(field: object, where: str, runs_code_when_loaded: bool) -> str:
     if not isinstance(field, str):
         raise SourcePinError(f"{where}: {field!a} is not a string")
     for segment in field.split(PATH_SEPARATOR):
@@ -115,10 +131,11 @@ def parse_path(field: object, where: str) -> str:
             )
     file_name = field.rsplit(PATH_SEPARATOR, 1)[-1]
     refused_suffixes = find_refused_suffixes(file_name, REFUSED_SOURCE_SUFFIXES)
-    if refused_suffixes:
+    if refused_suffixes and not runs_code_when_loaded:
         raise SourcePinError(
             f"{where}: {field!a} has the refused suffix {refused_suffixes[0]}, which marks "
-            "code, an archive or a format that runs code when it loads"
+            "code, an archive or a format that runs code when it loads, and the pin does not "
+            f"say {RUNS_CODE_KEY} = true"
         )
     return field
 

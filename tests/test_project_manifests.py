@@ -13,8 +13,29 @@ from mostt_model_builder.domain.lock.declared_requirements import (
 REPO_ROOT = Path(__file__).resolve().parent.parent
 HOST_MANIFEST_PATH = REPO_ROOT / "pyproject.toml"
 IMAGES_MANIFEST_PATH = REPO_ROOT / "images" / "pyproject.toml"
-IMAGES_UV_KEYS = {"package", "no-build", "environments", "exclude-newer", "required-version"}
-IMAGES_REQUIREMENT_COUNT = 0
+IMAGES_UV_KEYS = {
+    "package",
+    "no-build",
+    "environments",
+    "exclude-newer",
+    "required-version",
+    "dependency-metadata",
+}
+EXPORT_REQUIREMENTS = {
+    "nemo-toolkit": ("asr",),
+    "numpy": (),
+    "onnx": (),
+    "onnx-ir": (),
+    "onnxruntime": (),
+    "onnxscript": (),
+    "safetensors": (),
+    "torch": (),
+}
+EXPORT_EXTRA = "parakeet-tdt-export"
+CONTAINERFILES = sorted(
+    [*REPO_ROOT.glob("images/*/Containerfile"), *REPO_ROOT.glob("recipes/*/images/*/Containerfile")]
+)
+EXCLUDED_PACKAGE = re.compile(r"--no-install-package (?P<package>[a-z0-9]+(-[a-z0-9]+)*)")
 IMAGES_ENVIRONMENTS = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
 EXCLUDE_NEWER_GRAMMAR = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z")
 HOST_UV_SETTINGS = {"package": False, "no-build": True}
@@ -37,6 +58,14 @@ def read_string_list(table: dict[str, object], key: str) -> list[str]:
     if not isinstance(entries, list) or not all(isinstance(entry, str) for entry in entries):
         raise TypeError(f"{key} is not a list of strings: {entries!r}")
     return [str(entry) for entry in entries]
+
+
+def list_packages_built_by_a_stage() -> set[str]:
+    return {
+        match["package"]
+        for containerfile in CONTAINERFILES
+        for match in EXCLUDED_PACKAGE.finditer(containerfile.read_text(encoding="utf-8"))
+    }
 
 
 def list_unpinned_requirements(requirements: list[str]) -> list[str]:
@@ -118,6 +147,25 @@ class TestTheProjectManifests:
         ) -> None:
             assert read_table(images_manifest, "tool.uv")["required-version"] == f"=={UV_VERSION}"
 
+        def test_should_declare_the_metadata_of_exactly_the_packages_a_build_stage_builds(
+            self, images_manifest: dict[str, object]
+        ) -> None:
+            dependency_metadata = read_table(images_manifest, "tool.uv")["dependency-metadata"]
+            assert isinstance(dependency_metadata, list)
+            assert {entry["name"] for entry in dependency_metadata} == (
+                list_packages_built_by_a_stage()
+            )
+
+        def test_should_declare_no_dependency_of_a_package_built_by_a_stage_so_uv_builds_none(
+            self, images_manifest: dict[str, object]
+        ) -> None:
+            dependency_metadata = read_table(images_manifest, "tool.uv")["dependency-metadata"]
+            assert isinstance(dependency_metadata, list)
+            assert len(dependency_metadata) > 0
+            assert [
+                entry["name"] for entry in dependency_metadata if entry.get("requires-dist") != []
+            ] == []
+
     class TestWhenTheImagesRequirementsAreRead:
         @pytest.fixture
         def requirements(self) -> tuple[DeclaredRequirement, ...]:
@@ -129,4 +177,13 @@ class TestTheProjectManifests:
         def test_should_read_each_one_as_an_exact_pin_through_the_strict_parser(
             self, requirements: tuple[DeclaredRequirement, ...]
         ) -> None:
-            assert len(requirements) == IMAGES_REQUIREMENT_COUNT
+            assert len(requirements) == len(EXPORT_REQUIREMENTS)
+
+        def test_should_give_the_export_image_nemo_torch_and_the_onnx_exporters(
+            self, requirements: tuple[DeclaredRequirement, ...]
+        ) -> None:
+            assert {
+                requirement.name: requirement.extras
+                for requirement in requirements
+                if requirement.extra == EXPORT_EXTRA
+            } == EXPORT_REQUIREMENTS

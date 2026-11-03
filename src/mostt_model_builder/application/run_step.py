@@ -1,5 +1,5 @@
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 from typing import Protocol
 
@@ -32,7 +32,8 @@ from mostt_model_builder.domain.containers.step_peaks import StepPeaks, parse_st
 OUTPUT_DIRECTORY_MODE = 0o2770
 REQUEST_DIRECTORY_MODE = 0o750
 REQUEST_FILE_MODE = 0o640
-IMAGES_COMMAND = "./model-build.sh --work <dir> images"
+IMAGES_COMMAND = "./model-build.sh --work <dir> --recipe <name> images"
+CLEAN_COMMAND = f"./model-build.sh --work <dir> --recipe <name> {CLEAN_STEP_NAME}"
 
 
 class StepError(Exception):
@@ -87,6 +88,8 @@ class StepFiles(Protocol):
         parsed_names: frozenset[str],
     ) -> WrittenOutputs: ...
 
+    def list_entry_names(self, directory: PurePosixPath) -> tuple[str, ...]: ...
+
 
 @dataclass(frozen=True, slots=True)
 class HostIdentity:
@@ -105,6 +108,7 @@ class StepRunRequest:
     work_root: PurePosixPath
     head_tree: str
     host: HostIdentity
+    earlier_output_directories: Mapping[str, PurePosixPath] = field(default_factory=dict)
     parsed_output_names: frozenset[str] = frozenset()
 
 
@@ -128,7 +132,9 @@ def run_step(request: StepRunRequest, engine: ContainerEngine, files: StepFiles)
         request.source_paths,
         request.work_root,
         request.host.group_id,
+        request.earlier_output_directories,
     )
+    judge_earlier_outputs(request, files)
     run_judged_container(run, request.placement.log_path, row.name, request.host, engine, files)
     return read_outputs(request, parsed_names, files)
 
@@ -151,7 +157,7 @@ def make_output_directory(request: StepRunRequest, files: StepFiles) -> None:
     if not files.make_step_directory(request.work_root / output_directory, OUTPUT_DIRECTORY_MODE):
         raise StepError(
             f"the outputs of the step {request.row.name} already exist in {output_directory}: "
-            f"remove them with ./model-build.sh --work <dir> {CLEAN_STEP_NAME} {request.row.name}"
+            f"remove them with {CLEAN_COMMAND} {request.row.name}"
         )
 
 
@@ -163,7 +169,7 @@ def write_request(request: StepRunRequest, files: StepFiles) -> None:
     if not files.make_step_directory(request.work_root / request_directory, REQUEST_DIRECTORY_MODE):
         raise StepError(
             f"the request of the step {request.row.name} already exists in {request_directory}: "
-            f"remove it with ./model-build.sh --work <dir> {CLEAN_STEP_NAME} {request.row.name}"
+            f"remove it with {CLEAN_COMMAND} {request.row.name}"
         )
     for name, content in request.request_files.items():
         files.write_new_file(
@@ -191,8 +197,31 @@ def run_judged_container(
 
 def judge_mounts(run: ContainerRun, user_id: int, files: StepFiles) -> None:
     for mount in run.mounts:
+        if mount.is_written_by_a_step:
+            continue
         judge_mount(
             files.inspect_components(run.work_root, mount.host_path), mount.is_file, user_id
+        )
+
+
+def judge_earlier_outputs(request: StepRunRequest, files: StepFiles) -> None:
+    for earlier_output in request.row.earlier_outputs:
+        directory = request.earlier_output_directories[earlier_output.step]
+        judge_mount(
+            files.inspect_components(request.work_root, directory),
+            is_file=False,
+            user_id=request.host.user_id,
+        )
+        judge_output_entries(
+            files.list_entry_names(request.work_root / directory),
+            earlier_output.step_output_names,
+        )
+        output = earlier_output.output
+        judge_written_file(
+            output.name,
+            files.inspect_components(request.work_root, directory / output.name)[-1].facts,
+            output.max_size_bytes,
+            CONTAINER_USER_ID,
         )
 
 

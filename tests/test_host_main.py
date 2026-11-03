@@ -16,6 +16,8 @@ HOST_ENTRY_MODULE = "mostt_model_builder.host_main"
 USAGE_START = "usage: model-build.sh"
 UNKNOWN_COMMAND = "unknown-command"
 COMMANDS = ("fetch", "lock", "images", "step", "clean")
+RECIPE_NAME = "parakeet-tdt"
+RECIPE_STEPS = ("fleurs-check", "describe")
 ARGUMENT_ERROR_EXIT_STATUS = 2
 COMMAND_FAILURE_EXIT_STATUS = 1
 COMMAND_LINE_TIMEOUT_S = 60
@@ -64,6 +66,32 @@ class TestTheHostMain:
                 ) -> None:
                     assert f"    {command} " in help_run.stdout
 
+            def test_should_name_the_recipes_that_the_option_of_the_recipe_takes(
+                self, help_run: subprocess.CompletedProcess[str]
+            ) -> None:
+                assert "--recipe <name>" in help_run.stdout
+                assert RECIPE_NAME in help_run.stdout
+
+        class TestWhenGivenAnUnknownStep:
+            @pytest.fixture(scope="class")
+            @classmethod
+            def step_run(cls) -> subprocess.CompletedProcess[str]:
+                return run_command_line(
+                    ["--work", "/data/work", "--recipe", RECIPE_NAME, "step", UNKNOWN_COMMAND]
+                )
+
+            @pytest.mark.parametrize("step", RECIPE_STEPS)
+            class TestWhenItListsTheSteps:
+                def test_should_name_the_steps_of_the_core_and_of_the_recipe(
+                    self, step_run: subprocess.CompletedProcess[str], step: str
+                ) -> None:
+                    assert step in step_run.stderr
+
+            def test_should_fail_as_an_argument_error(
+                self, step_run: subprocess.CompletedProcess[str]
+            ) -> None:
+                assert step_run.returncode == ARGUMENT_ERROR_EXIT_STATUS
+
         class TestWhenGivenAnUnknownCommand:
             @pytest.fixture(scope="class")
             @classmethod
@@ -94,7 +122,9 @@ class TestTheHostMain:
             @pytest.fixture(scope="class")
             @classmethod
             def fetch_run(cls, missing_work_directory: Path) -> subprocess.CompletedProcess[str]:
-                return run_command_line(["--work", str(missing_work_directory), "fetch"])
+                return run_command_line(
+                    ["--work", str(missing_work_directory), "--recipe", RECIPE_NAME, "fetch"]
+                )
 
             def test_should_say_why_on_the_error_stream(
                 self,
@@ -107,6 +137,22 @@ class TestTheHostMain:
 
             def test_should_fail(self, fetch_run: subprocess.CompletedProcess[str]) -> None:
                 assert fetch_run.returncode == COMMAND_FAILURE_EXIT_STATUS
+
+        class TestWhenACommandOtherThanTheLockIsGivenNoRecipe:
+            @pytest.fixture(scope="class")
+            @classmethod
+            def fetch_run(cls) -> subprocess.CompletedProcess[str]:
+                return run_command_line(["--work", "/data/work", "fetch"])
+
+            def test_should_say_that_the_command_needs_a_recipe(
+                self, fetch_run: subprocess.CompletedProcess[str]
+            ) -> None:
+                assert "the command fetch needs --recipe <name>" in fetch_run.stderr
+
+            def test_should_fail_as_an_argument_error(
+                self, fetch_run: subprocess.CompletedProcess[str]
+            ) -> None:
+                assert fetch_run.returncode == ARGUMENT_ERROR_EXIT_STATUS
 
     class TestTheDescribeLockResolutionFunction:
         @pytest.fixture

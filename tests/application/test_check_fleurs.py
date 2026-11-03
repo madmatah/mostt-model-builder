@@ -61,8 +61,9 @@ REPORT = FleursCheckReport(
     )
 )
 PEAKS = StepPeaks(memory_peak_bytes=21 * 2**20, process_count_peak=6)
-RUN = FleursCheckRun(PINS, COMMIT, WORK_ROOT, HEAD_TREE, HOST)
-REQUEST_PATH = WORK_ROOT / f"runs/core/{COMMIT}/requests/fleurs-check/request.json"
+RECIPE_NAME = "parakeet-tdt"
+RUN = FleursCheckRun(PINS, RECIPE_NAME, COMMIT, WORK_ROOT, HEAD_TREE, HOST)
+REQUEST_PATH = WORK_ROOT / f"runs/{RECIPE_NAME}/{COMMIT}/requests/fleurs-check/request.json"
 
 
 @dataclass(frozen=True)

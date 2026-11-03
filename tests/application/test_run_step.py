@@ -34,9 +34,13 @@ from mostt_model_builder.domain.containers.container_files import (
 )
 from mostt_model_builder.domain.containers.container_steps import (
     BOOTSTRAP_IN_THE_IMAGE,
+    CONTAINER_USER_ID,
     LOCK_ROW,
     PEAKS_FILE_NAME,
+    BindMount,
     ContainerRun,
+    DeclaredOutput,
+    EarlierOutput,
     SourceReference,
     StepPlacement,
 )
@@ -74,6 +78,19 @@ GOOD_OUTPUTS = {
 }
 LOCK_ROW_SOURCE = SourceReference("google/fleurs", "data/fr_fr/test.tsv")
 FAILED_STEP_TAIL = b"Traceback\n\x1b[31mError\n"
+NAMES_OUTPUT = DeclaredOutput("names", 1024)
+NAMES_CONTENT = b"encoder.weight\tfloat32\t[2,2]\n"
+EARLIER_DIRECTORY = PurePosixPath("runs/family/c0ffee/describe")
+EARLIER_OUTPUT = EarlierOutput("describe", NAMES_OUTPUT, (NAMES_OUTPUT.name, PEAKS_FILE_NAME))
+EARLIER_OUTPUT_REQUEST = replace(
+    REQUEST,
+    row=replace(LOCK_ROW, earlier_outputs=(EARLIER_OUTPUT,)),
+    earlier_output_directories={"describe": EARLIER_DIRECTORY},
+)
+EARLIER_FILES = {
+    NAMES_OUTPUT.name: build_step_output(NAMES_CONTENT),
+    PEAKS_FILE_NAME: build_step_output(render_step_peaks(PEAKS)),
+}
 
 
 @dataclass(frozen=True)
@@ -109,6 +126,16 @@ def build_engine(
         status=status,
         log_tail=FAILED_STEP_TAIL,
     )
+
+
+def build_files_with_earlier_outputs(
+    earlier_files: dict[str, tuple[FileFacts, bytes]],
+) -> FakeStepFiles:
+    files = build_files()
+    files.add_directory(WORK_ROOT / EARLIER_DIRECTORY, build_directory_facts(0o2770))
+    for name, (facts, content) in earlier_files.items():
+        files.add_file(WORK_ROOT / EARLIER_DIRECTORY / name, facts, content)
+    return files
 
 
 def run_quietly(
@@ -228,7 +255,7 @@ class TestTheRunStep:
                     StepError,
                     match=re.escape(
                         "the outputs of the step lock already exist in lock/1/output: "
-                        "remove them with ./model-build.sh --work <dir> clean lock"
+                        "remove them with ./model-build.sh --work <dir> --recipe <name> clean lock"
                     ),
                 ):
                     run_act()
@@ -351,6 +378,181 @@ class TestTheRunStep:
                 return partial(run_step, REQUEST, build_engine(files, outputs), files)
 
             def test_should_refuse_them_and_say_why(
+                self, run_act: Callable[[], StepOutputs], reason: str
+            ) -> None:
+                with pytest.raises(ContainerFileError, match=re.escape(reason)):
+                    run_act()
+
+        class TestWhenTheRowBindsADeclaredOutputOfAnEarlierStep:
+            @pytest.fixture
+            def step_record(self) -> CompletedStep:
+                files = build_files_with_earlier_outputs(EARLIER_FILES)
+                engine = build_engine(files)
+                return CompletedStep(
+                    run_step(EARLIER_OUTPUT_REQUEST, engine, files), engine.runs, files
+                )
+
+            def test_should_bind_that_file_alone_read_only_under_the_inputs_of_its_step(
+                self, step_record: CompletedStep
+            ) -> None:
+                assert [
+                    mount
+                    for run in step_record.runs
+                    for mount in run.mounts
+                    if mount.host_path.is_relative_to(EARLIER_DIRECTORY)
+                ] == [
+                    BindMount(
+                        host_path=EARLIER_DIRECTORY / NAMES_OUTPUT.name,
+                        container_path=PurePosixPath("/inputs/describe/names"),
+                        is_read_only=True,
+                        is_file=True,
+                        is_written_by_a_step=True,
+                    )
+                ]
+
+        class TestWhenAnEarlierOutputIsALink:
+            @pytest.fixture
+            def step_record(self) -> StepRecord:
+                link = FileFacts(FileKind.LINK, CONTAINER_USER_ID, 0o777, 12, 1)
+                files = build_files_with_earlier_outputs(
+                    {**EARLIER_FILES, NAMES_OUTPUT.name: (link, b"")}
+                )
+                return run_quietly(EARLIER_OUTPUT_REQUEST, build_engine(files), files)
+
+            def test_should_refuse_it_before_any_container_runs(
+                self, step_record: StepRecord
+            ) -> None:
+                assert (step_record.outputs, step_record.runs) == (None, [])
+
+        @pytest.mark.parametrize(
+            ("earlier_files", "reason"),
+            [
+                pytest.param(
+                    {**EARLIER_FILES, "notes.txt": build_step_output(b"x")},
+                    "the step wrote 'notes.txt', which its row does not declare",
+                    id="an undeclared entry beside it",
+                ),
+                pytest.param(
+                    {PEAKS_FILE_NAME: EARLIER_FILES[PEAKS_FILE_NAME]},
+                    "the step did not write its output names",
+                    id="a missing file",
+                ),
+                pytest.param(
+                    {
+                        **EARLIER_FILES,
+                        NAMES_OUTPUT.name: (
+                            FileFacts(FileKind.LINK, CONTAINER_USER_ID, 0o777, 12, 1),
+                            b"",
+                        ),
+                    },
+                    "the output names is a link, not a regular file",
+                    id="a link",
+                ),
+                pytest.param(
+                    {
+                        **EARLIER_FILES,
+                        NAMES_OUTPUT.name: (
+                            FileFacts(FileKind.DIRECTORY, CONTAINER_USER_ID, 0o750, 4096, 2),
+                            b"",
+                        ),
+                    },
+                    "the output names is a directory, not a regular file",
+                    id="a directory in place of the file",
+                ),
+                pytest.param(
+                    {
+                        **EARLIER_FILES,
+                        NAMES_OUTPUT.name: (
+                            replace(build_step_output(NAMES_CONTENT)[0], permission_bits=0o644),
+                            NAMES_CONTENT,
+                        ),
+                    },
+                    "the output names has the mode 0644, not 0640",
+                    id="another mode",
+                ),
+                pytest.param(
+                    {
+                        **EARLIER_FILES,
+                        NAMES_OUTPUT.name: (
+                            replace(build_step_output(NAMES_CONTENT)[0], owner_id=USER_ID),
+                            NAMES_CONTENT,
+                        ),
+                    },
+                    f"the output names is owned by the user id {USER_ID}, not by 65531",
+                    id="another owner",
+                ),
+                pytest.param(
+                    {
+                        **EARLIER_FILES,
+                        NAMES_OUTPUT.name: (
+                            replace(build_step_output(NAMES_CONTENT)[0], size_bytes=1025),
+                            NAMES_CONTENT,
+                        ),
+                    },
+                    "the output names holds 1025 bytes, beyond its bound of 1024",
+                    id="a file beyond its size bound",
+                ),
+                pytest.param(
+                    {
+                        **EARLIER_FILES,
+                        NAMES_OUTPUT.name: (
+                            replace(build_step_output(NAMES_CONTENT)[0], link_count=2),
+                            NAMES_CONTENT,
+                        ),
+                    },
+                    "the output names has 2 links, not one",
+                    id="several links",
+                ),
+            ],
+        )
+        class TestWhenAnEarlierOutputBreaksTheRowOfItsStep:
+            @pytest.fixture
+            def run_act(
+                self, earlier_files: dict[str, tuple[FileFacts, bytes]]
+            ) -> Callable[[], StepOutputs]:
+                files = build_files_with_earlier_outputs(earlier_files)
+                return partial(run_step, EARLIER_OUTPUT_REQUEST, build_engine(files), files)
+
+            def test_should_refuse_it_and_say_why(
+                self, run_act: Callable[[], StepOutputs], reason: str
+            ) -> None:
+                with pytest.raises(ContainerFileError, match=re.escape(reason)):
+                    run_act()
+
+        @pytest.mark.parametrize(
+            ("directory_facts_of_the_earlier_step", "reason"),
+            [
+                pytest.param(
+                    None,
+                    f"{WORK_ROOT / EARLIER_DIRECTORY} is missing, where a directory is declared",
+                    id="an earlier step that has not run",
+                ),
+                pytest.param(
+                    FileFacts(FileKind.LINK, USER_ID, 0o777, 12, 1),
+                    "runs/family/c0ffee/describe is a link, where a directory is declared",
+                    id="a link in place of its directory",
+                ),
+                pytest.param(
+                    build_directory_facts(0o2770, owner_id=CONTAINER_USER_ID),
+                    "runs/family/c0ffee/describe is owned by the user id 65531, not by 1000",
+                    id="a directory that a container made",
+                ),
+            ],
+        )
+        class TestWhenTheDirectoryOfAnEarlierStepIsNotTheOneTheHostMade:
+            @pytest.fixture
+            def run_act(
+                self, directory_facts_of_the_earlier_step: FileFacts | None
+            ) -> Callable[[], StepOutputs]:
+                files = build_files()
+                files.add_directory(WORK_ROOT / EARLIER_DIRECTORY.parent)
+                if directory_facts_of_the_earlier_step is not None:
+                    files.add_directory(
+                        WORK_ROOT / EARLIER_DIRECTORY, directory_facts_of_the_earlier_step
+                    )
+                return partial(run_step, EARLIER_OUTPUT_REQUEST, build_engine(files), files)
+
+            def test_should_refuse_it_and_say_why(
                 self, run_act: Callable[[], StepOutputs], reason: str
             ) -> None:
                 with pytest.raises(ContainerFileError, match=re.escape(reason)):

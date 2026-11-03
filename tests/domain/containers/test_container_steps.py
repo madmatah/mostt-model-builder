@@ -24,15 +24,27 @@ from mostt_model_builder.domain.containers.container_steps import (
     ContainerRun,
     DeclaredOutput,
     Device,
+    SourceReference,
     StepLimits,
     StepPlacement,
     StepRow,
     StepTableError,
     TemporaryFilesystem,
     build_clean_row,
-    find_runnable_core_row,
     judge_row,
     plan_container_run,
+)
+from mostt_model_builder.domain.contract.recipe_contract import (
+    RECIPES_DIRECTORY_NAME,
+    JudgedRecipe,
+    RecipeFacts,
+    judge_recipe,
+)
+from mostt_model_builder.host_main import (
+    CLONE_ROOT,
+    RECIPES,
+    find_present_entry_modules,
+    read_pins,
 )
 
 HOST_CPU_COUNT = 20
@@ -47,15 +59,48 @@ PLACEMENT = StepPlacement(
 )
 BENCH_FILE_COUNT = 4
 REVISION = "70bb2e84b976b7e960aa89f1c648e09c59f894dd"
+
+
+def judge_every_recipe() -> tuple[JudgedRecipe, ...]:
+    return tuple(
+        judge_recipe(
+            contract,
+            RecipeFacts(
+                core_pins=read_pins(CLONE_ROOT),
+                recipe_pins=read_pins(CLONE_ROOT / RECIPES_DIRECTORY_NAME / contract.name),
+                present_entry_modules=find_present_entry_modules(contract),
+                host_cpu_count=HOST_CPU_COUNT,
+            ),
+        )
+        for contract in RECIPES.values()
+    )
+
+
+JUDGED_RECIPES = judge_every_recipe()
+CODE_RUNNING_SOURCES = {
+    SourceReference(pin.repository, pin.path)
+    for recipe in JUDGED_RECIPES
+    for pin in recipe.pins
+    if pin.runs_code_when_loaded
+}
+CODE_READING_IMAGES = {
+    (contract.name, image.name)
+    for contract in RECIPES.values()
+    for image in contract.images
+    if image.reads_code_running_sources
+}
 EVERY_ROW = (
     FLEURS_CHECK_ROW,
     LOCK_ROW,
     *(build_clean_row(image) for image in CORE_IMAGES),
+    *(row for recipe in JUDGED_RECIPES for row in recipe.rows),
+    *(build_clean_row(image) for recipe in JUDGED_RECIPES for image in recipe.images),
 )
 ROW_IDS = [f"{row.name} in {row.image.tag}" for row in EVERY_ROW]
 GOOD_LIMITS = StepLimits(memory_mib=1024, process_count=64, cpu_count=2, temporary_directory_mib=64)
 CLEAN_ROW = build_clean_row(CORE_IMAGES[0])
 GPU_IMAGE = ContainerImage("core", "gpu-probe", Device.GPU, BASE_PYTHON)
+RECIPE_IMAGE = ContainerImage("family", "export", Device.CPU, BASE_PYTHON)
 SCRATCH_ROW = replace(FLEURS_CHECK_ROW, limits=replace(GOOD_LIMITS, scratch_mib=256))
 REFUSED_ROWS = {
     "a name outside the grammar": (
@@ -64,6 +109,17 @@ REFUSED_ROWS = {
     ),
     "an entry module outside the core's steps": (
         replace(FLEURS_CHECK_ROW, entry_module="mostt_model_builder.host_main"),
+        "lies outside mostt_model_builder.steps",
+    ),
+    "a core entry module in a recipe's image, which runs only the recipe's steps": (
+        replace(FLEURS_CHECK_ROW, image=RECIPE_IMAGE),
+        "lies outside mostt_recipe_family.steps, the steps of the image "
+        "mostt-model-builder-family-export",
+    ),
+    "a recipe's entry module named clean, which runs only the core's cleaning": (
+        replace(
+            build_clean_row(RECIPE_IMAGE), entry_module="mostt_recipe_family.steps.clean_output"
+        ),
         "lies outside mostt_model_builder.steps",
     ),
     "an entry module that is not a dotted name": (
@@ -169,7 +225,13 @@ def plan_row(row: StepRow) -> ContainerRun:
         reference: PurePosixPath("sources", reference.repository, REVISION, reference.path)
         for reference in row.sources
     }
-    return plan_container_run(row, IMAGE_ID, PLACEMENT, source_paths, WORK_ROOT, GROUP_ID)
+    earlier_output_directories = {
+        earlier_output.step: PurePosixPath("runs/core/c0ffee", earlier_output.step)
+        for earlier_output in row.earlier_outputs
+    }
+    return plan_container_run(
+        row, IMAGE_ID, PLACEMENT, source_paths, WORK_ROOT, GROUP_ID, earlier_output_directories
+    )
 
 
 PROXY_VARIABLE_NAMES = (
@@ -226,6 +288,18 @@ class TestTheContainerSteps:
                 assert judge_act() is None
 
     class TestTheTableOfRows:
+        class TestWhenEveryRowIsRead:
+            def test_should_bind_a_source_that_runs_code_only_in_the_image_declared_to_read_it(
+                self,
+            ) -> None:
+                bindings = [
+                    (row.image.owner, row.image.name)
+                    for row in EVERY_ROW
+                    for reference in row.sources
+                    if reference in CODE_RUNNING_SOURCES
+                ]
+                assert (len(bindings) > 0, set(bindings) - CODE_READING_IMAGES) == (True, set())
+
         @pytest.mark.parametrize("row", EVERY_ROW, ids=ROW_IDS)
         class TestWhenARowIsRead:
             def test_should_declare_the_peaks_among_its_outputs_unless_it_cleans(
@@ -235,8 +309,8 @@ class TestTheContainerSteps:
                     row.name != CLEAN_STEP_NAME
                 )
 
-            def test_should_use_the_gpu_on_no_row_of_the_core(self, row: StepRow) -> None:
-                assert row.uses_gpu is False
+            def test_should_use_the_gpu_only_in_an_image_of_the_gpu(self, row: StepRow) -> None:
+                assert row.uses_gpu is False or row.image.device is Device.GPU
 
             def test_should_give_the_network_to_the_lock_alone(self, row: StepRow) -> None:
                 assert row.has_network is (row.name == LOCK_STEP_NAME)
@@ -264,18 +338,6 @@ class TestTheContainerSteps:
 
         def test_should_run_the_core_images_on_the_bases_python_without_a_venv(self) -> None:
             assert {image.python for image in CORE_IMAGES} == {BASE_PYTHON}
-
-    class TestTheFindRunnableCoreRowFunction:
-        class TestWhenTheStepIsTheCleaning:
-            @pytest.fixture
-            def find_act(self) -> Callable[[], StepRow]:
-                return partial(find_runnable_core_row, CLEAN_STEP_NAME)
-
-            def test_should_refuse_it_since_clean_has_its_own_command(
-                self, find_act: Callable[[], StepRow]
-            ) -> None:
-                with pytest.raises(StepTableError, match="no step of the core is named 'clean'"):
-                    find_act()
 
     class TestThePlanContainerRunFunction:
         @pytest.mark.parametrize("row", EVERY_ROW, ids=ROW_IDS)
@@ -324,6 +386,28 @@ class TestTheContainerSteps:
                     for name, setting in container_run.environment
                     if name in PROXY_VARIABLE_NAMES
                 } == dict.fromkeys(PROXY_VARIABLE_NAMES, "")
+
+            def test_should_bind_each_source_and_earlier_output_by_itself_read_only(
+                self, container_run: ContainerRun, row: StepRow
+            ) -> None:
+                bound_files = [mount for mount in container_run.mounts if mount.is_file]
+                assert len(bound_files) == len(row.sources) + len(row.earlier_outputs)
+                assert [mount for mount in bound_files if not mount.is_read_only] == []
+
+            def test_should_bind_each_source_at_the_layout_of_its_pin(
+                self, container_run: ContainerRun, row: StepRow
+            ) -> None:
+                source_mounts = [
+                    mount for mount in container_run.mounts if mount.host_path.parts[0] == "sources"
+                ]
+                assert (
+                    len(source_mounts),
+                    [
+                        mount
+                        for mount in source_mounts
+                        if mount.container_path != PurePosixPath("/") / mount.host_path
+                    ],
+                ) == (len(row.sources), [])
 
             def test_should_keep_every_cache_and_home_under_tmp_and_the_hub_offline(
                 self, container_run: ContainerRun
@@ -384,7 +468,13 @@ class TestTheContainerSteps:
             @pytest.fixture
             def container_run(self) -> ContainerRun:
                 return plan_container_run(
-                    replace(SCRATCH_ROW, sources=()), IMAGE_ID, PLACEMENT, {}, WORK_ROOT, GROUP_ID
+                    replace(SCRATCH_ROW, sources=()),
+                    IMAGE_ID,
+                    PLACEMENT,
+                    {},
+                    WORK_ROOT,
+                    GROUP_ID,
+                    {},
                 )
 
             def test_should_add_a_scratch_temporary_filesystem(
@@ -411,6 +501,7 @@ class TestTheContainerSteps:
                     {},
                     WORK_ROOT,
                     GROUP_ID,
+                    {},
                 )
 
             def test_should_refuse_it(self, plan_act: Callable[[], ContainerRun]) -> None:

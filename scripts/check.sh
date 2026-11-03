@@ -20,14 +20,24 @@ run_locked() {
     (cd "${REPO_ROOT}" && uv run --locked "$@")
 }
 
-# The package is not installed in the environment, since the project builds
-# none: import-linter finds it on the path, as mypy and pytest do.
+# The packages are not installed in the environment, since the project builds
+# none: import-linter finds them on the path, as mypy and pytest do, the core's
+# and every recipe's, so that a new recipe needs no change here.
+packages_path() {
+    local directories=("${REPO_ROOT}/src") recipe_source
+    for recipe_source in "${REPO_ROOT}"/recipes/*/src; do
+        [[ -d "${recipe_source}" ]] && directories+=("${recipe_source}")
+    done
+    local IFS=:
+    printf '%s' "${directories[*]}"
+}
+
 run_step() {
     case "$1" in
     format) run_locked ruff format --check ;;
     lint) run_locked ruff check ;;
     types) run_locked mypy ;;
-    imports) PYTHONPATH="${REPO_ROOT}/src" run_locked lint-imports ;;
+    imports) PYTHONPATH="$(packages_path)" run_locked lint-imports ;;
     tests) run_locked pytest ;;
     esac
 }

@@ -4,7 +4,7 @@ This document explains the design of mostt-model-builder and the reasons behind 
 
 ## The project
 
-mostt-model-builder builds speech recognition models from their original weights, reproducibly and in confinement: it exports them, quantizes them, and measures them on FLEURS before any file is published. It is made of a core and of one recipe per model family (planned). The core holds what every family shares: the pinned sources, the confined containers and their boundary with the host, the formats and their inspection, the FLEURS bench and its acceptance. A recipe holds what one family needs, behind a contract that forces no format, so that a family that is not built on NeMo, or not exported to ONNX, comes as a recipe of its own; the first one, for Parakeet TDT, builds Parakeet Ultra in ONNX. The code of the models and of their frameworks is untrusted, so it runs only in containers without network, which see none of the user's files or secrets. The checked files land in a candidate directory laid out as they will be published on Hugging Face, where the maintainer publishes them, and mostt, the local dictation project, pins the published files by hash.
+mostt-model-builder builds speech recognition models from their original weights, reproducibly and in confinement: it exports them, quantizes them, and measures them on FLEURS before any file is published. It is made of a core and of one recipe per model family. The core holds what every family shares: the pinned sources, the confined containers and their boundary with the host, the formats and their inspection, the FLEURS bench and its acceptance. A recipe holds what one family needs, behind a contract that forces no format, so that a family that is not built on NeMo, or not exported to ONNX, comes as a recipe of its own; the first one, for Parakeet TDT, builds Parakeet Ultra in ONNX. The code of the models and of their frameworks is untrusted, so it runs only in containers without network, which see none of the user's files or secrets. The checked files land in a candidate directory laid out as they will be published on Hugging Face, where the maintainer publishes them, and mostt, the local dictation project, pins the published files by hash.
 
 These constraints drive the choices in this document:
 
@@ -43,7 +43,7 @@ Notes:
 - **No package is built on the host** (`no-build = true`): every development tool publishes wheels, and a package built from its source would run its build code with the user's rights.
 - **`ruff format` checks the Python blocks of the Markdown documents too,** such as the example of `.claude/rules/tests.md`, so that an example reads as the code it shows.
 - **Python 3.12** is the version of the base image of the build's images, so that the host's side and the steps run the same language.
-- **Two environments hold the dependencies, one per place where code runs:** the host's, `pyproject.toml` and `uv.lock`, holds the development tools and builds nothing; the images', `images/pyproject.toml` and `images/uv.lock`, holds the libraries of every image, one extra per image, so that one lock pins one version of each library across a build. The images' environment allows a build (`no-build = false`), since a package that NeMo needs, antlr4-python3-runtime, is published as an sdist alone, and uv refuses it under `no-build = true` even with its metadata declared; that package is built in a build stage of the export image, without network (planned). A build allowed on the host would run that code with the user's rights, which is why `.claude/rules/container-security.md` > The host keeps uv out of `images/` on the host: only `./model-build.sh lock` resolves its lock, in a container, and only an image's build installs from it, with `--frozen --no-build`. Its uv, 0.13.7, is pinned by its image's digest and by `required-version`, which makes every other version of uv refuse the project and keeps the lock's layout tied to the images' uv, so that it changes only through a change that names a new uv.
+- **Two environments hold the dependencies, one per place where code runs:** the host's, `pyproject.toml` and `uv.lock`, holds the development tools and builds nothing; the images', `images/pyproject.toml` and `images/uv.lock`, holds the libraries of every image, one extra per image, so that one lock pins one version of each library across a build. The images' environment allows a build (`no-build = false`), since a package that NeMo needs, antlr4-python3-runtime, is published as an sdist alone, and uv refuses it under `no-build = true` even with its metadata declared; that package is built in a build stage of the export image, without network. A build allowed on the host would run that code with the user's rights, which is why `.claude/rules/container-security.md` > The host keeps uv out of `images/` on the host: only `./model-build.sh lock` resolves its lock, in a container, and only an image's build installs from it, with `--frozen --no-build`. Its uv, 0.13.7, is pinned by its image's digest and by `required-version`, which makes every other version of uv refuse the project and keeps the lock's layout tied to the images' uv, so that it changes only through a change that names a new uv.
 - **The gate reads the images' lock as text:** it checks both locks, every package from PyPI by hash with a wheel that installs here, and checks that the images' lock records what its manifest declares, which stands in for the `uv lock --check` that no host command may run there.
 - **Direct dependencies are pinned exactly,** since a new exporter or a new framework can change the graph a build writes: a new version comes only through a change that names it, and the build that follows checks it.
 
@@ -58,19 +58,19 @@ The project follows Clean Architecture: the rules live in a pure domain at the c
 - **Composition roots wire by hand,** so the whole graph sits in one place and the types check it. A DI container would resolve it at run time, by tokens.
 - **What is stored or shared is plain data,** so it saves, travels and replays as it is.
 - **SOLID applies to modules, functions and types,** so a new case is added beside the others, without rewriting them.
-- **A model family is a recipe** (planned): what a family needs, its sources, its export, its variants and its transcriber, lives in its recipe, and the core judges what a recipe declares. A new family then adds a recipe without changing the core, and a recipe cannot widen the confinement that the core imposes.
+- **A model family is a recipe:** what a family needs, its sources, its export, its variants and its transcriber, lives in its recipe, and the core judges what a recipe declares. A new family then adds a recipe without changing the core, and a recipe cannot widen the confinement that the core imposes.
 - **The host trusts no container:** the host's side never imports a library of the models, and reads what a container writes only through its own strict parsers, since that code is the part of a build that no one has reviewed.
 
 ### Layers and modules
 
 | Layer | Module | Responsibility | Depends on |
 |---|---|---|---|
-| Composition roots | `core` | The project's package, `mostt_model_builder`; its command line on the host, `host_main.py`, which reads the terminal's input and wires the adapters, and the recipes (planned); and its bootstrap, `bootstrap.py`, which puts the packages on the path and runs an entry module, on the host and in every step | every layer, and each recipe's `recipe.py` and domain |
-| Composition roots | `steps` | The entry module of each of the core's container steps, which runs in its container on the libraries of its image: the FLEURS check, the cleaning of a step's outputs and the resolution of the images' lock, on the standard library, with the reader of FLEURS's audio, the output modes and the control group's peaks that every step shares | `domain` |
+| Composition roots | `core` | The project's package, `mostt_model_builder`; its command line on the host, `host_main.py`, which reads the terminal's input and wires the adapters, and the recipes; and its bootstrap, `bootstrap.py`, which puts the packages on the path and runs an entry module, on the host and in every step | every layer, and each recipe's `recipe.py` and domain |
+| Composition roots | `steps` | The entry module of each of the core's container steps, which runs in its container on the libraries of its image: the FLEURS check, the cleaning of a step's outputs and the resolution of the images' lock, on the standard library, with the reader of FLEURS's audio, the lookup of a bound source, the output modes and the control group's peaks that every step shares, a recipe's included | `domain` |
 | Adapters | `adapters` | curl, Docker, git and the files of the work directory | `application`, `domain` |
-| Application | `application` | Opens the work directory and fetches the sources; builds the images, runs a step, checks the FLEURS bench, cleans a step's outputs and resolves the images' lock; assembles the candidate and verifies it (planned) | `domain` |
-| Domain | `domain` | The rules: the pins of the sources, the work directory and its layout, and the file names; the step table and its images, the judgment of the mounts and of the files that containers write, the parsers of what they write and the bound on the nesting of a JSON document they read, the label of an image, the container user's accounts and the locks' check; the index and the recordings of the FLEURS bench; the recipe contract, the formats, the bench's measures and its acceptance (planned) | — |
-| Domain, composition roots | `parakeet-tdt` (planned) | The recipe of the Parakeet TDT family, which builds Parakeet Ultra in ONNX: its sources, its export with NeMo, its check against Transformers, its variants and its transcription with onnx-asr | `domain`, `steps` |
+| Application | `application` | Opens the work directory and fetches the sources; builds the images, runs a step of the core or of a recipe, checks the FLEURS bench, cleans a step's outputs and resolves the images' lock; assembles the candidate and verifies it (planned) | `domain` |
+| Domain | `domain` | The rules: the pins of the sources, the work directory and its layout, and the file names; the step table and its images, the judgment of the mounts and of the files that containers write, the parsers of what they write and the bound on the nesting of a JSON document they read, the label of an image, the container user's accounts and the locks' check; the index and the recordings of the FLEURS bench; the recipe contract and the names of the formats; the checks of the formats, the bench's measures and its acceptance (planned) | — |
+| Domain, composition roots | `parakeet-tdt` | The recipe of the Parakeet TDT family, which builds Parakeet Ultra in ONNX: its contract, `recipe.py`; its sources, its export image and the description of its weights, with the preparation of NeMo's configuration in its domain; its export with NeMo, its check against Transformers, its variants and its transcription with onnx-asr (planned) | `domain`, `steps` |
 
 ## Repository layout
 
@@ -89,6 +89,8 @@ mostt-model-builder/
 │   ├── pyproject.toml           # The images' environment: their libraries, one extra per image
 │   ├── uv.lock                  # Its lockfile, which only ./model-build.sh lock writes
 │   └── <image>/                 # The Containerfile of each of the core's images, and its dockerignore
+├── recipes/
+│   └── <family>/                # A recipe, one per model family: parakeet-tdt
 ├── scripts/
 │   ├── check.sh                 # The gate
 │   └── check-commit.sh          # The check of the last commit
@@ -106,8 +108,6 @@ mostt-model-builder/
 └── uv.lock                      # The host's lockfile
 ```
 
-Planned: `recipes/`, one directory per model family.
-
 ### Module anatomy
 
 The project is a single module, and its packages stand for the modules of [Layers and modules](#layers-and-modules):
@@ -121,8 +121,9 @@ src/mostt_model_builder/
 ├── adapters/                    # One file or directory per technology
 ├── steps/                       # The entry modules of the core's container steps
 └── host_main.py                 # The command line on the host
-recipes/<family>/                # (planned) a recipe
+recipes/<family>/                # a recipe
 ├── images/                      # its Containerfiles
+├── sources.toml                 # its pinned sources
 ├── src/mostt_recipe_<family>/
 │   ├── domain/                  # its own rules
 │   ├── recipe.py                # the plain data it gives the core
@@ -148,13 +149,15 @@ Each row names a rule, the rules file that states it, and what enforces it.
 | The host runs on its own Python and the standard library, isolated (`.claude/rules/container-security.md` > The host) | `tests/test_mostt_model_builder.py`, which imports the command line under `-I -S -B`; `tests/test_model_build_launcher.py`, which checks that the launcher runs the bootstrap under `-I -S -B`; `tests/test_bootstrap.py`, which checks the paths the bootstrap appends; `lint-imports`, which keeps the bootstrap's imports out of the packages |
 | Root is refused (`.claude/rules/container-security.md` > The host) | `tests/test_bootstrap.py`, on each of the six ids |
 | A source is fetched over HTTPS alone, and kept only once it matches its pin (`.claude/rules/container-security.md` > The host) | `tests/domain/sources/test_source_pins.py`, the refusals of the pins; `tests/application/test_fetch_sources.py`, which keeps a download only once it matches; `tests/adapters/test_curl_downloader.py`, curl's options |
-| A source's name never marks code, a pickle or an archive (`.claude/rules/container-security.md` > The host) | `tests/domain/sources/test_source_pins.py`, on each refused suffix |
+| A source's name never marks code, a pickle or an archive, unless its pin says it runs code (`.claude/rules/container-security.md` > The host) | `tests/domain/sources/test_source_pins.py`, on each refused suffix and on the mark; `tests/test_recipe_listing.py`, which holds every `sources.toml` to its one marked file |
 | The work directory is the user's own, outside the home directory and the clone (`.claude/rules/container-security.md` > The host) | `tests/domain/containers/test_work_directory.py` and `tests/application/test_open_work_directory.py`, on each refusal |
 | uv never builds a package on the host (`.claude/rules/container-security.md` > The host) | `no-build = true` in the host's `[tool.uv]`, which `tests/test_project_manifests.py` holds, with the host's empty dependencies and its exact pins; the locks' check of `tests/test_lockfiles.py`, which refuses a package without a wheel that installs here |
 | uv never runs on the images' environment on the host (`.claude/rules/container-security.md` > The host) | review, against a uv of the images' version; `required-version` in `images/pyproject.toml`, held by `tests/test_project_manifests.py` to the uv of the `uv` image, with the manifest's fixed shape, keeps every other version out and keeps the lock's layout tied to the images' uv |
 | Both locks pass the locks' check (`.claude/rules/configuration.md` > Dependencies) | `tests/test_lockfiles.py`, on `uv.lock` and `images/uv.lock`, and the freshness of `images/uv.lock` against its manifest; `lock` runs both checks on the lock it resolves |
 | A container step's Python runs under `-I -B` (`.claude/rules/container-security.md` > The host) | `tests/domain/containers/test_container_steps.py` and `tests/adapters/test_docker_engine.py`, on every row of the step table |
-| A container that loads that code has no network, no privilege and none of the host's secrets (`.claude/rules/container-security.md` > Confinement) | `tests/domain/containers/test_container_steps.py`, which judges every row against its bounds, and `tests/adapters/test_docker_engine.py`, every option of every row |
+| A container that loads that code has no network, no privilege and none of the host's secrets (`.claude/rules/container-security.md` > Confinement) | `tests/domain/containers/test_container_steps.py`, which judges every row against its bounds, and `tests/adapters/test_docker_engine.py`, every option of every row, the core's and each recipe's |
+| A file that runs code when it loads reaches only the one image declared to read it (`.claude/rules/container-security.md` > Confinement) | `tests/domain/contract/test_recipe_contract.py`, which refuses it bound in any other image; `tests/domain/containers/test_container_steps.py`, on every row; the recipe's own tests, on the members of the `.nemo` it reads |
+| A recipe cannot widen the confinement (`.claude/rules/container-security.md` > Confinement) | `tests/domain/contract/test_recipe_contract.py`, the refusal table of the contract, which the core judges when it loads a recipe; `tests/test_recipe_listing.py`, each recipe's import contracts and Containerfiles |
 | What a container prints or writes is data, never an instruction (`.claude/rules/container-security.md` > The host) | `tests/domain/containers/test_container_files.py`, the refusals of the files written by containers and of the mounts; the refusal tests of each parser; `tests/domain/containers/test_printable_output.py`, the filter over every byte |
 | An image is built from a commit, and runs only at that commit (`.claude/rules/container-security.md` > Images and outputs) | `tests/domain/containers/test_provenance.py` and `tests/application/test_build_images.py`; `tests/test_recipe_listing.py`, which holds every Containerfile to its table of accepted forms |
 | The host never imports a container step, and the libraries of the models load only in the steps that need them (`.claude/rules/container-security.md` > The host) | `lint-imports`, from the contracts of `steps` and of the libraries of the models; `tests/test_mostt_model_builder.py`, which imports each step of the standard library under `-I -S -B` |
@@ -252,5 +255,5 @@ Every branch goes through `/expert-review` before its pull request. It is a proj
 - pytest: https://docs.pytest.org/
 - import-linter: https://import-linter.readthedocs.io/
 - FLEURS, the multilingual speech benchmark that measures a build (planned): https://huggingface.co/datasets/google/fleurs
-- Parakeet TDT 0.6B v3, NVIDIA's model of the first recipe (planned): https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3
+- Parakeet TDT 0.6B v3, NVIDIA's model of the first recipe: https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3
 - Parakeet Ultra, Moondream's post-training of it, the first model built (planned): https://huggingface.co/moondream/parakeet-ultra

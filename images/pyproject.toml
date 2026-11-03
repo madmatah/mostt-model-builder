@@ -9,6 +9,18 @@ description = "The libraries of the images of mostt-model-builder's build."
 requires-python = "==3.12.*"
 dependencies = []
 
+[project.optional-dependencies]
+parakeet-tdt-export = [
+    "nemo-toolkit[asr]==3.0.0",
+    "numpy==2.5.4",
+    "onnx==1.23.2",
+    "onnx-ir==1.1.0",
+    "onnxruntime==1.31.0",
+    "onnxscript==0.7.2",
+    "safetensors==0.8.0",
+    "torch==2.15.0",
+]
+
 # A package published as an sdist alone, which uv refuses under no-build = true even with its
 # dependency metadata declared, is built in a build stage of its image, without network.
 # required-version makes every other version of uv refuse this project rather than resolve or
@@ -19,3 +31,11 @@ no-build = false
 environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
 exclude-newer = "2026-11-02T16:10:00Z"
 required-version = "==0.13.7"
+
+# antlr4-python3-runtime, which hydra-core and omegaconf pin for NeMo, is published as an sdist
+# alone: declaring its metadata lets a resolution skip building it, and the export image builds
+# it in a stage of its own, without network.
+[[tool.uv.dependency-metadata]]
+name = "antlr4-python3-runtime"
+version = "4.9.3"
+requires-dist = []

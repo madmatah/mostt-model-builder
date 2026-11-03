@@ -171,7 +171,16 @@ REFUSED_PINS = {
     "a hash in uppercase": (change_pin(sha256=SHA256.upper()), "sources[0].sha256: "),
     "a hash of 63 digits": (change_pin(sha256=SHA256[:-1]), "sources[0].sha256: "),
     "a hash with its algorithm": (change_pin(sha256=f"sha256:{SHA256}"), "sources[0].sha256: "),
+    "a mark of a file that runs code as a string": (
+        change_pin(runs_code_when_loaded="true"),
+        "sources[0].runs_code_when_loaded: 'true' is not true or false",
+    ),
+    "a mark of a file that runs code as a number": (
+        change_pin(runs_code_when_loaded=1),
+        "sources[0].runs_code_when_loaded: 1 is not true or false",
+    ),
 }
+NEMO_ARCHIVE_PATH = "parakeet-tdt-0.6b-v3.nemo"
 OVERLAPPING_PINS = {
     "the same file pinned twice": (
         (GOOD_PIN, GOOD_PIN),
@@ -257,9 +266,40 @@ class TestTheSourcePins:
                     match=match_exactly(
                         f"sources[0].path: 'weights/model{suffix.upper()}.part' has the refused "
                         f"suffix {suffix}, which marks code, an archive or a format that runs "
-                        "code when it loads"
+                        "code when it loads, and the pin does not say runs_code_when_loaded = true"
                     ),
                 ):
+                    parse_act()
+
+        class TestWhenAPinMarksItsFileAsRunningCodeWhenItLoads:
+            @pytest.fixture
+            def source_pins(self) -> tuple[SourcePin, ...]:
+                return parse_source_pins(
+                    render_sources(change_pin(path=NEMO_ARCHIVE_PATH, runs_code_when_loaded=True))
+                )
+
+            def test_should_accept_its_refused_suffix(
+                self, source_pins: tuple[SourcePin, ...]
+            ) -> None:
+                assert source_pins[0].path == NEMO_ARCHIVE_PATH
+
+            def test_should_keep_the_mark_for_the_images_that_may_read_it(
+                self, source_pins: tuple[SourcePin, ...]
+            ) -> None:
+                assert source_pins[0].runs_code_when_loaded is True
+
+        class TestWhenAPinSaysItsFileRunsNoCode:
+            @pytest.fixture
+            def parse_act(self) -> Callable[[], tuple[SourcePin, ...]]:
+                return partial(
+                    parse_source_pins,
+                    render_sources(change_pin(path=NEMO_ARCHIVE_PATH, runs_code_when_loaded=False)),
+                )
+
+            def test_should_refuse_its_refused_suffix(
+                self, parse_act: Callable[[], tuple[SourcePin, ...]]
+            ) -> None:
+                with pytest.raises(SourcePinError, match=re.escape("has the refused suffix .nemo")):
                     parse_act()
 
         class TestWhenADirectoryHasARefusedSuffix:

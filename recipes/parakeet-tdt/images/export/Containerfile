@@ -1,0 +1,22 @@
+FROM docker.io/library/python:3.12-slim-bookworm@sha256:6a0e06f5ba0b373d051aabd3fffb9b873f27f9a2a3a14bcbe37dee6f0e3bbc70 AS antlr4-wheel
+# antlr4-python3-runtime is published as an sdist alone, and pip download of an sdist would run
+# its setup.py, with network, in a build environment it fills without hashes: BuildKit fetches the
+# sdist against its hash, and the wheel is built without network or isolation, the same to the
+# byte at every build.
+COPY recipes/parakeet-tdt/images/export/antlr4-build-requirements.txt /build/
+RUN pip download --no-deps --only-binary :all: --require-hashes -r /build/antlr4-build-requirements.txt -d /build/downloads
+ADD --checksum=sha256:f224469b4168294902bb1efa80a8bf7855f24c99aef99cbefc1bcd3cce77881b https://files.pythonhosted.org/packages/3e/38/7859ff46355f76f8d19459005ca000b6e7012f2f1ca597746cbcd1fbfe5e/antlr4-python3-runtime-4.9.3.tar.gz /build/downloads/
+RUN --network=none python -m venv /build/venv && /build/venv/bin/pip install --no-index --no-deps /build/downloads/setuptools-84.2.1-py3-none-any.whl && SOURCE_DATE_EPOCH=1636220000 /build/venv/bin/pip wheel --no-build-isolation --no-deps --no-index -w /build/wheels /build/downloads/antlr4-python3-runtime-4.9.3.tar.gz
+FROM docker.io/library/python:3.12-slim-bookworm@sha256:6a0e06f5ba0b373d051aabd3fffb9b873f27f9a2a3a14bcbe37dee6f0e3bbc70
+COPY --from=ghcr.io/astral-sh/uv:0.13.7@sha256:96f40d3904aad8d0bd010539001d36c8e2188b981e1334471a90c4a1d93bb490 /uv /usr/local/bin/uv
+ENV UV_FROZEN=1 UV_NO_CACHE=1 UV_LINK_MODE=copy UV_COMPILE_BYTECODE=1 UV_PYTHON=/usr/local/bin/python3.12 UV_PYTHON_DOWNLOADS=never UV_PROJECT_ENVIRONMENT=/opt/venv
+WORKDIR /opt/model-builder/images
+COPY images/pyproject.toml images/uv.lock /opt/model-builder/images/
+RUN uv sync --frozen --no-dev --no-install-project --no-build --extra parakeet-tdt-export --no-install-package antlr4-python3-runtime
+COPY --from=antlr4-wheel /build/wheels/antlr4_python3_runtime-4.9.3-py3-none-any.whl /opt/wheels/
+COPY recipes/parakeet-tdt/images/export/built-wheels.sha256 /opt/wheels/
+RUN sha256sum -c /opt/wheels/built-wheels.sha256 && uv pip install --python /opt/venv/bin/python --no-deps --no-index --offline /opt/wheels/antlr4_python3_runtime-4.9.3-py3-none-any.whl && rm -rf /opt/wheels
+COPY src/mostt_model_builder /opt/model-builder/src/mostt_model_builder
+COPY recipes/parakeet-tdt/src/mostt_recipe_parakeet_tdt /opt/model-builder/recipes/parakeet-tdt/src/mostt_recipe_parakeet_tdt
+ARG TREE_HASH
+LABEL mostt-model-builder.tree=${TREE_HASH}
