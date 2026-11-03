@@ -3,9 +3,10 @@ import errno
 import hashlib
 import os
 import stat
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import replace
 from pathlib import PurePosixPath
+from typing import BinaryIO
 
 from mostt_model_builder.application.fetch_sources import FileDigest, SourceFileError
 from mostt_model_builder.application.run_step import WrittenFile, WrittenOutputs
@@ -25,6 +26,9 @@ NO_PERMISSION_BITS = 0
 OPEN_WITHOUT_FOLLOWING = os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
 OPEN_DIRECTORY_WITHOUT_FOLLOWING = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 REPLACEMENT_SUFFIX = ".new"
+CREATE_EXCLUSIVELY = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
+PRIVATE_FILE_MODE = 0o600
+COPY_CHUNK_BYTES = 8 * 2**20
 NO_FACTS = FileFacts(FileKind.MISSING, NO_OWNER_ID, NO_PERMISSION_BITS, 0, 0)
 
 
@@ -136,6 +140,44 @@ class WorkFiles:
             os.close(directory_descriptor)
         return WrittenOutputs(entry_names, files)
 
+    def copy_written_file(
+        self,
+        directory: PurePosixPath,
+        name: str,
+        max_size_bytes: int,
+        target: PurePosixPath,
+        observe_chunk: Callable[[bytes], None],
+    ) -> FileFacts:
+        directory_descriptor = os.open(directory, OPEN_DIRECTORY_WITHOUT_FOLLOWING)
+        try:
+            entry_facts = describe_status(
+                os.stat(name, dir_fd=directory_descriptor, follow_symlinks=False)
+            )
+            if entry_facts.kind is not FileKind.REGULAR:
+                return entry_facts
+            descriptor = os.open(
+                name, os.O_RDONLY | OPEN_WITHOUT_FOLLOWING, dir_fd=directory_descriptor
+            )
+        finally:
+            os.close(directory_descriptor)
+        with os.fdopen(descriptor, "rb") as stream:
+            facts = describe_status(os.fstat(stream.fileno()))
+            if facts.kind is not FileKind.REGULAR or facts.size_bytes > max_size_bytes:
+                return facts
+            copy_stream(stream, target, max_size_bytes, observe_chunk)
+        return facts
+
+    def read_host_file(
+        self, directory: PurePosixPath, name: str, max_size_bytes: int
+    ) -> WrittenFile:
+        directory_descriptor = os.open(directory, OPEN_DIRECTORY_WITHOUT_FOLLOWING)
+        try:
+            return read_written_file(directory_descriptor, name, max_size_bytes, is_parsed=True)
+        except FileNotFoundError:
+            return WrittenFile(NO_FACTS, None)
+        finally:
+            os.close(directory_descriptor)
+
     def list_entry_names(self, directory: PurePosixPath) -> tuple[str, ...]:
         directory_descriptor = os.open(directory, OPEN_DIRECTORY_WITHOUT_FOLLOWING)
         try:
@@ -236,6 +278,26 @@ def read_written_file(
     if len(content) > max_size_bytes:
         return WrittenFile(replace(facts, size_bytes=len(content)), None)
     return WrittenFile(facts, content)
+
+
+def copy_stream(
+    stream: BinaryIO,
+    target: PurePosixPath,
+    max_size_bytes: int,
+    observe_chunk: Callable[[bytes], None],
+) -> None:
+    target_descriptor = os.open(target, CREATE_EXCLUSIVELY, PRIVATE_FILE_MODE)
+    copied_bytes = 0
+    with os.fdopen(target_descriptor, "wb") as copy:
+        while chunk := stream.read(COPY_CHUNK_BYTES):
+            copied_bytes += len(chunk)
+            if copied_bytes > max_size_bytes:
+                raise SourceFileError(
+                    f"{target.name} grew beyond {max_size_bytes} bytes as it was copied"
+                )
+            observe_chunk(chunk)
+            copy.write(chunk)
+        os.fchmod(copy.fileno(), READ_ONLY_FILE_MODE)
 
 
 def replace_kind(facts: FileFacts, kind: FileKind) -> FileFacts:

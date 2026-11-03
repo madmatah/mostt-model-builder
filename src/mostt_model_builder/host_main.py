@@ -3,16 +3,29 @@ import os
 import pwd
 import stat
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 from mostt_model_builder.adapters.curl_downloader import CurlDownloader
 from mostt_model_builder.adapters.docker_engine import ContainerEngineError, DockerEngine
 from mostt_model_builder.adapters.git_tree import GitError, GitTree
 from mostt_model_builder.adapters.work_files import WorkFiles
+from mostt_model_builder.application.assemble_candidate import (
+    CandidateError,
+    CandidateRequest,
+    assemble_candidate,
+    read_candidate_texts,
+)
 from mostt_model_builder.application.build_images import ImageBuildError, build_images
 from mostt_model_builder.application.check_fleurs import FleursCheckRun, check_fleurs_bench
-from mostt_model_builder.application.clean_run import CleanOutcome, CleanRequest, clean_step
+from mostt_model_builder.application.clean_run import (
+    CleanOutcome,
+    CleanRequest,
+    clean_step,
+    remove_candidate,
+)
 from mostt_model_builder.application.fetch_sources import (
     DownloadError,
     FetchError,
@@ -31,12 +44,15 @@ from mostt_model_builder.application.resolve_lock import (
 )
 from mostt_model_builder.application.run_recipe_step import (
     MeasuredParity,
+    RecipeStepOutcome,
     RecipeStepRun,
+    RunShard,
     run_recipe_step,
 )
 from mostt_model_builder.application.run_step import HostIdentity, StepError
 from mostt_model_builder.domain.acceptance.parity_reports import ParityReportError
 from mostt_model_builder.domain.bench.fleurs_check_report import FleursCheckReportError
+from mostt_model_builder.domain.bench.hypotheses import Hypothesis, HypothesisError
 from mostt_model_builder.domain.containers.account_ranges import (
     AccountRangeError,
     HostAccounts,
@@ -48,6 +64,7 @@ from mostt_model_builder.domain.containers.container_steps import (
     CONTAINER_USER_ID,
     CORE_IMAGES,
     FLEURS_CHECK_STEP_NAME,
+    INSPECT_STEP_NAME,
     LOCK_STEP_NAME,
     RUNNABLE_CORE_ROWS,
     StepRow,
@@ -60,24 +77,31 @@ from mostt_model_builder.domain.containers.work_directory import (
     WorkDirectoryError,
     locate_source,
 )
+from mostt_model_builder.domain.contract.derived_rows import DerivedRow
 from mostt_model_builder.domain.contract.recipe_contract import (
     RECIPES_DIRECTORY_NAME,
     JudgedRecipe,
+    JudgedRun,
     RecipeContract,
     RecipeContractError,
     RecipeFacts,
     find_runnable_row,
     judge_recipe,
     list_entry_modules,
+    list_rows_of_step,
     list_runnable_rows,
     locate_entry_module_file,
 )
+from mostt_model_builder.domain.formats.external_data import ExternalDataError
 from mostt_model_builder.domain.lock.lock_check import (
     LOCK_FILE_NAME,
     MANIFEST_FILE_NAME,
     LockError,
 )
 from mostt_model_builder.domain.lock.lock_freshness import LockFreshnessError
+from mostt_model_builder.domain.onnx.graph_rules import GraphRuleError, count_products
+from mostt_model_builder.domain.onnx.inspection_report import InspectionReportError
+from mostt_model_builder.domain.onnx.node_placement import NodePlacementError, PlacementSummary
 from mostt_model_builder.domain.sources.source_pins import (
     SourcePin,
     SourcePinError,
@@ -98,6 +122,9 @@ SUBORDINATE_GROUP_IDS_PATH = Path("/etc/subgid")
 FETCH_COMMAND = "fetch"
 IMAGES_COMMAND = "images"
 STEP_COMMAND = "step"
+BUILD_COMMAND = "build"
+CPU_PROVIDER = "CPUExecutionProvider"
+CUDA_PROVIDER = "CUDAExecutionProvider"
 RECIPES = {contract.name: contract for contract in (PARAKEET_TDT_RECIPE,)}
 STEP_NAMES = sorted(
     {row.name for row in RUNNABLE_CORE_ROWS}
@@ -131,6 +158,13 @@ COMMAND_ERRORS = (
     RecipeContractError,
     LockError,
     LockFreshnessError,
+    CandidateError,
+    InspectionReportError,
+    GraphRuleError,
+    ExternalDataError,
+    NodePlacementError,
+    HypothesisError,
+    ValueError,
     OSError,
 )
 
@@ -179,6 +213,12 @@ def build_argument_parser() -> argparse.ArgumentParser:
     )
     step_parser.add_argument(
         "step", choices=STEP_NAMES, metavar="<step>", help=", ".join(STEP_NAMES)
+    )
+    commands.add_parser(
+        BUILD_COMMAND,
+        add_help=False,
+        help="run every step of the recipe's build, in its order, each row of a run in its own "
+        "container",
     )
     clean_parser = commands.add_parser(
         CLEAN_STEP_NAME,
@@ -343,30 +383,145 @@ def check_fleurs(recipe: JudgedRecipe, work_directory: WorkDirectory, files: Wor
     print(describe_peaks(outcome.peaks), flush=True)
 
 
-def run_step_of_recipe(
-    recipe: JudgedRecipe, row: StepRow, work_directory: WorkDirectory, files: WorkFiles
-) -> None:
-    clone_root = PurePosixPath(CLONE_ROOT)
-    git_tree = GitTree(clone_root)
-    outcome = run_recipe_step(
-        RecipeStepRun(
-            row=row,
-            recipe_name=recipe.name,
-            pins=recipe.pins,
-            commit=git_tree.find_head_commit(),
-            work_root=PurePosixPath(work_directory.path),
-            head_tree=git_tree.find_head_tree(),
-            host=read_host_identity(),
-            parities=recipe.parities,
-        ),
-        DockerEngine(clone_root),
-        files,
+@dataclass(frozen=True, slots=True)
+class BuildContext:
+    commit: str
+    head_tree: str
+    work_root: PurePosixPath
+    host: HostIdentity
+
+
+def read_build_context(work_directory: WorkDirectory) -> BuildContext:
+    git_tree = GitTree(PurePosixPath(CLONE_ROOT))
+    return BuildContext(
+        commit=git_tree.find_head_commit(),
+        head_tree=git_tree.find_head_tree(),
+        work_root=PurePosixPath(work_directory.path),
+        host=read_host_identity(),
     )
+
+
+def build_recipe_step_run(
+    recipe: JudgedRecipe, row: StepRow, context: BuildContext, shard: RunShard | None = None
+) -> RecipeStepRun:
+    return RecipeStepRun(
+        row=row,
+        recipe_name=recipe.name,
+        pins=recipe.pins,
+        commit=context.commit,
+        work_root=context.work_root,
+        head_tree=context.head_tree,
+        host=context.host,
+        parities=recipe.parities,
+        shard=shard,
+        candidate=build_candidate_request(recipe, context),
+    )
+
+
+def describe_outcome(row: StepRow, outcome: RecipeStepOutcome) -> None:
+    print(f"{row.name}:", flush=True)
     for name, size_bytes in sorted(outcome.outputs.sizes_bytes.items()):
-        print(f"wrote {name}, {size_bytes} bytes", flush=True)
+        print(f"  wrote {name}, {size_bytes} bytes", flush=True)
     for parity in outcome.parities:
-        print(describe_parity(parity), flush=True)
-    print(describe_peaks(outcome.outputs.peaks), flush=True)
+        print(f"  {describe_parity(parity)}", flush=True)
+    if outcome.placement is not None:
+        print(f"  {describe_placement(outcome.placement)}", flush=True)
+    print(f"  {describe_peaks(outcome.outputs.peaks)}", flush=True)
+
+
+def describe_placement(summary: PlacementSummary) -> str:
+    return (
+        f"placement: {summary.count_nodes_on(CUDA_PROVIDER)} nodes on CUDA, "
+        f"{summary.count_nodes_on(CPU_PROVIDER)} on the CPU, each of integers or booleans"
+    )
+
+
+def describe_hypotheses(run_name: str, hypotheses: Sequence[Hypothesis]) -> list[str]:
+    lines = []
+    for language in sorted({hypothesis.language for hypothesis in hypotheses}):
+        of_language = [hypothesis for hypothesis in hypotheses if hypothesis.language == language]
+        lines.append(
+            f"run {run_name}, {language}: {len(of_language)} hypotheses, "
+            f"{sum(hypothesis.unknown_token_count for hypothesis in of_language)} unknown tokens, "
+            f"{sum(hypothesis.decoding_time_ms for hypothesis in of_language) / 1000:.1f} s of "
+            "decoding"
+        )
+    return lines
+
+
+def run_plain_step(
+    recipe: JudgedRecipe, row: StepRow, context: BuildContext, files: WorkFiles
+) -> None:
+    outcome = run_recipe_step(
+        build_recipe_step_run(recipe, row, context), DockerEngine(PurePosixPath(CLONE_ROOT)), files
+    )
+    describe_outcome(row, outcome)
+
+
+# The decoding times are read against the trial build's, which ran the shards of a run at the
+# same time, each on CPUs of its own.
+def run_sharded_run(
+    recipe: JudgedRecipe,
+    run: JudgedRun,
+    derived_rows: Sequence[DerivedRow],
+    candidate_texts: Mapping[str, bytes],
+    context: BuildContext,
+    files: WorkFiles,
+) -> None:
+    engine = DockerEngine(PurePosixPath(CLONE_ROOT))
+    step_runs = [
+        build_recipe_step_run(
+            recipe,
+            derived_row.row,
+            context,
+            RunShard(derived_row.request, run.reader, candidate_texts),
+        )
+        for derived_row in derived_rows
+    ]
+    with ThreadPoolExecutor(max_workers=len(step_runs)) as pool:
+        outcomes = list(
+            pool.map(lambda step_run: run_recipe_step(step_run, engine, files), step_runs)
+        )
+    for step_run, outcome in zip(step_runs, outcomes, strict=True):
+        describe_outcome(step_run.row, outcome)
+    hypotheses = [hypothesis for outcome in outcomes for hypothesis in outcome.hypotheses]
+    for line in describe_hypotheses(run.name, hypotheses):
+        print(line, flush=True)
+
+
+def build_candidate_request(recipe: JudgedRecipe, context: BuildContext) -> CandidateRequest:
+    return CandidateRequest(
+        recipe_name=recipe.name,
+        commit=context.commit,
+        work_root=context.work_root,
+        head_tree=context.head_tree,
+        host=context.host,
+        candidate=recipe.candidate,
+        rows=recipe.rows,
+        conversion_input=recipe.conversion_input,
+    )
+
+
+def inspect_candidate(recipe: JudgedRecipe, context: BuildContext, files: WorkFiles) -> None:
+    assembled = assemble_candidate(
+        build_candidate_request(recipe, context), DockerEngine(PurePosixPath(CLONE_ROOT)), files
+    )
+    for copy in assembled.files:
+        print(
+            f"candidate {copy.name}, {copy.file_format.value}, {copy.size_bytes} bytes, "
+            f"sha256 {copy.sha256}",
+            flush=True,
+        )
+    for inspection in assembled.report.files:
+        counts = count_products(inspection)
+        print(
+            f"inspected {inspection.name}: {sum(node.count for node in inspection.nodes)} nodes, "
+            f"{counts.constant_weight_count} products of a constant weight, "
+            f"{counts.plain_count} of them plain, {len(inspection.external_tensors)} external "
+            "tensors",
+            flush=True,
+        )
+    print(describe_peaks(assembled.peaks), flush=True)
 
 
 def run_named_step(
@@ -374,8 +529,27 @@ def run_named_step(
 ) -> None:
     if step_name == FLEURS_CHECK_STEP_NAME:
         check_fleurs(recipe, work_directory, files)
-    else:
-        run_step_of_recipe(recipe, find_runnable_row(recipe, step_name), work_directory, files)
+        return
+    context = read_build_context(work_directory)
+    if step_name == INSPECT_STEP_NAME:
+        inspect_candidate(recipe, context, files)
+        return
+    runs = [run for run in recipe.runs if run.step == step_name]
+    if not runs:
+        run_plain_step(recipe, find_runnable_row(recipe, step_name), context, files)
+        return
+    candidate_texts = read_candidate_texts(build_candidate_request(recipe, context), files)
+    for run in runs:
+        derived_rows = [
+            derived_row for derived_row in recipe.derived_rows if derived_row.run == run.name
+        ]
+        run_sharded_run(recipe, run, derived_rows, candidate_texts, context, files)
+
+
+def build(recipe: JudgedRecipe, work_directory: WorkDirectory, files: WorkFiles) -> None:
+    for step_name in recipe.build_order:
+        print(f"== {step_name}", flush=True)
+        run_named_step(recipe, step_name, work_directory, files)
 
 
 def clean(
@@ -383,23 +557,21 @@ def clean(
 ) -> None:
     clone_root = PurePosixPath(CLONE_ROOT)
     git_tree = GitTree(clone_root)
-    rows = (
-        list_runnable_rows(recipe) if step_name is None else (find_runnable_row(recipe, step_name),)
-    )
+    rows = list_runnable_rows(recipe) if step_name is None else list_rows_of_step(recipe, step_name)
     for row in rows:
-        outcome = clean_step(
-            CleanRequest(
-                row=row,
-                recipe_name=recipe.name,
-                commit=git_tree.find_head_commit(),
-                work_root=PurePosixPath(work_directory.path),
-                head_tree=git_tree.find_head_tree(),
-                host=read_host_identity(),
-            ),
-            DockerEngine(clone_root),
-            files,
+        request = CleanRequest(
+            row=row,
+            recipe_name=recipe.name,
+            commit=git_tree.find_head_commit(),
+            work_root=PurePosixPath(work_directory.path),
+            head_tree=git_tree.find_head_tree(),
+            host=read_host_identity(),
         )
+        outcome = clean_step(request, DockerEngine(clone_root), files)
         print(f"{CLEAN_OUTCOME_WORDS[outcome]} {row.name}", flush=True)
+        if row.name == INSPECT_STEP_NAME:
+            candidate_outcome = remove_candidate(request, files)
+            print(f"{CLEAN_OUTCOME_WORDS[candidate_outcome]} the candidate", flush=True)
 
 
 def lock(work_directory: WorkDirectory, files: WorkFiles) -> None:
@@ -439,6 +611,8 @@ def run_command(arguments: argparse.Namespace) -> None:
         run_named_step(recipe, arguments.step, work_directory, files)
     elif arguments.command == CLEAN_STEP_NAME:
         clean(recipe, arguments.step, work_directory, files)
+    elif arguments.command == BUILD_COMMAND:
+        build(recipe, work_directory, files)
 
 
 def main(arguments: Sequence[str]) -> None:

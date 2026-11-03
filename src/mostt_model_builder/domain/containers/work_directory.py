@@ -18,6 +18,7 @@ SOURCES_DIRECTORY_NAME = "sources"
 RUNS_DIRECTORY_NAME = "runs"
 REQUESTS_DIRECTORY_NAME = "requests"
 LOGS_DIRECTORY_NAME = "logs"
+CANDIDATE_DIRECTORY_NAME = "candidate"
 LOCK_DIRECTORY_NAME = "lock"
 LOCK_REQUEST_DIRECTORY_NAME = "request"
 LOCK_OUTPUT_DIRECTORY_NAME = "output"
@@ -157,6 +158,7 @@ def place_step(owner: str, commit: str, step_name: str) -> StepPlacement:
         output_directory=run / step_name,
         request_directory=run / REQUESTS_DIRECTORY_NAME / step_name,
         log_path=run / LOGS_DIRECTORY_NAME / f"{step_name}{LOG_SUFFIX}",
+        candidate_directory=run / CANDIDATE_DIRECTORY_NAME,
     )
 
 

@@ -15,7 +15,12 @@ from run_step_fakes import (
     build_step_output,
 )
 
-from mostt_model_builder.application.clean_run import CleanOutcome, CleanRequest, clean_step
+from mostt_model_builder.application.clean_run import (
+    CleanOutcome,
+    CleanRequest,
+    clean_step,
+    remove_candidate,
+)
 from mostt_model_builder.application.run_step import HostIdentity, ImageFacts, StepError
 from mostt_model_builder.domain.containers.account_ranges import HostAccounts
 from mostt_model_builder.domain.containers.base_images import ENVIRONMENT_PYTHON
@@ -26,6 +31,7 @@ from mostt_model_builder.domain.containers.container_files import (
 )
 from mostt_model_builder.domain.containers.container_steps import (
     FLEURS_CHECK_ROW,
+    INSPECT_ROW,
     OUTPUT_IN_THE_CONTAINER,
     PEAKS_OUTPUT,
     BindMount,
@@ -48,7 +54,10 @@ LOGS_DIRECTORY = WORK_ROOT / RUN_DIRECTORY / "logs"
 LOG_PATH = LOGS_DIRECTORY / "fleurs-check.log"
 CLEAN_LOG_PATH = WORK_ROOT / RUN_DIRECTORY / "logs/clean-fleurs-check.log"
 LINK_FACTS = FileFacts(FileKind.LINK, USER_ID, 0o777, 10, 1)
+CANDIDATE_DIRECTORY = WORK_ROOT / RUN_DIRECTORY / "candidate"
+CANDIDATE_FILE_NAMES = ("encoder-model.onnx", "vocab.txt")
 HOST = HostIdentity(USER_ID, GROUP_ID, 20, HostAccounts(False, (), ()))
+INSPECT_REQUEST = CleanRequest(INSPECT_ROW, RECIPE_NAME, COMMIT, WORK_ROOT, HEAD_TREE, HOST)
 REQUEST = CleanRequest(FLEURS_CHECK_ROW, RECIPE_NAME, COMMIT, WORK_ROOT, HEAD_TREE, HOST)
 RECIPE_ROW = StepRow(
     name="describe",
@@ -100,6 +109,21 @@ def build_refused_clean(link_path: PurePosixPath) -> RefusedClean:
     files = build_files_with_a_link(link_path)
     engine = build_engine(files)
     return RefusedClean(partial(clean_step, REQUEST, engine, files), engine, files)
+
+
+@dataclass(frozen=True)
+class CandidateRemoval:
+    outcome: CleanOutcome
+    files: FakeStepFiles
+
+
+def build_files_with_a_candidate() -> FakeStepFiles:
+    files = FakeStepFiles()
+    files.add_directory(WORK_ROOT)
+    files.add_directory(CANDIDATE_DIRECTORY, build_directory_facts(0o750))
+    for name in CANDIDATE_FILE_NAMES:
+        files.add_file(CANDIDATE_DIRECTORY / name, build_file_facts(4, 0o444), b"copy")
+    return files
 
 
 def build_engine(files: FakeStepFiles, status: int = 0) -> FakeContainerEngine:
@@ -271,3 +295,51 @@ class TestTheCleanRun:
                 assert [(run.image_id, run.entry_module) for run in clean_record.runs] == [
                     (IMAGE_ID, "mostt_model_builder.steps.clean_output")
                 ]
+
+    class TestTheRemoveCandidateFunction:
+        class TestWhenTheRunHoldsACandidate:
+            @pytest.fixture
+            def removal(self) -> CandidateRemoval:
+                files = build_files_with_a_candidate()
+                return CandidateRemoval(remove_candidate(INSPECT_REQUEST, files), files)
+
+            def test_should_remove_its_files_and_its_directory(
+                self, removal: CandidateRemoval
+            ) -> None:
+                assert [
+                    path
+                    for path in removal.files.entries
+                    if path == CANDIDATE_DIRECTORY or CANDIDATE_DIRECTORY in path.parents
+                ] == []
+
+            def test_should_say_it_cleaned(self, removal: CandidateRemoval) -> None:
+                assert removal.outcome is CleanOutcome.CLEANED
+
+        class TestWhenTheRunHoldsNoCandidate:
+            @pytest.fixture
+            def outcome(self) -> CleanOutcome:
+                files = FakeStepFiles()
+                files.add_directory(WORK_ROOT)
+                return remove_candidate(INSPECT_REQUEST, files)
+
+            def test_should_say_there_was_nothing_to_clean(self, outcome: CleanOutcome) -> None:
+                assert outcome is CleanOutcome.NOTHING_TO_CLEAN
+
+        class TestWhenTheCandidateIsALink:
+            @pytest.fixture
+            def remove_act(self) -> Callable[[], CleanOutcome]:
+                files = FakeStepFiles()
+                files.add_directory(WORK_ROOT / RUN_DIRECTORY)
+                files.entries[CANDIDATE_DIRECTORY] = FileFacts(FileKind.LINK, USER_ID, 0o777, 9, 1)
+                return partial(remove_candidate, INSPECT_REQUEST, files)
+
+            def test_should_refuse_to_follow_it(
+                self, remove_act: Callable[[], CleanOutcome]
+            ) -> None:
+                with pytest.raises(
+                    ContainerFileError,
+                    match=re.escape(
+                        f"{CANDIDATE_DIRECTORY} is a link, where a directory is declared"
+                    ),
+                ):
+                    remove_act()

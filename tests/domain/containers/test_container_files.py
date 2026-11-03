@@ -11,6 +11,7 @@ from mostt_model_builder.domain.containers.container_files import (
     FileFacts,
     FileKind,
     PathComponent,
+    judge_candidate_copy,
     judge_mount,
     judge_output_entries,
     judge_written_file,
@@ -74,6 +75,39 @@ REFUSED_WRITTEN_FILES = {
     "several links": (
         replace(GOOD_WRITTEN_FILE, link_count=2),
         "the output peaks.json has 2 links, not one",
+    ),
+}
+CANDIDATE_FILE_NAME = "vocab.txt"
+GOOD_CANDIDATE_COPY = FileFacts(FileKind.REGULAR, USER_ID, 0o444, 93_939, 1)
+NOT_THE_HOSTS_COPY = (
+    "the candidate file vocab.txt is not the host's own copy: a regular file of the user's, in "
+    "mode 0444, with a single link, of at most 4096 bytes"
+)
+REFUSED_CANDIDATE_COPIES = {
+    "a missing file, which the inspection's assembly makes": (
+        replace(GOOD_CANDIDATE_COPY, kind=FileKind.MISSING),
+        "the candidate file vocab.txt is missing from the candidate, which the step inspect "
+        "assembles",
+    ),
+    "a link, not a regular file": (
+        replace(GOOD_CANDIDATE_COPY, kind=FileKind.LINK),
+        NOT_THE_HOSTS_COPY,
+    ),
+    "a file of another owner": (
+        replace(GOOD_CANDIDATE_COPY, owner_id=CONTAINER_USER_ID),
+        NOT_THE_HOSTS_COPY,
+    ),
+    "a file in a mode other than 0444, which a writer may have changed": (
+        replace(GOOD_CANDIDATE_COPY, permission_bits=0o644),
+        NOT_THE_HOSTS_COPY,
+    ),
+    "a file with two links": (
+        replace(GOOD_CANDIDATE_COPY, link_count=2),
+        NOT_THE_HOSTS_COPY,
+    ),
+    "a file beyond its bound": (
+        replace(GOOD_CANDIDATE_COPY, size_bytes=MAX_SIZE_BYTES + 1),
+        NOT_THE_HOSTS_COPY,
     ),
 }
 DIRECTORY = FileFacts(FileKind.DIRECTORY, USER_ID, 0o700, 4096, 2)
@@ -204,6 +238,39 @@ class TestTheContainerFiles:
                     ContainerFileError,
                     match=re.escape("the step did not write its output peaks.json"),
                 ):
+                    judge_act()
+
+    class TestTheJudgeCandidateCopyFunction:
+        class TestWhenTheFileIsTheHostsCopyWithinItsBound:
+            @pytest.fixture
+            def judge_act(self) -> Callable[[], object]:
+                return partial(
+                    judge_candidate_copy,
+                    CANDIDATE_FILE_NAME,
+                    replace(GOOD_CANDIDATE_COPY, size_bytes=MAX_SIZE_BYTES),
+                    MAX_SIZE_BYTES,
+                    USER_ID,
+                )
+
+            def test_should_accept_it(self, judge_act: Callable[[], object]) -> None:
+                assert judge_act() is None
+
+        @pytest.mark.parametrize(
+            ("facts", "reason"),
+            list(REFUSED_CANDIDATE_COPIES.values()),
+            ids=list(REFUSED_CANDIDATE_COPIES.keys()),
+        )
+        class TestWhenTheFileIsNotTheHostsCopy:
+            @pytest.fixture
+            def judge_act(self, facts: FileFacts) -> Callable[[], object]:
+                return partial(
+                    judge_candidate_copy, CANDIDATE_FILE_NAME, facts, MAX_SIZE_BYTES, USER_ID
+                )
+
+            def test_should_refuse_it_and_say_why(
+                self, judge_act: Callable[[], object], reason: str
+            ) -> None:
+                with pytest.raises(ContainerFileError, match=f"^{re.escape(reason)}$"):
                     judge_act()
 
     class TestTheJudgeMountFunction:

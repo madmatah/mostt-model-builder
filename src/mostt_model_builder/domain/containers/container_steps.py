@@ -9,9 +9,13 @@ from mostt_model_builder.domain.bench.fleurs_check_report import (
     FLEURS_CHECK_REPORT_MAX_SIZE_BYTES,
 )
 from mostt_model_builder.domain.bench.fleurs_index import BENCH_LANGUAGES, locate_bench_files
-from mostt_model_builder.domain.containers.base_images import BASE_PYTHON
+from mostt_model_builder.domain.containers.base_images import BASE_PYTHON, ENVIRONMENT_PYTHON
 from mostt_model_builder.domain.formats.file_names import is_file_name
 from mostt_model_builder.domain.lock.lock_check import LOCK_FILE_NAME, LOCK_MAX_SIZE_BYTES
+from mostt_model_builder.domain.onnx.inspection_report import (
+    INSPECTION_REPORT_FILE_NAME,
+    INSPECTION_REPORT_MAX_SIZE_BYTES,
+)
 
 # Not 65532, the account of mostt's own runtimes, which may run on the same machine.
 CONTAINER_USER_ID = 65531
@@ -21,6 +25,9 @@ CONTAINERFILE_NAME = "Containerfile"
 IMAGES_DIRECTORY_NAME = "images"
 RECIPES_DIRECTORY_NAME = "recipes"
 STEP_NAME_GRAMMAR = re.compile(r"[a-z0-9][a-z0-9-]{0,31}")
+# A row that a run derives from its step is named after the step, its run and its shard, each
+# name of up to 32 characters and a shard of up to 2 digits.
+ROW_NAME_GRAMMAR = re.compile(r"[a-z0-9][a-z0-9-]{0,69}")
 ENTRY_MODULE_GRAMMAR = re.compile(r"[a-z_][a-z0-9_]*(\.[a-z_][a-z0-9_]*)*")
 CORE_PACKAGE = "mostt_model_builder"
 RECIPE_PACKAGE_PREFIX = "mostt_recipe_"
@@ -33,6 +40,7 @@ SOURCES_IN_THE_CONTAINER = CONTAINER_ROOT / "sources"
 REQUEST_IN_THE_CONTAINER = PurePosixPath("/request")
 OUTPUT_IN_THE_CONTAINER = PurePosixPath("/output")
 INPUTS_IN_THE_CONTAINER = PurePosixPath("/inputs")
+CANDIDATE_IN_THE_CONTAINER = PurePosixPath("/candidate")
 TEMPORARY_DIRECTORY_IN_THE_CONTAINER = PurePosixPath("/tmp")
 SCRATCH_IN_THE_CONTAINER = PurePosixPath("/scratch")
 ISOLATION_OPTIONS = ("-I", "-B")
@@ -61,6 +69,7 @@ PEAKS_MAX_SIZE_BYTES = 4096
 FLEURS_CHECK_STEP_NAME = "fleurs-check"
 CLEAN_STEP_NAME = "clean"
 LOCK_STEP_NAME = "lock"
+INSPECT_STEP_NAME = "inspect"
 # Docker reads 0 or -1 as no limit, and refuses a memory limit under 6 MiB; the ceilings only
 # refuse a value that no step could mean on the machines a build runs on.
 MIN_MEMORY_MIB = 6
@@ -146,6 +155,7 @@ class StepRow:
     uses_gpu: bool = False
     has_network: bool = False
     earlier_outputs: tuple[EarlierOutput, ...] = ()
+    binds_candidate: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -153,6 +163,7 @@ class StepPlacement:
     output_directory: PurePosixPath
     request_directory: PurePosixPath | None
     log_path: PurePosixPath
+    candidate_directory: PurePosixPath | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -192,7 +203,8 @@ class ContainerRun:
 
 BENCH_IMAGE = ContainerImage(CORE_OWNER, "bench", Device.CPU, BASE_PYTHON)
 UV_CONTAINER_IMAGE = ContainerImage(CORE_OWNER, "uv", Device.CPU, BASE_PYTHON)
-CORE_IMAGES = (BENCH_IMAGE, UV_CONTAINER_IMAGE)
+ONNX_INSPECT_IMAGE = ContainerImage(CORE_OWNER, "onnx-inspect", Device.CPU, ENVIRONMENT_PYTHON)
+CORE_IMAGES = (BENCH_IMAGE, UV_CONTAINER_IMAGE, ONNX_INSPECT_IMAGE)
 PEAKS_OUTPUT = DeclaredOutput(PEAKS_FILE_NAME, PEAKS_MAX_SIZE_BYTES)
 FLEURS_CHECK_ROW = StepRow(
     name=FLEURS_CHECK_STEP_NAME,
@@ -222,7 +234,22 @@ LOCK_ROW = StepRow(
     ),
     has_network=True,
 )
-RUNNABLE_CORE_ROWS = (FLEURS_CHECK_ROW,)
+# The inspection reads the graphs of the candidate without their weights, so that it judges every
+# onnx file, in an image that produced none of them; it peaked at 2.4 GiB and 20 processes.
+INSPECT_ROW = StepRow(
+    name=INSPECT_STEP_NAME,
+    image=ONNX_INSPECT_IMAGE,
+    entry_module=f"{CORE_STEPS_PACKAGE}.onnx_inspection",
+    sources=(),
+    has_request=True,
+    outputs=(
+        DeclaredOutput(INSPECTION_REPORT_FILE_NAME, INSPECTION_REPORT_MAX_SIZE_BYTES),
+        PEAKS_OUTPUT,
+    ),
+    limits=StepLimits(memory_mib=3072, process_count=32, cpu_count=2, temporary_directory_mib=64),
+    binds_candidate=True,
+)
+RUNNABLE_CORE_ROWS = (FLEURS_CHECK_ROW, INSPECT_ROW)
 CLEAN_LIMITS = StepLimits(memory_mib=256, process_count=32, cpu_count=1, temporary_directory_mib=16)
 
 
@@ -250,8 +277,8 @@ def build_clean_row(image: ContainerImage) -> StepRow:
 
 def judge_row(row: StepRow, host_cpu_count: int) -> None:
     where = f"the step {row.name!a}"
-    if not STEP_NAME_GRAMMAR.fullmatch(row.name):
-        raise StepTableError(f"{where}: its name does not match {STEP_NAME_GRAMMAR.pattern}")
+    if not ROW_NAME_GRAMMAR.fullmatch(row.name):
+        raise StepTableError(f"{where}: its name does not match {ROW_NAME_GRAMMAR.pattern}")
     refuse_foreign_entry_module(row, where)
     judge_limits(row.limits, host_cpu_count, where)
     judge_outputs(row, where)
@@ -366,6 +393,14 @@ def plan_container_run(
         )
         for earlier_output in row.earlier_outputs
     )
+    if row.binds_candidate:
+        if placement.candidate_directory is None:
+            raise StepTableError(f"the step {row.name} reads the candidate, and was given none")
+        mounts.append(
+            BindMount(
+                placement.candidate_directory, CANDIDATE_IN_THE_CONTAINER, True, is_file=False
+            )
+        )
     if row.has_request:
         if placement.request_directory is None:
             raise StepTableError(f"the step {row.name} needs a request, and was given none")

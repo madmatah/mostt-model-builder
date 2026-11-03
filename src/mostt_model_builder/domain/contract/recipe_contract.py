@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from pathlib import PurePosixPath
 
 from mostt_model_builder.domain.acceptance.parity_reports import PARITY_NAME_GRAMMAR
+from mostt_model_builder.domain.bench.fleurs_index import BENCH_LANGUAGES
+from mostt_model_builder.domain.bench.hypotheses import RUN_LINES_FILE_NAME, RunReader
 from mostt_model_builder.domain.containers.base_images import BASE_PYTHON, ENVIRONMENT_PYTHON
 from mostt_model_builder.domain.containers.container_steps import (
     CLEAN_STEP_NAME,
@@ -13,6 +15,7 @@ from mostt_model_builder.domain.containers.container_steps import (
     CORE_PACKAGE,
     ENTRY_MODULE_GRAMMAR,
     FLEURS_CHECK_STEP_NAME,
+    INSPECT_STEP_NAME,
     LOCK_STEP_NAME,
     PEAKS_FILE_NAME,
     RUNNABLE_CORE_ROWS,
@@ -28,12 +31,28 @@ from mostt_model_builder.domain.containers.container_steps import (
     find_package_of_owner,
     judge_row,
 )
+from mostt_model_builder.domain.containers.work_directory import (
+    CANDIDATE_DIRECTORY_NAME,
+    LOGS_DIRECTORY_NAME,
+    REQUESTS_DIRECTORY_NAME,
+)
+from mostt_model_builder.domain.contract.derived_rows import (
+    MAX_SHARD_COUNT,
+    MIN_SHARD_COUNT,
+    RUN_NAME_GRAMMAR,
+    DerivedRow,
+    DeviceRow,
+    ShardedRun,
+    StepTemplate,
+    derive_rows,
+)
 from mostt_model_builder.domain.formats.file_formats import FileFormat
 from mostt_model_builder.domain.formats.file_names import (
     REFUSED_SUFFIXES,
     find_refused_suffixes,
     is_file_name,
 )
+from mostt_model_builder.domain.onnx.node_placement import PLACEMENT_FILE_NAME
 from mostt_model_builder.domain.sources.source_pins import (
     PATH_SEPARATOR,
     SourcePin,
@@ -49,7 +68,15 @@ SOURCE_DIRECTORY_NAME = "src"
 RECIPES_DIRECTORY_NAME = "recipes"
 MODULE_SEPARATOR = "."
 PYTHON_SOURCE_SUFFIX = ".py"
-CORE_STEP_NAMES = frozenset({FLEURS_CHECK_STEP_NAME, CLEAN_STEP_NAME, LOCK_STEP_NAME})
+CORE_STEP_NAMES = frozenset(
+    {FLEURS_CHECK_STEP_NAME, CLEAN_STEP_NAME, LOCK_STEP_NAME, INSPECT_STEP_NAME}
+)
+# A step's outputs live beside the run's requests, logs and candidate, under the same commit.
+RESERVED_STEP_NAMES = frozenset(
+    {*CORE_STEP_NAMES, REQUESTS_DIRECTORY_NAME, LOGS_DIRECTORY_NAME, CANDIDATE_DIRECTORY_NAME}
+)
+BUILT_CORE_STEP_NAMES = (FLEURS_CHECK_STEP_NAME, INSPECT_STEP_NAME)
+REFERENCE_VARIANT = "reference"
 CORE_IMAGES_BY_NAME = {image.name: image for image in CORE_IMAGES}
 MAX_HOST_CONTENT_SIZE_BYTES = 2**20
 
@@ -78,18 +105,33 @@ class EarlierOutputMount:
     output: str
 
 
-type Mount = SourceMount | EarlierOutputMount
+@dataclass(frozen=True, slots=True)
+class CandidateMount:
+    pass
+
+
+CANDIDATE_MOUNT = CandidateMount()
+type Mount = SourceMount | EarlierOutputMount | CandidateMount
+
+
+@dataclass(frozen=True, slots=True)
+class DeviceTemplate:
+    device: str
+    image: str
+    limits: StepLimits
+    outputs: tuple[DeclaredOutput, ...]
 
 
 @dataclass(frozen=True, slots=True)
 class RecipeStep:
     name: str
-    image: str
+    image: str | None
     entry_module: str
     mounts: tuple[Mount, ...]
     outputs: tuple[DeclaredOutput, ...]
-    limits: StepLimits
+    limits: StepLimits | None
     uses_gpu: bool = False
+    devices: tuple[DeviceTemplate, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,6 +151,7 @@ class CandidateFile:
     file_format: str
     variants: tuple[str, ...]
     origin: StepOutputOrigin | HostContentOrigin
+    external_data_of: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,12 +163,26 @@ class Parity:
 
 
 @dataclass(frozen=True, slots=True)
+class Run:
+    name: str
+    step: str
+    device: str
+    variant: str
+    languages: tuple[str, ...]
+    shard_count: int
+    reader: RunReader | None
+
+
+@dataclass(frozen=True, slots=True)
 class RecipeContract:
     name: str
     images: tuple[RecipeImage, ...]
     steps: tuple[RecipeStep, ...]
     candidate: tuple[CandidateFile, ...]
     parities: tuple[Parity, ...] = ()
+    runs: tuple[Run, ...] = ()
+    conversion_input: StepOutputOrigin | None = None
+    build_order: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,6 +199,18 @@ class JudgedCandidateFile:
     file_format: FileFormat
     variants: tuple[str, ...]
     origin: StepOutputOrigin | HostContentOrigin
+    external_data_of: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class JudgedRun:
+    name: str
+    step: str
+    device: Device
+    variant: str
+    languages: tuple[str, ...]
+    shard_count: int
+    reader: RunReader
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,6 +221,10 @@ class JudgedRecipe:
     rows: tuple[StepRow, ...]
     candidate: tuple[JudgedCandidateFile, ...]
     parities: tuple[Parity, ...]
+    runs: tuple[JudgedRun, ...] = ()
+    derived_rows: tuple[DerivedRow, ...] = ()
+    conversion_input: StepOutputOrigin | None = None
+    build_order: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -187,6 +260,31 @@ def find_runnable_row(recipe: JudgedRecipe, step_name: str) -> StepRow:
     )
 
 
+def list_rows_of_step(recipe: JudgedRecipe, step_name: str) -> tuple[StepRow, ...]:
+    derived = tuple(
+        derived_row.row for derived_row in recipe.derived_rows if derived_row.step == step_name
+    )
+    if derived:
+        return derived
+    return (find_runnable_row(recipe, step_name),)
+
+
+def find_candidate_file_max_size_bytes(
+    origin: StepOutputOrigin | HostContentOrigin, rows: Sequence[StepRow]
+) -> int:
+    if isinstance(origin, HostContentOrigin):
+        return len(origin.content)
+    for row in rows:
+        if row.name != origin.step:
+            continue
+        for output in row.outputs:
+            if output.name == origin.output:
+                return output.max_size_bytes
+    raise RecipeContractError(
+        f"the candidate copies {origin.output} of {origin.step}, which no step declares"
+    )
+
+
 def list_entry_modules(contract: RecipeContract) -> tuple[str, ...]:
     return tuple(step.entry_module for step in contract.steps)
 
@@ -199,14 +297,20 @@ def judge_recipe(contract: RecipeContract, facts: RecipeFacts) -> JudgedRecipe:
     where = f"the recipe {contract.name}"
     pins = combine_pins(facts.core_pins, facts.recipe_pins, where)
     images = judge_images(contract, where)
-    rows = judge_steps(contract, images, pins, facts, where)
+    runs = judge_runs(contract, where)
+    rows, derived_rows = judge_steps(contract, images, pins, facts, runs, where)
+    candidate = judge_candidate(contract.candidate, rows, where)
     return JudgedRecipe(
         name=contract.name,
         pins=pins,
         images=tuple(images.by_name[image.name] for image in contract.images),
         rows=rows,
-        candidate=judge_candidate(contract.candidate, rows, where),
+        candidate=candidate,
         parities=judge_parities(contract.parities, rows, where),
+        runs=runs,
+        derived_rows=derived_rows,
+        conversion_input=judge_conversion_input(contract.conversion_input, candidate, where),
+        build_order=judge_build_order(contract.build_order, contract.steps, where),
     )
 
 
@@ -259,51 +363,216 @@ def judge_images(contract: RecipeContract, where: str) -> JudgedImages:
     return JudgedImages(by_name, code_readers[0] if code_readers else None)
 
 
+def judge_runs(contract: RecipeContract, where: str) -> tuple[JudgedRun, ...]:
+    candidate_variants = {
+        variant for candidate_file in contract.candidate for variant in candidate_file.variants
+    }
+    step_names = {step.name for step in contract.steps}
+    judged: dict[str, JudgedRun] = {}
+    for run in contract.runs:
+        run_where = f"{where}: its run {run.name!a}"
+        if not RUN_NAME_GRAMMAR.fullmatch(run.name):
+            raise RecipeContractError(f"{run_where} is not named under {RUN_NAME_GRAMMAR.pattern}")
+        if run.name in judged:
+            raise RecipeContractError(f"{run_where} is declared twice")
+        if run.step not in step_names:
+            raise RecipeContractError(
+                f"{run_where} comes from {run.step!a}, which is not a step of the recipe"
+            )
+        if run.device not in set(Device):
+            raise RecipeContractError(f"{run_where} runs on {run.device!a}, neither cpu nor gpu")
+        if run.variant != REFERENCE_VARIANT and run.variant not in candidate_variants:
+            raise RecipeContractError(
+                f"{run_where} reads the variant {run.variant!a}, which no file of the candidate "
+                "serves"
+            )
+        judge_languages(run.languages, run_where)
+        if (
+            isinstance(run.shard_count, bool)
+            or not isinstance(run.shard_count, int)
+            or not MIN_SHARD_COUNT <= run.shard_count <= MAX_SHARD_COUNT
+        ):
+            raise RecipeContractError(
+                f"{run_where} has {run.shard_count!a} shards, outside {MIN_SHARD_COUNT} to "
+                f"{MAX_SHARD_COUNT}"
+            )
+        if run.reader is None or not callable(run.reader):
+            raise RecipeContractError(f"{run_where} has no reader of its lines")
+        judged[run.name] = JudgedRun(
+            name=run.name,
+            step=run.step,
+            device=Device(run.device),
+            variant=run.variant,
+            languages=run.languages,
+            shard_count=run.shard_count,
+            reader=run.reader,
+        )
+    return tuple(judged.values())
+
+
+def judge_languages(languages: Sequence[str], where: str) -> None:
+    if not languages:
+        raise RecipeContractError(f"{where} reads no language")
+    for language in languages:
+        if language not in BENCH_LANGUAGES:
+            raise RecipeContractError(
+                f"{where} reads {language!a}, which is not a language of the bench"
+            )
+    if len(set(languages)) != len(languages):
+        raise RecipeContractError(f"{where} names a language twice")
+
+
 def judge_steps(
     contract: RecipeContract,
     images: JudgedImages,
     pins: Sequence[SourcePin],
     facts: RecipeFacts,
+    runs: Sequence[JudgedRun],
     where: str,
-) -> tuple[StepRow, ...]:
+) -> tuple[tuple[StepRow, ...], tuple[DerivedRow, ...]]:
     rows: dict[str, StepRow] = {}
+    derived_rows: list[DerivedRow] = []
+    step_names: set[str] = set()
     for step in contract.steps:
         step_where = f"{where}: its step {step.name!a}"
         if not STEP_NAME_GRAMMAR.fullmatch(step.name):
             raise RecipeContractError(
                 f"{step_where} is not named under {STEP_NAME_GRAMMAR.pattern}"
             )
-        if step.name in CORE_STEP_NAMES:
-            raise RecipeContractError(f"{step_where} bears the name of a step of the core")
-        if step.name in rows:
+        if step.name in RESERVED_STEP_NAMES:
+            raise RecipeContractError(
+                f"{step_where} bears the name of a step of the core or of a directory of its run"
+            )
+        if step.name in step_names:
             raise RecipeContractError(f"{step_where} is declared twice")
-        image = find_image(step, images, step_where)
+        step_names.add(step.name)
         judge_entry_module(step, contract.name, facts.present_entry_modules, step_where)
-        sources, earlier_outputs = judge_mounts(step, image, images, pins, rows, step_where)
-        row = StepRow(
-            name=step.name,
-            image=image,
-            entry_module=step.entry_module,
-            sources=sources,
-            has_request=False,
-            outputs=step.outputs,
-            limits=step.limits,
-            uses_gpu=step.uses_gpu,
-            earlier_outputs=earlier_outputs,
+        step_runs = [run for run in runs if run.step == step.name]
+        if step.devices:
+            step_rows = judge_template_step(step, images, pins, rows, step_runs, step_where)
+            derived_rows.extend(step_rows)
+            new_rows = [derived_row.row for derived_row in step_rows]
+        else:
+            if step_runs:
+                raise RecipeContractError(
+                    f"{step_where} produces the run {step_runs[0].name}, and has no template of "
+                    "its rows"
+                )
+            new_rows = [judge_plain_step(step, images, pins, rows, step_where)]
+        for row in new_rows:
+            if row.name in rows:
+                raise RecipeContractError(
+                    f"{step_where} derives the row {row.name}, which another row already holds"
+                )
+            try:
+                judge_row(row, facts.host_cpu_count)
+            except StepTableError as error:
+                raise RecipeContractError(f"{where}: {error}") from error
+            rows[row.name] = row
+    return tuple(rows.values()), tuple(derived_rows)
+
+
+def judge_plain_step(
+    step: RecipeStep,
+    images: JudgedImages,
+    pins: Sequence[SourcePin],
+    rows: Mapping[str, StepRow],
+    where: str,
+) -> StepRow:
+    if step.image is None or step.limits is None:
+        raise RecipeContractError(f"{where} has neither an image and limits nor a template")
+    image = find_image(step.image, images, where)
+    mounts = judge_mounts(step, image, images, pins, rows, where)
+    return StepRow(
+        name=step.name,
+        image=image,
+        entry_module=step.entry_module,
+        sources=mounts.sources,
+        has_request=False,
+        outputs=step.outputs,
+        limits=step.limits,
+        uses_gpu=step.uses_gpu,
+        earlier_outputs=mounts.earlier_outputs,
+        binds_candidate=mounts.binds_candidate,
+    )
+
+
+def judge_template_step(
+    step: RecipeStep,
+    images: JudgedImages,
+    pins: Sequence[SourcePin],
+    rows: Mapping[str, StepRow],
+    runs: Sequence[JudgedRun],
+    where: str,
+) -> tuple[DerivedRow, ...]:
+    if step.image is not None or step.limits is not None or step.uses_gpu:
+        raise RecipeContractError(
+            f"{where} has a template of its rows, which gives each device its image, its limits "
+            "and the GPU"
         )
-        try:
-            judge_row(row, facts.host_cpu_count)
-        except StepTableError as error:
-            raise RecipeContractError(f"{where}: {error}") from error
-        rows[step.name] = row
-    return tuple(rows.values())
+    if not runs:
+        raise RecipeContractError(f"{where} has a template of its rows, and no run")
+    device_rows: dict[Device, DeviceRow] = {}
+    mounts: JudgedMounts | None = None
+    for template in step.devices:
+        device_where = f"{where}: its template for {template.device!a}"
+        if template.device not in set(Device):
+            raise RecipeContractError(f"{device_where} names no device among cpu, gpu")
+        device = Device(template.device)
+        if device in device_rows:
+            raise RecipeContractError(f"{device_where} is declared twice")
+        image = find_image(template.image, images, device_where)
+        if image.device is not device:
+            raise RecipeContractError(
+                f"{device_where} runs in the {image.device} image {image.tag}"
+            )
+        judge_shard_outputs(template, device, device_where)
+        mounts = judge_mounts(step, image, images, pins, rows, where)
+        device_rows[device] = DeviceRow(image, template.limits, template.outputs)
+    for run in runs:
+        if run.device not in device_rows:
+            raise RecipeContractError(
+                f"{where}: its run {run.name} runs on the {run.device}, which its template does "
+                "not give"
+            )
+    if mounts is None:
+        raise RecipeContractError(f"{where} has a template that names no device")
+    return derive_rows(
+        StepTemplate(
+            name=step.name,
+            entry_module=step.entry_module,
+            sources=mounts.sources,
+            earlier_outputs=mounts.earlier_outputs,
+            binds_candidate=mounts.binds_candidate,
+            outputs=step.outputs,
+            devices=device_rows,
+        ),
+        [
+            ShardedRun(run.name, run.variant, run.device, run.languages, run.shard_count)
+            for run in runs
+        ],
+    )
 
 
-def find_image(step: RecipeStep, images: JudgedImages, where: str) -> ContainerImage:
-    image = images.by_name.get(step.image) or CORE_IMAGES_BY_NAME.get(step.image)
+def judge_shard_outputs(template: DeviceTemplate, device: Device, where: str) -> None:
+    names = {output.name for output in template.outputs}
+    if RUN_LINES_FILE_NAME not in names:
+        raise RecipeContractError(f"{where} writes no {RUN_LINES_FILE_NAME}, the lines of a run")
+    if device is Device.GPU and PLACEMENT_FILE_NAME not in names:
+        raise RecipeContractError(
+            f"{where} writes no {PLACEMENT_FILE_NAME}, the placement of its nodes on the GPU"
+        )
+    if device is not Device.GPU and PLACEMENT_FILE_NAME in names:
+        raise RecipeContractError(
+            f"{where} writes {PLACEMENT_FILE_NAME}, which only a run on the GPU writes"
+        )
+
+
+def find_image(image_name: str, images: JudgedImages, where: str) -> ContainerImage:
+    image = images.by_name.get(image_name) or CORE_IMAGES_BY_NAME.get(image_name)
     if image is None:
         raise RecipeContractError(
-            f"{where} runs in the image {step.image!a}, which neither the recipe nor the core "
+            f"{where} runs in the image {image_name!a}, which neither the recipe nor the core "
             "declares"
         )
     return image
@@ -324,6 +593,13 @@ def judge_entry_module(
         )
 
 
+@dataclass(frozen=True, slots=True)
+class JudgedMounts:
+    sources: tuple[SourceReference, ...]
+    earlier_outputs: tuple[EarlierOutput, ...]
+    binds_candidate: bool
+
+
 def judge_mounts(
     step: RecipeStep,
     image: ContainerImage,
@@ -331,11 +607,16 @@ def judge_mounts(
     pins: Sequence[SourcePin],
     earlier_rows: Mapping[str, StepRow],
     where: str,
-) -> tuple[tuple[SourceReference, ...], tuple[EarlierOutput, ...]]:
+) -> JudgedMounts:
     sources: list[SourceReference] = []
     earlier_outputs: list[EarlierOutput] = []
+    binds_candidate = False
     for mount in step.mounts:
-        if isinstance(mount, SourceMount):
+        if isinstance(mount, CandidateMount):
+            if binds_candidate:
+                raise RecipeContractError(f"{where} binds the candidate twice")
+            binds_candidate = True
+        elif isinstance(mount, SourceMount):
             pin = find_pinned_file(mount, pins, where)
             if pin.runs_code_when_loaded and not reads_code_running_sources(image, images):
                 raise RecipeContractError(
@@ -351,7 +632,7 @@ def judge_mounts(
             if earlier_output in earlier_outputs:
                 raise RecipeContractError(f"{where} binds {mount.output} of {mount.step} twice")
             earlier_outputs.append(earlier_output)
-    return tuple(sources), tuple(earlier_outputs)
+    return JudgedMounts(tuple(sources), tuple(earlier_outputs), binds_candidate)
 
 
 def reads_code_running_sources(image: ContainerImage, images: JudgedImages) -> bool:
@@ -419,8 +700,74 @@ def judge_candidate(
             file_format=FileFormat(candidate_file.file_format),
             variants=candidate_file.variants,
             origin=candidate_file.origin,
+            external_data_of=candidate_file.external_data_of,
+        )
+    for judged_file in judged.values():
+        judge_external_data_of(
+            judged_file, judged, f"{where}: its candidate file {judged_file.name}"
         )
     return tuple(judged.values())
+
+
+def judge_external_data_of(
+    candidate_file: JudgedCandidateFile,
+    candidate: Mapping[str, JudgedCandidateFile],
+    where: str,
+) -> None:
+    owner_name = candidate_file.external_data_of
+    if candidate_file.file_format is not FileFormat.ONNX_EXTERNAL_DATA:
+        if owner_name is not None:
+            raise RecipeContractError(
+                f"{where} is {candidate_file.file_format.value}, and names the onnx file whose "
+                "tensors it holds"
+            )
+        return
+    if owner_name is None:
+        raise RecipeContractError(f"{where} holds external data, and names no onnx file it serves")
+    owner = candidate.get(owner_name)
+    if owner is None or owner.file_format is not FileFormat.ONNX:
+        raise RecipeContractError(
+            f"{where} holds the tensors of {owner_name!a}, which is not an onnx file of the "
+            "candidate"
+        )
+    if set(owner.variants) != set(candidate_file.variants):
+        raise RecipeContractError(
+            f"{where} serves {', '.join(candidate_file.variants)}, and its onnx file "
+            f"{owner_name} serves {', '.join(owner.variants)}"
+        )
+
+
+def judge_conversion_input(
+    conversion_input: StepOutputOrigin | None,
+    candidate: Sequence[JudgedCandidateFile],
+    where: str,
+) -> StepOutputOrigin | None:
+    if conversion_input is None:
+        return None
+    if not any(
+        candidate_file.file_format is FileFormat.ONNX and candidate_file.origin == conversion_input
+        for candidate_file in candidate
+    ):
+        raise RecipeContractError(
+            f"{where}: its conversions read {conversion_input.output!a} of "
+            f"{conversion_input.step!a}, which no onnx file of the candidate comes from"
+        )
+    return conversion_input
+
+
+def judge_build_order(
+    build_order: Sequence[str], steps: Sequence[RecipeStep], where: str
+) -> tuple[str, ...]:
+    known = {*BUILT_CORE_STEP_NAMES, *(step.name for step in steps)}
+    for step_name in build_order:
+        if step_name not in known:
+            raise RecipeContractError(
+                f"{where}: its build runs {step_name!a}, which neither the core nor the recipe "
+                "builds with"
+            )
+    if len(set(build_order)) != len(build_order):
+        raise RecipeContractError(f"{where}: its build runs a step twice")
+    return tuple(build_order)
 
 
 def judge_candidate_name(name: str, where: str) -> None:

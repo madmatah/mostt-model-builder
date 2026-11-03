@@ -1,5 +1,9 @@
 from mostt_model_builder.domain.acceptance.parity_reports import PARITY_REPORT_MAX_SIZE_BYTES
-from mostt_model_builder.domain.bench.fleurs_index import locate_bench_files
+from mostt_model_builder.domain.bench.fleurs_index import BENCH_LANGUAGES, locate_bench_files
+from mostt_model_builder.domain.bench.hypotheses import (
+    RUN_LINES_FILE_NAME,
+    RUN_LINES_MAX_SIZE_BYTES,
+)
 from mostt_model_builder.domain.containers.container_steps import (
     FLEURS_REPOSITORY,
     PEAKS_OUTPUT,
@@ -8,13 +12,36 @@ from mostt_model_builder.domain.containers.container_steps import (
     StepLimits,
 )
 from mostt_model_builder.domain.contract.recipe_contract import (
+    CANDIDATE_MOUNT,
+    REFERENCE_VARIANT,
+    CandidateFile,
+    DeviceTemplate,
+    HostContentOrigin,
     Parity,
     RecipeContract,
     RecipeImage,
     RecipeStep,
+    Run,
     SourceMount,
+    StepOutputOrigin,
+)
+from mostt_model_builder.domain.formats.file_formats import FileFormat
+from mostt_model_builder.domain.onnx.node_placement import (
+    PLACEMENT_FILE_NAME,
+    PLACEMENT_MAX_SIZE_BYTES,
 )
 from mostt_recipe_parakeet_tdt.domain.export.tensor_fixtures import NAME_LIST_MAX_SIZE_BYTES
+from mostt_recipe_parakeet_tdt.domain.transcripts.run_readers import (
+    read_nemo_lines,
+    read_onnx_asr_lines,
+)
+from mostt_recipe_parakeet_tdt.domain.variants.candidate_layout import (
+    CONFIGURATION_FILE_NAME,
+    ONNX_ASR_CONFIGURATION,
+    VOCABULARY_FILE_NAME,
+    name_decoder_joint_file,
+    name_encoder_file,
+)
 
 RECIPE_NAME = "parakeet-tdt"
 ULTRA_REPOSITORY = "moondream/parakeet-ultra"
@@ -24,14 +51,21 @@ ULTRA_WEIGHTS = "model.safetensors"
 NEMO_REPOSITORY = "nvidia/parakeet-tdt-0.6b-v3"
 NEMO_ARCHIVE = "parakeet-tdt-0.6b-v3.nemo"
 EXPORT_IMAGE_NAME = "export"
+TRANSCRIBE_CPU_IMAGE_NAME = "transcribe-cpu"
+TRANSCRIBE_GPU_IMAGE_NAME = "transcribe-gpu"
 DESCRIBE_STEP_NAME = "describe"
 ULTRA_TENSORS_FILE_NAME = "moondream-tensors"
 NEMO_STATE_DICT_FILE_NAME = "nemo-state-dict"
 EXPORT_STEP_NAME = "export"
-ENCODER_FILE_NAME = "encoder-model.onnx"
-ENCODER_DATA_FILE_NAME = "encoder-model.onnx.data"
-DECODER_JOINT_FILE_NAME = "decoder_joint-model.onnx"
-VOCABULARY_FILE_NAME = "vocab.txt"
+FLOAT32_VARIANT = "float32"
+ENCODER_FILE_NAME = name_encoder_file(FLOAT32_VARIANT)
+ENCODER_DATA_FILE_NAME = f"{ENCODER_FILE_NAME}.data"
+DECODER_JOINT_FILE_NAME = name_decoder_joint_file(FLOAT32_VARIANT)
+REFERENCE_STEP_NAME = "reference"
+REFERENCE_TENSORS_FILE_NAME = "reference.safetensors"
+REFERENCE_STEPS_FILE_NAME = "reference.json"
+TRANSCRIBE_STEP_NAME = "transcribe"
+NEMO_RUN_NAME = "nemo"
 ENCODER_PARITY_FILE_NAME = "encoder-parity.json"
 ENCODER_PARITY_NAME = "encoder-onnx-against-nemo"
 PARITY_LANGUAGE = "fr_fr"
@@ -41,6 +75,16 @@ EXPORT_IMAGE = RecipeImage(
     device=Device.CPU,
     extra=f"{RECIPE_NAME}-{EXPORT_IMAGE_NAME}",
     reads_code_running_sources=True,
+)
+TRANSCRIBE_CPU_IMAGE = RecipeImage(
+    name=TRANSCRIBE_CPU_IMAGE_NAME,
+    device=Device.CPU,
+    extra=f"{RECIPE_NAME}-{TRANSCRIBE_CPU_IMAGE_NAME}",
+)
+TRANSCRIBE_GPU_IMAGE = RecipeImage(
+    name=TRANSCRIBE_GPU_IMAGE_NAME,
+    device=Device.GPU,
+    extra=f"{RECIPE_NAME}-{TRANSCRIBE_GPU_IMAGE_NAME}",
 )
 ULTRA_WEIGHTS_MOUNT = SourceMount(ULTRA_REPOSITORY, ULTRA_WEIGHTS)
 ULTRA_TOKENIZER_AND_WEIGHTS_MOUNTS = (
@@ -67,6 +111,13 @@ DESCRIBE_STEP = RecipeStep(
 # The export peaked at 11.1 GiB, 66 processes and 2.37 GiB of /scratch in the trial build, its
 # /scratch counted against its memory, and wrote a graph of the encoder under 1 MB, its external
 # data of 2 476 376 064 bytes and a decoder and joint of 73 MB.
+EXPORT_LIMITS = StepLimits(
+    memory_mib=14_336,
+    process_count=128,
+    cpu_count=8,
+    temporary_directory_mib=512,
+    scratch_mib=3072,
+)
 EXPORT_STEP = RecipeStep(
     name=EXPORT_STEP_NAME,
     image=EXPORT_IMAGE_NAME,
@@ -80,13 +131,7 @@ EXPORT_STEP = RecipeStep(
         DeclaredOutput(ENCODER_PARITY_FILE_NAME, PARITY_REPORT_MAX_SIZE_BYTES),
         PEAKS_OUTPUT,
     ),
-    limits=StepLimits(
-        memory_mib=14_336,
-        process_count=128,
-        cpu_count=8,
-        temporary_directory_mib=512,
-        scratch_mib=3072,
-    ),
+    limits=EXPORT_LIMITS,
 )
 # The trial build measured 4.18e-6 between the exported encoder on ONNX Runtime's CPU provider and
 # NeMo's unpatched encoder, on 20 utterances of FLEURS fr: the tolerance is over ten times that.
@@ -96,10 +141,147 @@ ENCODER_PARITY = Parity(
     output=ENCODER_PARITY_FILE_NAME,
     absolute_difference_tolerance=5e-5,
 )
+BENCH_MOUNTS = tuple(
+    SourceMount(FLEURS_REPOSITORY, path)
+    for language in BENCH_LANGUAGES
+    for path in locate_bench_files(language)
+)
+RUN_LINES_OUTPUT = DeclaredOutput(RUN_LINES_FILE_NAME, RUN_LINES_MAX_SIZE_BYTES)
+# NeMo's reference peaked at 6.2 GiB, its /scratch included, and 58 processes.
+REFERENCE_CPU_LIMITS = StepLimits(
+    memory_mib=8192,
+    process_count=128,
+    cpu_count=8,
+    temporary_directory_mib=512,
+    scratch_mib=1024,
+)
+# The reference runs NeMo unpatched, on the CPU in float32, so that no TF32 enters what the export
+# is measured against.
+REFERENCE_STEP = RecipeStep(
+    name=REFERENCE_STEP_NAME,
+    image=None,
+    entry_module="mostt_recipe_parakeet_tdt.steps.nemo_reference",
+    mounts=(*ULTRA_TOKENIZER_AND_WEIGHTS_MOUNTS, NEMO_ARCHIVE_MOUNT, *BENCH_MOUNTS),
+    outputs=(
+        DeclaredOutput(REFERENCE_TENSORS_FILE_NAME, 64 * 2**20),
+        DeclaredOutput(REFERENCE_STEPS_FILE_NAME, 2**20),
+        PEAKS_OUTPUT,
+    ),
+    limits=None,
+    devices=(
+        DeviceTemplate(
+            device=Device.CPU,
+            image=EXPORT_IMAGE_NAME,
+            limits=REFERENCE_CPU_LIMITS,
+            outputs=(RUN_LINES_OUTPUT,),
+        ),
+    ),
+)
+# A transcription runs one process of 8 threads on the GPU, which peaked at 3.4 GiB and 99
+# processes, and on the CPU four of 2 threads, each in its own container, which peaked at 3.4 GiB
+# and 33 processes each.
+TRANSCRIBE_GPU_LIMITS = StepLimits(
+    memory_mib=5120, process_count=128, cpu_count=8, temporary_directory_mib=256
+)
+TRANSCRIBE_CPU_LIMITS = StepLimits(
+    memory_mib=5120, process_count=64, cpu_count=2, temporary_directory_mib=256
+)
+TRANSCRIBE_STEP = RecipeStep(
+    name=TRANSCRIBE_STEP_NAME,
+    image=None,
+    entry_module="mostt_recipe_parakeet_tdt.steps.onnx_asr_transcription",
+    mounts=(CANDIDATE_MOUNT, *BENCH_MOUNTS),
+    outputs=(PEAKS_OUTPUT,),
+    limits=None,
+    devices=(
+        DeviceTemplate(
+            device=Device.CPU,
+            image=TRANSCRIBE_CPU_IMAGE_NAME,
+            limits=TRANSCRIBE_CPU_LIMITS,
+            outputs=(RUN_LINES_OUTPUT,),
+        ),
+        DeviceTemplate(
+            device=Device.GPU,
+            image=TRANSCRIBE_GPU_IMAGE_NAME,
+            limits=TRANSCRIBE_GPU_LIMITS,
+            outputs=(
+                RUN_LINES_OUTPUT,
+                DeclaredOutput(PLACEMENT_FILE_NAME, PLACEMENT_MAX_SIZE_BYTES),
+            ),
+        ),
+    ),
+)
+ENCODER_ORIGIN = StepOutputOrigin(EXPORT_STEP_NAME, ENCODER_FILE_NAME)
+CANDIDATE = (
+    CandidateFile(ENCODER_FILE_NAME, FileFormat.ONNX, (FLOAT32_VARIANT,), ENCODER_ORIGIN),
+    CandidateFile(
+        ENCODER_DATA_FILE_NAME,
+        FileFormat.ONNX_EXTERNAL_DATA,
+        (FLOAT32_VARIANT,),
+        StepOutputOrigin(EXPORT_STEP_NAME, ENCODER_DATA_FILE_NAME),
+        external_data_of=ENCODER_FILE_NAME,
+    ),
+    CandidateFile(
+        DECODER_JOINT_FILE_NAME,
+        FileFormat.ONNX,
+        (FLOAT32_VARIANT,),
+        StepOutputOrigin(EXPORT_STEP_NAME, DECODER_JOINT_FILE_NAME),
+    ),
+    CandidateFile(
+        VOCABULARY_FILE_NAME,
+        FileFormat.TEXT,
+        (FLOAT32_VARIANT,),
+        StepOutputOrigin(EXPORT_STEP_NAME, VOCABULARY_FILE_NAME),
+    ),
+    CandidateFile(
+        CONFIGURATION_FILE_NAME,
+        FileFormat.TEXT,
+        (FLOAT32_VARIANT,),
+        HostContentOrigin(ONNX_ASR_CONFIGURATION),
+    ),
+)
+RUNS = (
+    Run(
+        name=NEMO_RUN_NAME,
+        step=REFERENCE_STEP_NAME,
+        device=Device.CPU,
+        variant=REFERENCE_VARIANT,
+        languages=BENCH_LANGUAGES,
+        shard_count=1,
+        reader=read_nemo_lines,
+    ),
+    Run(
+        name="float32-cpu",
+        step=TRANSCRIBE_STEP_NAME,
+        device=Device.CPU,
+        variant=FLOAT32_VARIANT,
+        languages=BENCH_LANGUAGES,
+        shard_count=4,
+        reader=read_onnx_asr_lines,
+    ),
+    Run(
+        name="float32-gpu",
+        step=TRANSCRIBE_STEP_NAME,
+        device=Device.GPU,
+        variant=FLOAT32_VARIANT,
+        languages=BENCH_LANGUAGES,
+        shard_count=1,
+        reader=read_onnx_asr_lines,
+    ),
+)
 RECIPE = RecipeContract(
     name=RECIPE_NAME,
-    images=(EXPORT_IMAGE,),
-    steps=(DESCRIBE_STEP, EXPORT_STEP),
-    candidate=(),
+    images=(EXPORT_IMAGE, TRANSCRIBE_CPU_IMAGE, TRANSCRIBE_GPU_IMAGE),
+    steps=(DESCRIBE_STEP, EXPORT_STEP, REFERENCE_STEP, TRANSCRIBE_STEP),
+    candidate=CANDIDATE,
     parities=(ENCODER_PARITY,),
+    runs=RUNS,
+    conversion_input=ENCODER_ORIGIN,
+    build_order=(
+        "fleurs-check",
+        EXPORT_STEP_NAME,
+        "inspect",
+        REFERENCE_STEP_NAME,
+        TRANSCRIBE_STEP_NAME,
+    ),
 )

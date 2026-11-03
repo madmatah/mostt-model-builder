@@ -21,6 +21,7 @@ from mostt_model_builder.domain.containers.container_steps import (
     BOOTSTRAP_IN_THE_IMAGE,
     CORE_IMAGES,
     FLEURS_CHECK_ROW,
+    INSPECT_ROW,
     LOCK_ROW,
     LOCK_STEP_NAME,
     BindMount,
@@ -52,6 +53,7 @@ PLACEMENT = StepPlacement(
     output_directory=PurePosixPath("runs/core/c0ffee/step"),
     request_directory=PurePosixPath("runs/core/c0ffee/requests/step"),
     log_path=PurePosixPath("runs/core/c0ffee/logs/step.log"),
+    candidate_directory=PurePosixPath("runs/core/c0ffee/candidate"),
 )
 HOST_CPU_COUNT = 20
 
@@ -74,6 +76,7 @@ def judge_every_recipe() -> tuple[JudgedRecipe, ...]:
 JUDGED_RECIPES = judge_every_recipe()
 EVERY_ROW = (
     FLEURS_CHECK_ROW,
+    INSPECT_ROW,
     LOCK_ROW,
     *(build_clean_row(image) for image in CORE_IMAGES),
     *(row for recipe in JUDGED_RECIPES for row in recipe.rows),

@@ -90,3 +90,15 @@ def empty_output_directory(
         clean_row, image_id, clean_placement, {}, request.work_root, request.host.group_id, {}
     )
     run_judged_container(run, clean_placement.log_path, clean_row.name, request.host, engine, files)
+
+
+# The candidate holds the host's own copies, in a directory the host made, so the host removes
+# them itself, without a container.
+def remove_candidate(request: CleanRequest, files: CleanFiles) -> CleanOutcome:
+    candidate_directory = place_step(
+        request.recipe_name, request.commit, request.row.name
+    ).candidate_directory
+    if candidate_directory is None or not is_judged_directory(request, candidate_directory, files):
+        return CleanOutcome.NOTHING_TO_CLEAN
+    files.remove_request_directory(request.work_root / candidate_directory)
+    return CleanOutcome.CLEANED

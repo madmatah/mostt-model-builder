@@ -12,30 +12,30 @@ from mostt_model_builder.domain.acceptance.parity_reports import (
     render_parity_report,
     summarize_differences,
 )
-from mostt_model_builder.domain.bench.fleurs_index import locate_bench_files, parse_fleurs_index
-from mostt_model_builder.domain.bench.wav_format import SampleFormat, parse_wav_layout
 from mostt_model_builder.domain.containers.container_steps import (
-    FLEURS_REPOSITORY,
     OUTPUT_IN_THE_CONTAINER,
     SCRATCH_IN_THE_CONTAINER,
 )
 from mostt_model_builder.steps.bound_sources import find_bound_source
-from mostt_model_builder.steps.fleurs_audio import read_recordings
 from mostt_model_builder.steps.output_modes import finish_outputs
+from mostt_recipe_parakeet_tdt.domain.variants.candidate_layout import VOCABULARY_FILE_NAME
 from mostt_recipe_parakeet_tdt.recipe import (
     DECODER_JOINT_FILE_NAME,
     ENCODER_DATA_FILE_NAME,
     ENCODER_FILE_NAME,
     ENCODER_PARITY_FILE_NAME,
     ENCODER_PARITY_NAME,
-    EXPORT_STEP,
+    EXPORT_LIMITS,
     NEMO_ARCHIVE,
     NEMO_REPOSITORY,
     PARITY_LANGUAGE,
     ULTRA_REPOSITORY,
     ULTRA_TOKENIZER,
     ULTRA_WEIGHTS,
-    VOCABULARY_FILE_NAME,
+)
+from mostt_recipe_parakeet_tdt.steps.fleurs_recordings import (
+    list_utterance_ids,
+    read_language_recordings,
 )
 from mostt_recipe_parakeet_tdt.steps.nemo_model import (
     NemoModel,
@@ -61,7 +61,6 @@ type EncoderFeatures = tuple[TorchTensor, TorchTensor]
 
 # The trial build measured the parity on the first 20 utterances of FLEURS fr's index.
 PARITY_UTTERANCE_COUNT = 20
-INTEGER16_FULL_SCALE = 32768.0
 # onnx-asr reads the encoder's inputs and outputs under the names parakeet-rs's export gives them.
 FEATURES_INPUT = "audio_signal"
 FEATURE_LENGTHS_INPUT = "length"
@@ -74,7 +73,7 @@ ENCODER_DYNAMIC_AXES = {
 RAW_ENCODER_PATH = Path(SCRATCH_IN_THE_CONTAINER) / "encoder-raw.onnx"
 BLANK_PIECE = "<blk>"
 CPU_PROVIDER = "CPUExecutionProvider"
-THREAD_COUNT = EXPORT_STEP.limits.cpu_count
+THREAD_COUNT = EXPORT_LIMITS.cpu_count
 
 
 # NeMo's encoder takes its inputs by name, which the exporter cannot pass, so a module of its own
@@ -88,23 +87,11 @@ class EncoderModule(torch.nn.Module):  # type: ignore[misc]  # torch is untyped 
         return self.encoder(audio_signal=audio_signal, length=length)
 
 
-def decode_samples(content: bytes) -> NumpyArray:
-    layout = parse_wav_layout(content)
-    samples = content[layout.data_offset : layout.data_offset + layout.data_size_bytes]
-    if layout.sample_format is SampleFormat.FLOAT32:
-        return numpy.frombuffer(samples, dtype="<f4").astype(numpy.float32)
-    return numpy.frombuffer(samples, dtype="<i2").astype(numpy.float32) / INTEGER16_FULL_SCALE
-
-
 def read_parity_recordings() -> list[NumpyArray]:
-    index_path, archive_path = (
-        find_bound_source(FLEURS_REPOSITORY, path) for path in locate_bench_files(PARITY_LANGUAGE)
-    )
-    utterances = parse_fleurs_index(index_path.read_text(encoding="utf-8"))
-    recording_names = [utterance.recording_name for utterance in utterances]
-    parity_names = recording_names[:PARITY_UTTERANCE_COUNT]
-    recordings = dict(read_recordings(archive_path, parity_names))
-    return [decode_samples(recordings[name]) for name in parity_names]
+    parity_ids = list_utterance_ids(PARITY_LANGUAGE)[:PARITY_UTTERANCE_COUNT]
+    return [
+        recording.samples for recording in read_language_recordings(PARITY_LANGUAGE, parity_ids)
+    ]
 
 
 def compute_features(model: NemoModel, samples: NumpyArray) -> EncoderFeatures:

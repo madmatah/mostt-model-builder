@@ -4,13 +4,13 @@ This document describes the build part by part: what each command does, and the 
 
 ## The core
 
-The core holds what every model family shares. Built: the work directory, the sources, the confined containers and their boundary with the host, the images and their lock, the check of the FLEURS bench, the recipe contract, the names of the formats and the parity reports, which the sections below describe. Planned: the checks of the formats and their inspection, the candidate, the measures of the FLEURS bench and its acceptance.
+The core holds what every model family shares. Built: the work directory, the sources, the confined containers and their boundary with the host, the images and their lock, the check of the FLEURS bench, the recipe contract and its runs, the formats with their checks, the candidate and its inspection, and the parity reports, which the sections below describe. Planned: the conversions, the measures of the FLEURS bench and its acceptance.
 
 Every command runs as `./model-build.sh --work <dir> --recipe <name> <command>`, on the host's Python and its standard library, isolated from the environment and the site packages. `--recipe` names the model family to build, [Recipes](#recipes) lists them, and every command needs it but `lock`, which resolves the libraries of every recipe's images at once.
 
 ### The work directory
 
-The work directory holds everything a build fetches and writes: the sources, the outputs of each step, its request and its log, the runs of `lock`, the logs of the image builds, and the candidate (planned). It lives outside the clone, so that a build never writes into the repository, and nothing it fetches can be committed by accident.
+The work directory holds everything a build fetches and writes: the sources, the outputs of each step, its request and its log, the runs of `lock`, the logs of the image builds, and the candidate. It lives outside the clone, so that a build never writes into the repository, and nothing it fetches can be committed by accident.
 
 `--work` names it, and no default does, since a default would choose for the user where tens of gigabytes go. The user creates it, in mode 0700, outside the home directory: containers write into it and the host binds its files into them, so it must hold none of the user's own files, and no other user may change a file between its check and its use. `.claude/rules/container-security.md` > The host gives each check it must pass.
 
@@ -19,9 +19,10 @@ Its layout:
 | Path | Holds |
 |---|---|
 | `sources/<namespace>/<name>/<revision>/<path>` | Each pinned source, read-only, at the place its pin gives it, shared by every recipe |
-| `runs/<recipe>/<commit>/<step>/` | The outputs of a step of the recipe's build at a commit, the core's steps included, in mode 2770, which its container writes |
+| `runs/<recipe>/<commit>/<step>[-<run>-<shard>]/` | The outputs of a step of the recipe's build at a commit, or of one shard of a run, the core's steps included, in mode 2770, which its container writes |
 | `runs/<recipe>/<commit>/requests/<step>/` | The request the host writes for that step, in mode 0750 |
 | `runs/<recipe>/<commit>/logs/<step>.log` | What its container printed, through the printable filter, and the log of its cleaning, `clean-<step>.log` |
+| `runs/<recipe>/<commit>/candidate/` | The candidate, the host's own copies of the files its recipe names, in mode 0444 |
 | `lock/<n>/` | A run of `lock`: its `request/`, the copies of the images' manifest and lock, its `output/`, the new lock and its peaks, and its `logs/`, a new number each time |
 | `image-builds/<image>.log` | The output of the last build of each image, through the printable filter |
 
@@ -60,6 +61,7 @@ A row of the step table gives:
 | entry module | The module the image's copy of the bootstrap runs, under `-I -B` |
 | sources | The pinned files it reads, each bound by itself, read-only, at its pin's layout under `/sources` |
 | earlier outputs | The declared outputs of earlier steps it reads, each bound by itself, read-only, at `/inputs/<step>/<name>` |
+| candidate | Whether it reads the candidate, which the host assembled, bound read-only at `/candidate` |
 | request | Whether the host writes a request for it, bound read-only at `/request` |
 | outputs | The files it leaves at the top of `/output`, each with its size bound; `peaks.json` among them, except for `clean` |
 | limits | Its memory in MiB, with the swap at the same value, its processes, its CPUs, and the size of its `/tmp`, and of its `/scratch` where it asks for one |
@@ -74,6 +76,7 @@ The core's rows:
 | `fleurs-check` | `bench` | 1 024 | 8 | 2 | 64 | it reads the archives member by member, and peaked at 24 MiB and 6 processes |
 | `clean` | the image of the step it cleans | 256 | 32 | 1 | 16 | the core's own value: it only removes files |
 | `lock` | `uv` | 4 096 | 256 | 8 | 3 072 | limits that a resolution of every image's libraries stays well within, uv's cache in `/tmp` included |
+| `inspect` | `onnx-inspect` | 3 072 | 32 | 2 | 64 | the inspection of the graphs, without their weights, peaked at 2.4 GiB and 20 processes |
 
 A run of a step:
 
@@ -97,6 +100,7 @@ Each image has a Containerfile, the core's in `images/<image>/` and a recipe's i
 |---|---|
 | `bench` | The Python base and the core's sources: the FLEURS check runs on the standard library |
 | `uv` | The Python base, the uv binary of the pinned uv image, and the core's sources: the lock's resolution |
+| `onnx-inspect` | The extra `core-onnx-inspect`, onnx alone, and the core's sources: the inspection of the candidate's graphs, in an image that produced none of them |
 
 An image of a recipe also copies the recipe's sources, at the repository's layout, and installs its libraries from its extra of the images' environment ([Recipes](#recipes) lists them).
 
@@ -135,15 +139,26 @@ A recipe gives the core plain data, `RECIPE` in its `recipe.py`, of the type `Re
 |---|---|
 | `name` | The recipe's name, `[a-z0-9][a-z0-9-]{0,31}`, equal to its directory under `recipes/`; its package is `mostt_recipe_<name>`, with `-` turned into `_` |
 | `images` | Its images, each with its name, never one of the core's, its device, `cpu` or `gpu`, and its extra of the images' environment, `<recipe>-<image>`; at most one of them reads the sources that run code when they load |
-| `steps` | Its rows of the step table, each with its name, never one of the core's, its image, the recipe's or the core's, its entry module inside the recipe's `steps` package, or the core's for a core image, its mounts, its outputs with their size bounds, its limits, and whether it uses the GPU |
-| `candidate` | The files of the candidate, each with its name, its format, the variants it serves, and where it comes from: a declared output of a step, or a content that the host writes, such as a small configuration file a runtime reads (planned: the candidate's assembly) |
+| `steps` | Its rows of the step table, each with its name, never one of the core's nor `requests`, `logs` or `candidate`, its entry module inside the recipe's `steps` package, or the core's for a core image, its mounts, and its outputs with their size bounds; and either its image, the recipe's or the core's, its limits, and whether it uses the GPU, or, for a step that produces runs, its template: for each device, `cpu` or `gpu`, its image on that device, its limits, and the outputs of one shard, `lines.jsonl` among them, and `placement.json` too on the GPU and only there |
+| `candidate` | The files of the candidate, each with its name, its format, the variants it serves, where it comes from, a declared output of a step or a content that the host writes, such as a small configuration file a runtime reads, and, for `onnx-external-data`, `external_data_of`, the `onnx` file whose tensors it holds, which serves the same variants |
+| `runs` | Its runs, each with its name, `[a-z0-9][a-z0-9-]{0,31}`, the step with a template that produces it, its device, which the template gives, the variant it reads, one the candidate serves, or `reference` for a run of a reference framework, its languages among the bench's, its count of shards, from 1 to 16, and its reader |
+| `conversion_input` | The step and the output that the conversions take as their input, an `onnx` file of the candidate, whose constant weights must then all be plain ([The candidate and its inspection](#the-candidate-and-its-inspection)) |
+| `build_order` | The steps that `build` runs, the core's `fleurs-check` and `inspect` and the recipe's, in their order |
 | `parities` | The parities of its exports against their reference framework, each with its name, `[a-z0-9][a-z0-9-]{0,63}`, the step and the declared output that holds its report, never `peaks.json`, and its tolerance on the maximum absolute difference, `absolute_difference_tolerance`, a finite number above 0 |
 
-A mount names either a pinned file of the core's or the recipe's sources, by its repository and its path, or a declared output of an earlier step of the recipe, by the step and the file's name. A directory is never mounted, so that a step sees only the files its row names.
+A mount names either a pinned file of the core's or the recipe's sources, by its repository and its path, a declared output of an earlier step of the recipe, by the step and the file's name, or the candidate. No other directory is mounted, so that a step sees only the files its row names.
 
 A parity report is a JSON object of exactly three keys: `name`, the parity's own; `maximum_absolute_difference`, a finite decimal number of at least 0; and `compared_count`, the count of outputs compared, from 1 to 1 000 000. Once its step has run, the host reads each parity report of that step through its strict parser, `domain/acceptance/parity_reports.py`, which refuses a report that names another parity, and prints its difference beside its tolerance; the acceptance that fails a build beyond it comes with the measures (planned).
 
-Fields for the runs and their readers, and the comparisons of the measures come with the parts of the build that read them (planned).
+The comparisons of the runs come with the acceptance that reads them (planned).
+
+## The runs
+
+A run is a transcription of the bench by one engine, on one device, of one variant of the candidate or of the reference framework. The core derives its rows from the template of the step that produces it, `domain/contract/derived_rows.py`, one per shard: each takes the image and the limits of the run's device, the outputs of a shard followed by the step's own, the GPU on a run of the GPU alone, and a request, `shard.json`, that names the run, its variant, its device, its languages, the shard and the count of shards. A step whose runs make a single row keeps its name, so that a later step binds its outputs by it; the rows of the others are named `<step>-<run>-<shard>`, and the contract refuses a row whose name another row already holds, since its outputs would land in the other's directory. The utterances of the run's languages, in the order of their indexes, are dealt to the shards in turn. `./model-build.sh --work <dir> --recipe <name> step <step>` runs every row of the step, the shards of a run at the same time, each in its own container with its own CPUs. Before a row that binds the candidate starts, the host reads the inspection's report again and judges its rules and each copy of the candidate, `application/assemble_candidate.py`, so that a run never reads a candidate that its inspection refused, never inspected, or that changed since.
+
+Each shard writes `lines.jsonl`, one JSON object per utterance, in a form its recipe chooses. The host reads it through the run's reader, a pure function of the recipe that turns the lines and the candidate's text files into the core's hypotheses, `domain/bench/hypotheses.py`: the utterance, its language, its text, its count of unknown tokens and its decoding time, so that the core never sees a token. The core parses the lines strictly, bounded in size, count and length, and refuses a hypothesis in a language other than its run's, an utterance that is not a recording of the bench or that has two hypotheses, a text that holds a character a reader cannot see, a count that is not one, or a decoding time outside 0 to an hour.
+
+A shard on the GPU also writes `placement.json`, from a profile of ONNX Runtime over 5 utterances after the warm-ups: for each provider and operator, the element types of its nodes and their count. The host refuses a node on the CPU that handles a tensor other than `int64` or `bool`, `domain/onnx/node_placement.py`, since ONNX Runtime places there only the arithmetic of shapes, lengths and masks, and a node of floating-point tensors there would be a part of the model fallen back to the CPU, silently. A shard on the CPU never writes one, since the contract refuses a template of the CPU that declares it, so every placement the host reads is judged.
 
 ## The formats
 
@@ -155,11 +170,35 @@ Every file of a candidate has one of three formats, which the core knows by name
 | `text` | A text file in UTF-8, such as a vocabulary or a configuration |
 | `onnx-external-data` | The external data of one `onnx` file, its tensors at the offsets that file gives |
 
-Whatever its format, a candidate's name follows the grammar of a published file name, `[A-Za-z0-9][A-Za-z0-9._-]{0,127}`, and is refused with a suffix that marks code, a pickle or an archive, in any position and whatever its case, so that no published file can carry one. The checks of each format's structure, and the inspection of the ONNX files, come with the candidate (planned).
+Whatever its format, a candidate's name follows the grammar of a published file name, `[A-Za-z0-9][A-Za-z0-9._-]{0,127}`, and is refused with a suffix that marks code, a pickle or an archive, in any position and whatever its case, so that no published file can carry one.
+
+Every candidate file, whatever its format, is refused when its first 512 bytes carry the signature of code, a pickle or an archive, `domain/formats/file_signatures.py`: a binary pickle, a zip, a NumPy array, an executable, a script, a tar, gzip, bzip2, xz, Zstandard or 7-Zip archive. Each format then has its own check, as the file streams through the host:
+
+| Format | Check |
+|---|---|
+| `onnx` | The top level of a `ModelProto`: each field of the table of `onnx.proto` in its own wire type, a singular field once, keys in their shortest encoding, varints within 64 bits, an `ir_version` from 1 to 64 and a graph; then the inspection of its graph |
+| `text` | Strict UTF-8, without NUL |
+| `onnx-external-data` | Against the inspection of its `onnx` file: every tensor that names it lies within it, none overlaps another, they cover it from its first byte to its last without a gap, as the exporter lays them, and no other `onnx` file names it |
+
+The checks of `onnx` and `text` and the signatures are those of mostt's model store, adapted, so that every published file passes the store that installs it.
+
+## The candidate and its inspection
+
+`./model-build.sh --work <dir> --recipe <name> step inspect` assembles the candidate, `runs/<recipe>/<commit>/candidate/`, and inspects it, `application/assemble_candidate.py`. The host copies each file the contract names from the declared output of its step, through the descriptor of the step's judged directory, into a new file of its own, in mode 0444, never a link, hashing it and checking its signatures and its format as it streams by; it writes the contents the recipe gives itself, such as `config.json`. Then the `inspect` row reads every `onnx` file of the candidate, bound read-only, without its weights, and writes its report, from a walk of every graph of the model, `domain/onnx/model_graphs.py`: its main graph, each subgraph at any depth, each function and each subgraph inside a function. For each file, the report gives its opsets, its local functions, the count of its nodes by scope, domain and operator, the count of nodes that hold `metadata_props`, the count of its training graphs, the count of its sparse initializers in every graph, each matrix product, `MatMul` or `Gemm`, with the trace of its weight back through the producers that hold only constants, `Constant`, `Identity`, `Transpose`, `Squeeze`, `Unsqueeze`, `Reshape` and `Cast`, to an initializer with its rank, a `Constant` node or a computed tensor, and the location, offset and length of every external tensor, wherever it lies: an initializer, a sparse initializer, a tensor attribute of a node, or a function's default attribute. A subgraph sees its own initializers and its ancestors', never a sibling's, and a function sees none, since ONNX gives it none of the graph that calls it. The host reads the report through its strict parser, `domain/onnx/inspection_report.py`, and judges each graph, `domain/onnx/graph_rules.py`:
+
+- every node is of ONNX's domain, of ONNX Runtime's `com.microsoft`, or calls a function the model defines;
+- no node holds `metadata_props`, where an exporter records paths of its container;
+- the model holds no training graph, which no runtime of the candidate runs;
+- the model holds no sparse initializer, whose weights no rule of the products judges, since the quantization converts dense initializers alone and the exports hold none;
+- a tensor lies outside the graph's file only in the `onnx-external-data` file the contract gives it;
+- in the conversions' input, every product whose weight is a constant reads it as a plain 2-D initializer, read directly, the form that the quantization to 8-bit blocks converts, so that no product is left unquantized; any other file, such as the decoder and joint, keeps its products as they are, since the rules follow where a file comes from and not its name;
+- the opsets are recorded, not judged.
+
+`clean inspect` removes the inspection's outputs and the candidate. The assembly refuses to start while the outputs of an earlier inspection remain, since a candidate assembled beside them would be read against a report of other copies.
 
 ## The published layout
 
-The published files are the contract with mostt, which pins them by hash: their names, their formats and their structure. The two repositories share no code, and the names and the suffixes that this one refuses are those of mostt's model store, so that every published file passes it. The candidate of Parakeet TDT, laid out for onnx-asr (planned: the files below are the target of its build, whose export writes the FP32 encoder, its external data, the decoder and joint and `vocab.txt`, and which converts none of them yet nor assembles the candidate):
+The published files are the contract with mostt, which pins them by hash: their names, their formats and their structure. The two repositories share no code, and the names and the suffixes that this one refuses are those of mostt's model store, so that every published file passes it. The candidate of Parakeet TDT, laid out for onnx-asr (planned: the converted encoders and the copies of the decoder under their names, which the candidate holds once the conversions are built; it holds the files of `float32` now):
 
 | File | Format |
 |---|---|
@@ -218,4 +257,24 @@ It binds Moondream's tokenizer and weights, the `.nemo`, and FLEURS fr's index a
 | `vocab.txt` | The vocabulary of Parakeet TDT 0.6B v3 |
 | `encoder-parity.json` | The parity of the encoder against NeMo's |
 
-The check against Transformers, the variants, and the transcription of FLEURS with onnx-asr come with the rest of the build (planned).
+The candidate of `float32`: `encoder-model.onnx`, its external data `encoder-model.onnx.data`, `decoder_joint-model.onnx` and `vocab.txt` from `export`, and `config.json`, which the host writes. The exported encoder is the conversions' input, whose 265 products of a constant weight the inspection holds to a plain 2-D initializer.
+
+**`reference`** is NeMo's own transcription of FLEURS fr and en, the reference that the export's transcripts are compared with, so that they check the export, the patch of the pointwise convolutions and the mapping of the weights together: the model built as for `export`, unpatched, on the CPU in float32, so that no TF32 enters, called directly, without `transcribe()` and its data loader: the preprocessor, the encoder, then NeMo's greedy decoding of TDT with at most 10 symbols per frame, as onnx-asr's `max_tokens_per_step`. Its one shard writes each utterance's token ids in `lines.jsonl`, and, for the check against Transformers, the features, the encoder's outputs and the joint's logits on the first 5 greedy steps of the first 5 utterances of FLEURS fr, in `reference.safetensors`, with the frames and the tokens emitted before each step in `reference.json`.
+
+**`transcribe`** transcribes FLEURS fr and en with onnx-asr 0.12, from the candidate bound read-only, under onnx-asr's names: on the GPU, in the image `transcribe-gpu`, with ONNX Runtime's CUDA provider, reached through CDI's `nvidia.com/gpu=all`; on the CPU, in `transcribe-cpu`. Greedy, one utterance at a time, after 3 warm-ups that are not timed; each shard writes, for each utterance, the pieces of onnx-asr's `with_timestamps()` and the decoding time. `domain/variants/candidate_layout.py` alone maps a variant to onnx-asr's suffix: none for `float32`, `fp16`, `bf16` and `int8` for `float16`, `bfloat16` and `eight-bit-blocks`.
+
+| Run | Step | Device | Variant | Shards | Languages |
+|---|---|---|---|---|---|
+| `nemo` | `reference` | CPU, 8 threads | `reference` | 1 | fr, en |
+| `float32-cpu` | `transcribe` | CPU, 2 threads each | `float32` | 4 | fr, en |
+| `float32-gpu` | `transcribe` | GPU, 8 threads | `float32` | 1 | fr, en |
+
+| Row | Image | Memory MiB | Processes | CPUs | `/tmp` MiB | `/scratch` MiB | Reason of the limits |
+|---|---|---|---|---|---|---|---|
+| `reference` | `export` | 8 192 | 128 | 8 | 512 | 1 024 | NeMo's reference peaked at 6.2 GiB, its `/scratch` included, and 58 processes |
+| a shard of the GPU | `transcribe-gpu` | 5 120 | 128 | 8 | 256 | — | a transcription on the GPU peaked at 3.4 GiB and 99 processes |
+| a shard of the CPU | `transcribe-cpu` | 5 120 | 64 | 2 | 256 | — | a transcription on the CPU, one process of 2 threads per container, peaked at 3.4 GiB and 33 processes |
+
+**The readers.** Every reader renders the text from the token ids, so that NeMo's ` ⁇ `, onnx-asr's `<unk>` and Transformers' id 0 never differ: `domain/transcripts/run_readers.py` reads NeMo's ids, and maps onnx-asr's pieces back to ids through the candidate's `vocab.txt`, with `▁` written as a space; `domain/transcripts/token_rendering.py` joins the pieces, writes `▁` as a space and `<unk>` as itself, and counts `<unk>` from the ids, refusing the blank and an id beyond the vocabulary. `domain/transcripts/vocabulary.py` accepts `vocab.txt` only at the SHA-256 of v3's vocabulary, with `<unk>` first, `<blk>` last, its indexes in order, no piece twice and no raw space in a piece, so that the mapping of pieces back to ids is one to one.
+
+The check against Transformers, the conversions and the acceptance of each run come with the rest of the build (planned).
