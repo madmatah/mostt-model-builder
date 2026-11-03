@@ -47,15 +47,18 @@ from mostt_model_builder.domain.containers.container_steps import (
     Device,
     StepLimits,
     StepRow,
+    build_convert_row,
 )
 from mostt_model_builder.domain.containers.step_peaks import StepPeaks, render_step_peaks
 from mostt_model_builder.domain.contract.recipe_contract import (
     HostContentOrigin,
     JudgedCandidateFile,
     StepOutputOrigin,
+    VariantConversion,
 )
 from mostt_model_builder.domain.formats.external_data import ExternalDataError
 from mostt_model_builder.domain.formats.file_formats import FileFormat
+from mostt_model_builder.domain.onnx.conversion_request import EightBitBlocksConversion
 from mostt_model_builder.domain.onnx.graph_rules import GraphRuleError
 from mostt_model_builder.domain.onnx.inspection_report import (
     INSPECTION_REPORT_FILE_NAME,
@@ -214,6 +217,75 @@ NOT_THE_HOSTS_COPY = (
     "the candidate file vocab.txt is not the host's own copy: a regular file of the user's, in "
     "mode 0444, with a single link, of at most 1024 bytes"
 )
+
+
+EIGHT_BIT_ENCODER_NAME = "encoder-model.int8.onnx"
+EIGHT_BIT_DECODER_NAME = "decoder-model.int8.onnx"
+EIGHT_BIT_ENCODER = b"\x08\x09\x3a\x00"
+EIGHT_BIT_VARIANTS = ("eight-bit-blocks",)
+DECLARED_BLOCK_PRODUCT_COUNT = 2
+CONVERT_ROW = build_convert_row((), (DeclaredOutput(EIGHT_BIT_ENCODER_NAME, OUTPUT_BOUND_BYTES),))
+CONVERSION_CANDIDATE = (
+    *CANDIDATE,
+    JudgedCandidateFile(
+        EIGHT_BIT_ENCODER_NAME,
+        FileFormat.ONNX,
+        EIGHT_BIT_VARIANTS,
+        StepOutputOrigin(CONVERT_ROW.name, EIGHT_BIT_ENCODER_NAME),
+    ),
+    JudgedCandidateFile(
+        EIGHT_BIT_DECODER_NAME,
+        FileFormat.ONNX,
+        EIGHT_BIT_VARIANTS,
+        StepOutputOrigin(EXPORT_STEP, DECODER_NAME),
+    ),
+)
+CONVERSION_REQUEST = replace(
+    REQUEST,
+    candidate=CONVERSION_CANDIDATE,
+    rows=(EXPORT_ROW, DESCRIBE_ROW, CONVERT_ROW),
+    conversions=(
+        VariantConversion(
+            "eight-bit-blocks",
+            EightBitBlocksConversion(
+                EIGHT_BIT_ENCODER_NAME,
+                block_size=64,
+                is_symmetric=True,
+                accuracy_level=4,
+                quantized_product_count=DECLARED_BLOCK_PRODUCT_COUNT,
+            ),
+            OUTPUT_BOUND_BYTES,
+        ),
+    ),
+)
+CONVERSION_STEP_OUTPUTS = {
+    **STEP_OUTPUTS,
+    CONVERT_ROW.name: {
+        EIGHT_BIT_ENCODER_NAME: build_step_output(EIGHT_BIT_ENCODER),
+        "conversion-report.json": build_step_output(b"{}"),
+        PEAKS_FILE_NAME: build_step_output(render_step_peaks(PEAKS)),
+    },
+}
+EIGHT_BIT_ENCODER_INSPECTION = FileInspection(
+    name=EIGHT_BIT_ENCODER_NAME,
+    opsets=(Opset("", 17), Opset("com.microsoft", 1)),
+    functions=(),
+    nodes=(
+        NodeCount(NodeScope.GRAPH, "com.microsoft", "MatMulNBits", DECLARED_BLOCK_PRODUCT_COUNT),
+    ),
+    metadata_props_node_count=0,
+    products=(),
+    external_tensors=(),
+    training_graph_count=0,
+    sparse_initializer_count=0,
+)
+EIGHT_BIT_DECODER_INSPECTION = replace(DECODER_INSPECTION, name=EIGHT_BIT_DECODER_NAME)
+
+
+def build_conversion_report(eight_bit_encoder: FileInspection) -> InspectionReport:
+    return InspectionReport(
+        (ENCODER_INSPECTION, DECODER_INSPECTION, eight_bit_encoder, EIGHT_BIT_DECODER_INSPECTION)
+    )
 
 
 @dataclass(frozen=True)
@@ -694,6 +766,59 @@ class TestTheCandidateAssembly:
                     refused_assembly.error, match=re.escape(refused_assembly.message)
                 ):
                     refused_assembly.assemble()
+
+        class TestWhenTheCandidateHoldsTheEightBitConversionsOutputAndADecoderCopy:
+            @pytest.fixture
+            def assembled_candidate(self) -> AssembledCandidate:
+                files = build_files(CONVERSION_STEP_OUTPUTS)
+                engine = build_engine(files, build_conversion_report(EIGHT_BIT_ENCODER_INSPECTION))
+                return assemble_candidate(CONVERSION_REQUEST, engine, files)
+
+            def test_should_accept_the_decoder_under_the_8_bit_name_since_it_was_not_converted(
+                self, assembled_candidate: AssembledCandidate
+            ) -> None:
+                assert [copy.name for copy in assembled_candidate.files][-2:] == [
+                    EIGHT_BIT_ENCODER_NAME,
+                    EIGHT_BIT_DECODER_NAME,
+                ]
+
+            def test_should_keep_the_decoders_products_as_they_are_under_every_name(
+                self, assembled_candidate: AssembledCandidate
+            ) -> None:
+                assert assembled_candidate.report.files[3].products == (TRANSPOSED_PRODUCT,)
+
+        @pytest.mark.parametrize(
+            ("eight_bit_encoder", "reason"),
+            [
+                pytest.param(
+                    replace(EIGHT_BIT_ENCODER_INSPECTION, products=(PLAIN_PRODUCT,)),
+                    "the graph of encoder-model.int8.onnx, the 8-bit conversion's output, keeps a "
+                    "MatMul of a constant weight unquantized",
+                    id="a product of a constant weight left unquantized",
+                ),
+                pytest.param(
+                    replace(
+                        EIGHT_BIT_ENCODER_INSPECTION,
+                        nodes=(NodeCount(NodeScope.GRAPH, "com.microsoft", "MatMulNBits", 1),),
+                    ),
+                    "the graph of encoder-model.int8.onnx, the 8-bit conversion's output, holds 1 "
+                    "MatMulNBits nodes, and its recipe declares 2",
+                    id="fewer products in 8-bit blocks than the recipe declares",
+                ),
+            ],
+        )
+        class TestWhenTheEightBitConversionsOutputBreaksItsRule:
+            @pytest.fixture
+            def assemble_act(self, eight_bit_encoder: FileInspection) -> Callable[[], object]:
+                files = build_files(CONVERSION_STEP_OUTPUTS)
+                engine = build_engine(files, build_conversion_report(eight_bit_encoder))
+                return partial(assemble_candidate, CONVERSION_REQUEST, engine, files)
+
+            def test_should_refuse_the_candidate_and_say_why(
+                self, assemble_act: Callable[[], object], reason: str
+            ) -> None:
+                with pytest.raises(GraphRuleError, match=re.escape(reason)):
+                    assemble_act()
 
     class TestTheReadCandidateTextsFunction:
         class TestWhenTheCandidateHoldsTheHostsCopies:

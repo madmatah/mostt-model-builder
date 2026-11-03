@@ -40,6 +40,8 @@ mypy_path = ["src", "recipes/parakeet-tdt/src"]
 # runs: a step uses them untyped, through composition, never through a subclass of their classes.
 [[tool.mypy.overrides]]
 module = [
+    "ml_dtypes",
+    "ml_dtypes.*",
     "nemo",
     "nemo.*",
     "numpy",
@@ -52,6 +54,8 @@ module = [
     "onnx_asr.*",
     "onnx_ir",
     "onnx_ir.*",
+    "onnxconverter_common",
+    "onnxconverter_common.*",
     "onnxruntime",
     "onnxruntime.*",
     "onnxscript",
@@ -182,6 +186,7 @@ forbidden_modules = [
     "mostt_model_builder.steps.clean_output",
     "mostt_model_builder.steps.lock_resolution",
     "mostt_model_builder.steps.onnx_inspection",
+    "mostt_model_builder.steps.onnx_conversion",
 ]
 
 [[tool.importlinter.contracts]]

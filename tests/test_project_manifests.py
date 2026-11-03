@@ -35,7 +35,16 @@ EXPORT_REQUIREMENTS = {
 EXPORT_EXTRA = "parakeet-tdt-export"
 TRANSCRIBE_CPU_EXTRA = "parakeet-tdt-transcribe-cpu"
 TRANSCRIBE_GPU_EXTRA = "parakeet-tdt-transcribe-gpu"
+CONVERT_EXTRA = "core-onnx-convert"
 REQUIREMENTS_BY_EXTRA: dict[str, dict[str, tuple[str, ...]]] = {
+    CONVERT_EXTRA: {
+        "ml-dtypes": (),
+        "numpy": (),
+        "onnx": (),
+        "onnx-ir": (),
+        "onnxconverter-common": (),
+        "onnxruntime": (),
+    },
     "core-onnx-inspect": {"onnx": ()},
     EXPORT_EXTRA: EXPORT_REQUIREMENTS,
     TRANSCRIBE_CPU_EXTRA: {"numpy": (), "onnx-asr": (), "onnxruntime": ()},
@@ -51,6 +60,7 @@ REQUIREMENTS_BY_EXTRA: dict[str, dict[str, tuple[str, ...]]] = {
 # onnxruntime-gpu and onnxruntime install the same package, onnxruntime, so the extra of the GPU
 # image conflicts with every other extra that installs onnxruntime.
 CONFLICTS = [
+    [{"extra": TRANSCRIBE_GPU_EXTRA}, {"extra": CONVERT_EXTRA}],
     [{"extra": TRANSCRIBE_GPU_EXTRA}, {"extra": EXPORT_EXTRA}],
     [{"extra": TRANSCRIBE_GPU_EXTRA}, {"extra": TRANSCRIBE_CPU_EXTRA}],
 ]

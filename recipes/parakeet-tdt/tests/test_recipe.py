@@ -5,6 +5,7 @@ import pytest
 from mostt_model_builder.domain.contract.recipe_contract import (
     CANDIDATE_MOUNT,
     EarlierOutputMount,
+    HostContentOrigin,
     JudgedRecipe,
     RecipeFacts,
     SourceMount,
@@ -17,6 +18,7 @@ from mostt_recipe_parakeet_tdt.domain.transcripts.run_readers import (
     read_onnx_asr_lines,
     read_token_id_lines,
 )
+from mostt_recipe_parakeet_tdt.domain.transcripts.vocabulary import VOCABULARY_SHA256
 from mostt_recipe_parakeet_tdt.recipe import (
     DESCRIBE_STEP,
     EXPORT_IMAGE_NAME,
@@ -120,6 +122,26 @@ RUNS = [
     ),
     ("float32-cpu", "transcribe", "cpu", "float32", BOTH_LANGUAGES, 4, read_onnx_asr_lines),
     ("float32-gpu", "transcribe", "gpu", "float32", BOTH_LANGUAGES, 1, read_onnx_asr_lines),
+    ("float16-gpu", "transcribe", "gpu", "float16", BOTH_LANGUAGES, 1, read_onnx_asr_lines),
+    ("bfloat16-gpu", "transcribe", "gpu", "bfloat16", BOTH_LANGUAGES, 1, read_onnx_asr_lines),
+    (
+        "eight-bit-blocks-gpu",
+        "transcribe",
+        "gpu",
+        "eight-bit-blocks",
+        BOTH_LANGUAGES,
+        1,
+        read_onnx_asr_lines,
+    ),
+    (
+        "eight-bit-blocks-cpu",
+        "transcribe",
+        "cpu",
+        "eight-bit-blocks",
+        BOTH_LANGUAGES,
+        4,
+        read_onnx_asr_lines,
+    ),
 ]
 DERIVED_ROW_NAMES = [
     "reference",
@@ -129,14 +151,69 @@ DERIVED_ROW_NAMES = [
     "transcribe-float32-cpu-2",
     "transcribe-float32-cpu-3",
     "transcribe-float32-gpu-0",
+    "transcribe-float16-gpu-0",
+    "transcribe-bfloat16-gpu-0",
+    "transcribe-eight-bit-blocks-gpu-0",
+    "transcribe-eight-bit-blocks-cpu-0",
+    "transcribe-eight-bit-blocks-cpu-1",
+    "transcribe-eight-bit-blocks-cpu-2",
+    "transcribe-eight-bit-blocks-cpu-3",
 ]
-FLOAT32_CANDIDATE = [
-    ("encoder-model.onnx", "onnx", None),
-    ("encoder-model.onnx.data", "onnx-external-data", "encoder-model.onnx"),
-    ("decoder_joint-model.onnx", "onnx", None),
-    ("vocab.txt", "text", None),
-    ("config.json", "text", None),
+ALL_VARIANTS = ("float32", "float16", "bfloat16", "eight-bit-blocks")
+EXPORTED_DECODER = StepOutputOrigin("export", "decoder_joint-model.onnx")
+PUBLISHED_LAYOUT = [
+    (
+        "encoder-model.onnx",
+        "onnx",
+        ("float32",),
+        StepOutputOrigin("export", "encoder-model.onnx"),
+        None,
+    ),
+    (
+        "encoder-model.onnx.data",
+        "onnx-external-data",
+        ("float32",),
+        StepOutputOrigin("export", "encoder-model.onnx.data"),
+        "encoder-model.onnx",
+    ),
+    (
+        "encoder-model.fp16.onnx",
+        "onnx",
+        ("float16",),
+        StepOutputOrigin("convert", "encoder-model.fp16.onnx"),
+        None,
+    ),
+    (
+        "encoder-model.bf16.onnx",
+        "onnx",
+        ("bfloat16",),
+        StepOutputOrigin("convert", "encoder-model.bf16.onnx"),
+        None,
+    ),
+    (
+        "encoder-model.int8.onnx",
+        "onnx",
+        ("eight-bit-blocks",),
+        StepOutputOrigin("convert", "encoder-model.int8.onnx"),
+        None,
+    ),
+    ("decoder_joint-model.onnx", "onnx", ("float32",), EXPORTED_DECODER, None),
+    ("decoder_joint-model.fp16.onnx", "onnx", ("float16",), EXPORTED_DECODER, None),
+    ("decoder_joint-model.bf16.onnx", "onnx", ("bfloat16",), EXPORTED_DECODER, None),
+    ("decoder_joint-model.int8.onnx", "onnx", ("eight-bit-blocks",), EXPORTED_DECODER, None),
+    ("vocab.txt", "text", ALL_VARIANTS, StepOutputOrigin("export", "vocab.txt"), None),
+    (
+        "config.json",
+        "text",
+        ALL_VARIANTS,
+        HostContentOrigin(
+            b'{"model_type": "nemo-conformer-tdt", "features_size": 128, '
+            b'"subsampling_factor": 8, "max_tokens_per_step": 10}'
+        ),
+        None,
+    ),
 ]
+PUBLISHED_VOCABULARY_SHA256 = "d58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d"
 HOST_CPU_COUNT = 20
 
 
@@ -262,7 +339,9 @@ class TestTheParakeetTdtRecipe:
             ]
 
     class TestItsRuns:
-        def test_should_run_nemo_transformers_in_french_and_float32_on_both_devices(self) -> None:
+        def test_should_run_nemo_transformers_in_french_and_each_variant_on_its_devices(
+            self,
+        ) -> None:
             assert [
                 (
                     run.name,
@@ -277,11 +356,20 @@ class TestTheParakeetTdtRecipe:
             ] == RUNS
 
     class TestItsCandidate:
-        def test_should_hold_the_float32_files_of_onnx_asr(self) -> None:
+        def test_should_hold_the_published_layout_of_onnx_asr_file_by_file(self) -> None:
             assert [
-                (candidate_file.name, candidate_file.file_format, candidate_file.external_data_of)
+                (
+                    candidate_file.name,
+                    candidate_file.file_format,
+                    candidate_file.variants,
+                    candidate_file.origin,
+                    candidate_file.external_data_of,
+                )
                 for candidate_file in RECIPE.candidate
-            ] == FLOAT32_CANDIDATE
+            ] == PUBLISHED_LAYOUT
+
+        def test_should_accept_the_vocabulary_at_the_sha256_of_v3s_alone(self) -> None:
+            assert VOCABULARY_SHA256 == PUBLISHED_VOCABULARY_SHA256
 
         def test_should_convert_the_exported_encoder(self) -> None:
             assert RECIPE.conversion_input == StepOutputOrigin("export", "encoder-model.onnx")
@@ -305,11 +393,22 @@ class TestTheParakeetTdtRecipe:
             assert judged_recipe.build_order == (
                 "fleurs-check",
                 "export",
+                "convert",
                 "inspect",
                 "reference",
                 "transformers-reference",
                 "transcribe",
             )
+
+        def test_should_convert_the_exported_encoder_bound_beside_its_external_data(
+            self, judged_recipe: JudgedRecipe
+        ) -> None:
+            assert [
+                (earlier_output.step, earlier_output.output.name)
+                for row in judged_recipe.rows
+                if row.name == "convert"
+                for earlier_output in row.earlier_outputs
+            ] == [("export", "encoder-model.onnx"), ("export", "encoder-model.onnx.data")]
 
         def test_should_bind_each_pinned_file_of_the_transformers_row_by_itself_and_no_nemo(
             self, judged_recipe: JudgedRecipe

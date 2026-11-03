@@ -4,7 +4,7 @@ This document describes the build part by part: what each command does, and the 
 
 ## The core
 
-The core holds what every model family shares. Built: the work directory, the sources, the confined containers and their boundary with the host, the images and their lock, the check of the FLEURS bench, the recipe contract and its runs, the formats with their checks, the candidate and its inspection, and the parity reports, which the sections below describe. Planned: the conversions, the measures of the FLEURS bench and its acceptance.
+The core holds what every model family shares. Built: the work directory, the sources, the confined containers and their boundary with the host, the images and their lock, the check of the FLEURS bench, the recipe contract and its runs, the formats with their checks, the conversions of an ONNX graph, the candidate and its inspection, and the parity reports, which the sections below describe. Planned: the measures of the FLEURS bench and its acceptance.
 
 Every command runs as `./model-build.sh --work <dir> --recipe <name> <command>`, on the host's Python and its standard library, isolated from the environment and the site packages. `--recipe` names the model family to build, [Recipes](#recipes) lists them, and every command needs it but `lock`, which resolves the libraries of every recipe's images at once.
 
@@ -77,6 +77,7 @@ The core's rows:
 | `clean` | the image of the step it cleans | 256 | 32 | 1 | 16 | the core's own value: it only removes files |
 | `lock` | `uv` | 4 096 | 256 | 8 | 3 072 | limits that a resolution of every image's libraries stays well within, uv's cache in `/tmp` included |
 | `inspect` | `onnx-inspect` | 3 072 | 32 | 2 | 64 | the inspection of the graphs, without their weights, peaked at 2.4 GiB and 20 processes |
+| `convert` | `onnx-convert` | 13 312 | 64 | 4 | 256 | the conversions of the encoder, its weights loaded whole for each variant, peaked at 9.7 GiB and 41 processes |
 
 A run of a step:
 
@@ -101,6 +102,7 @@ Each image has a Containerfile, the core's in `images/<image>/` and a recipe's i
 | `bench` | The Python base and the core's sources: the FLEURS check runs on the standard library |
 | `uv` | The Python base, the uv binary of the pinned uv image, and the core's sources: the lock's resolution |
 | `onnx-inspect` | The extra `core-onnx-inspect`, onnx alone, and the core's sources: the inspection of the candidate's graphs, in an image that produced none of them |
+| `onnx-convert` | The extra `core-onnx-convert`, onnx, onnx-ir, onnxconverter-common, ml_dtypes, numpy and ONNX Runtime, and the core's sources: the conversions of a recipe's exported graph |
 
 An image of a recipe also copies the recipe's sources, at the repository's layout, and installs its libraries from its extra of the images' environment ([Recipes](#recipes) lists them).
 
@@ -143,7 +145,8 @@ A recipe gives the core plain data, `RECIPE` in its `recipe.py`, of the type `Re
 | `candidate` | The files of the candidate, each with its name, its format, the variants it serves, where it comes from, a declared output of a step or a content that the host writes, such as a small configuration file a runtime reads, and, for `onnx-external-data`, `external_data_of`, the `onnx` file whose tensors it holds, which serves the same variants |
 | `runs` | Its runs, each with its name, `[a-z0-9][a-z0-9-]{0,31}`, the step with a template that produces it, its device, which the template gives, the variant it reads, one the candidate serves, or `reference` for a run of a reference framework, its languages among the bench's, its count of shards, from 1 to 16, and its reader |
 | `conversion_input` | The step and the output that the conversions take as their input, an `onnx` file of the candidate, whose constant weights must then all be plain ([The candidate and its inspection](#the-candidate-and-its-inspection)) |
-| `build_order` | The steps that `build` runs, the core's `fleurs-check` and `inspect` and the recipe's, in their order |
+| `conversions` | The conversions of the input, each with the variant it makes, `[a-z0-9][a-z0-9-]{0,31}`, its conversion with its output file and its parameters ([The conversions](#the-conversions)), and the size bound of its output; each output is an `onnx` file of the candidate that serves its variant alone |
+| `build_order` | The steps that `build` runs, the core's `fleurs-check`, `convert` when the recipe converts, and `inspect`, and the recipe's, in their order |
 | `parities` | The parities of its exports against their reference framework, each with its name, `[a-z0-9][a-z0-9-]{0,63}`, the step and the declared output that holds its report, never `peaks.json`, and its tolerance on the maximum absolute difference, `absolute_difference_tolerance`, a finite number above 0 |
 
 A mount names either a pinned file of the core's or the recipe's sources, by its repository and its path, a declared output of an earlier step of the recipe, by the step and the file's name, or the candidate. No other directory is mounted, so that a step sees only the files its row names.
@@ -182,6 +185,25 @@ Every candidate file, whatever its format, is refused when its first 512 bytes c
 
 The checks of `onnx` and `text` and the signatures are those of mostt's model store, adapted, so that every published file passes the store that installs it.
 
+## The conversions
+
+`./model-build.sh --work <dir> --recipe <name> step convert` converts the recipe's conversions' input, `domain/onnx/`, in the `convert` row, which the core derives from the contract: in the `onnx-convert` image, it binds the input and its external data, each by itself, side by side at `/inputs/<step>/`, reads the request that the host writes, `conversion-request.json`, and writes one file per conversion, each a single ONNX file without external data, and its report, `conversion-report.json`. It converts one variant at a time, the input loaded whole each time. Three conversions are built:
+
+| Conversion | Method | Parameters a recipe gives |
+|---|---|---|
+| `float16` | onnxconverter-common's `convert_float_to_float16`, after a shape inference on the graph without its weights, with its own list of operators kept in float32, then the realignment of the `Cast` nodes | the operators it keeps in float32 beyond the core's; `keep_io_types`, true unless the recipe says otherwise |
+| `bfloat16` | the conversion to float16 with `Pad`, `Tile` and `Floor` kept in float32, then every float16 tensor, value and `Cast` retyped bfloat16 | the same |
+| `eight-bit-blocks` | ONNX Runtime's `MatMulNBitsQuantizer`, 8 bits, weight-only, on every matrix product of a constant weight | the size of its blocks, a power of two from 16 to 256; whether they are symmetric; ONNX Runtime's accuracy level, from 0 to 4; and the count of products it quantizes |
+
+The decisions hold for any ONNX graph on ONNX Runtime 1.31 and onnxconverter-common 1.16, so they are the core's, `domain/onnx/precision_decisions.py`:
+
+- **`Pad`, `Tile` and `Floor` stay in float32 in bfloat16,** since ONNX Runtime 1.31's CUDA provider has no bfloat16 kernel for them and refuses the whole graph when one is left in bfloat16; torch 2.15's export brings the `Floor`. A recipe adds an operator of its own family to the list, never removes one.
+- **The inputs and outputs stay in float32** with `keep_io_types`, as a runtime feeds them, the casts inside the graph.
+- **A `Cast` whose output the conversion declares float16 targets float16,** where onnxconverter-common leaves its target at float32, so that the graph's types agree.
+- **A float32 weight beyond float16's range is clamped,** under 1e-7 in magnitude to 1e-7 and above 1e4 to 1e4, onnxconverter-common's defaults, and each one is counted.
+
+The host reads the report through its strict parser, `domain/onnx/conversion_report.py`: for each conversion, in the order of the request, its kind and its output, its count of nodes, its count of products in 8-bit blocks, the operators it kept in float32, the counts of clamped initializers and values, and of `Cast` nodes realigned. It refuses a report that describes another conversion than the request asked, operators kept in float32 other than the core's and the recipe's, or a count of products in 8-bit blocks other than the recipe declares, 0 for a conversion to float16 or bfloat16. The inspection then judges each converted file again, from its graph ([The candidate and its inspection](#the-candidate-and-its-inspection)).
+
 ## The candidate and its inspection
 
 `./model-build.sh --work <dir> --recipe <name> step inspect` assembles the candidate, `runs/<recipe>/<commit>/candidate/`, and inspects it, `application/assemble_candidate.py`. The host copies each file the contract names from the declared output of its step, through the descriptor of the step's judged directory, into a new file of its own, in mode 0444, never a link, hashing it and checking its signatures and its format as it streams by; it writes the contents the recipe gives itself, such as `config.json`. Then the `inspect` row reads every `onnx` file of the candidate, bound read-only, without its weights, and writes its report, from a walk of every graph of the model, `domain/onnx/model_graphs.py`: its main graph, each subgraph at any depth, each function and each subgraph inside a function. For each file, the report gives its opsets, its local functions, the count of its nodes by scope, domain and operator, the count of nodes that hold `metadata_props`, the count of its training graphs, the count of its sparse initializers in every graph, each matrix product, `MatMul` or `Gemm`, with the trace of its weight back through the producers that hold only constants, `Constant`, `Identity`, `Transpose`, `Squeeze`, `Unsqueeze`, `Reshape` and `Cast`, to an initializer with its rank, a `Constant` node or a computed tensor, and the location, offset and length of every external tensor, wherever it lies: an initializer, a sparse initializer, a tensor attribute of a node, or a function's default attribute. A subgraph sees its own initializers and its ancestors', never a sibling's, and a function sees none, since ONNX gives it none of the graph that calls it. The host reads the report through its strict parser, `domain/onnx/inspection_report.py`, and judges each graph, `domain/onnx/graph_rules.py`:
@@ -191,14 +213,16 @@ The checks of `onnx` and `text` and the signatures are those of mostt's model st
 - the model holds no training graph, which no runtime of the candidate runs;
 - the model holds no sparse initializer, whose weights no rule of the products judges, since the quantization converts dense initializers alone and the exports hold none;
 - a tensor lies outside the graph's file only in the `onnx-external-data` file the contract gives it;
-- in the conversions' input, every product whose weight is a constant reads it as a plain 2-D initializer, read directly, the form that the quantization to 8-bit blocks converts, so that no product is left unquantized; any other file, such as the decoder and joint, keeps its products as they are, since the rules follow where a file comes from and not its name;
+- in the conversions' input, every product whose weight is a constant reads it as a plain 2-D initializer, read directly, the form that the quantization to 8-bit blocks converts, so that no product is left unquantized;
+- in the output of the conversion to 8-bit blocks, no `MatMul` or `Gemm` of a constant weight is left, and the count of `MatMulNBits` nodes of ONNX Runtime's domain is the count the recipe declares, so that a partial quantization, such as one that leaves the pointwise convolutions in float32, fails;
+- any other file, such as the decoder and joint, keeps its products as they are: the rules follow where a file comes from, never its name or its variant, since a recipe may publish one file under several names;
 - the opsets are recorded, not judged.
 
 `clean inspect` removes the inspection's outputs and the candidate. The assembly refuses to start while the outputs of an earlier inspection remain, since a candidate assembled beside them would be read against a report of other copies.
 
 ## The published layout
 
-The published files are the contract with mostt, which pins them by hash: their names, their formats and their structure. The two repositories share no code, and the names and the suffixes that this one refuses are those of mostt's model store, so that every published file passes it. The candidate of Parakeet TDT, laid out for onnx-asr (planned: the converted encoders and the copies of the decoder under their names, which the candidate holds once the conversions are built; it holds the files of `float32` now):
+The published files are the contract with mostt, which pins them by hash: their names, their formats and their structure. The two repositories share no code, and the names and the suffixes that this one refuses are those of mostt's model store, so that every published file passes it. The candidate of Parakeet TDT, laid out for onnx-asr:
 
 | File | Format |
 |---|---|
@@ -257,7 +281,16 @@ It binds Moondream's tokenizer and weights, the `.nemo`, and FLEURS fr's index a
 | `vocab.txt` | The vocabulary of Parakeet TDT 0.6B v3 |
 | `encoder-parity.json` | The parity of the encoder against NeMo's |
 
-The candidate of `float32`: `encoder-model.onnx`, its external data `encoder-model.onnx.data`, `decoder_joint-model.onnx` and `vocab.txt` from `export`, and `config.json`, which the host writes. The exported encoder is the conversions' input, whose 265 products of a constant weight the inspection holds to a plain 2-D initializer.
+**The variants.** One FP32 graph serves every variant: the exported encoder is the conversions' input, whose 265 products of a constant weight the inspection holds to a plain 2-D initializer, and the decoder and joint stays in float32 for every variant. `domain/variants/variants.py` declares them:
+
+| Variant | Encoder | Conversion | Devices |
+|---|---|---|---|
+| `float32` | `encoder-model.onnx`, with its external data `encoder-model.onnx.data` | none: it is the conversions' input | CPU, GPU |
+| `float16` | `encoder-model.fp16.onnx` | `float16`, nothing kept in float32 beyond onnxconverter-common's own list | GPU |
+| `bfloat16` | `encoder-model.bf16.onnx` | `bfloat16`, with the core's `Pad`, `Tile` and `Floor` kept in float32 | GPU |
+| `eight-bit-blocks` | `encoder-model.int8.onnx` | `eight-bit-blocks`, in blocks of 64 symmetric weights, at the accuracy level 4, every one of the 265 products quantized, the 48 pointwise convolutions included | GPU, CPU |
+
+float16 and bfloat16 serve the GPU, whose kernels compute in them, where ONNX Runtime on the CPU would convert them back to float32 around most nodes. Each converted encoder is a single file, of 1.24 GB in float16 and bfloat16 and 692 MB in 8-bit blocks, under the 2 GiB a protobuf may hold. The candidate holds, for each variant, its encoder, the decoder and joint of `export` copied under the variant's name, and `vocab.txt` from `export` and `config.json`, which the host writes, shared by every variant ([The published layout](#the-published-layout)).
 
 **`reference`** is NeMo's own transcription of FLEURS fr and en, the reference that the export's transcripts are compared with, so that they check the export, the patch of the pointwise convolutions and the mapping of the weights together: the model built as for `export`, unpatched, on the CPU in float32, so that no TF32 enters, called directly, without `transcribe()` and its data loader: the preprocessor, the encoder, then NeMo's greedy decoding of TDT with at most 10 symbols per frame, as onnx-asr's `max_tokens_per_step`. Its one shard writes each utterance's token ids in `lines.jsonl`, and, for the check against Transformers, the features, the encoder's outputs and the joint's logits on the first 5 greedy steps of the first 5 utterances of FLEURS fr, in `reference.safetensors`, with the frames and the tokens emitted before each step in `reference.json`.
 
@@ -277,6 +310,10 @@ The step refuses a dump whose tensors are not exactly those its steps name. `rec
 | `transformers` | `transformers-reference` | CPU, 8 threads | `reference` | 1 | fr |
 | `float32-cpu` | `transcribe` | CPU, 2 threads each | `float32` | 4 | fr, en |
 | `float32-gpu` | `transcribe` | GPU, 8 threads | `float32` | 1 | fr, en |
+| `float16-gpu` | `transcribe` | GPU, 8 threads | `float16` | 1 | fr, en |
+| `bfloat16-gpu` | `transcribe` | GPU, 8 threads | `bfloat16` | 1 | fr, en |
+| `eight-bit-blocks-gpu` | `transcribe` | GPU, 8 threads | `eight-bit-blocks` | 1 | fr, en |
+| `eight-bit-blocks-cpu` | `transcribe` | CPU, 2 threads each | `eight-bit-blocks` | 4 | fr, en |
 
 | Row | Image | Memory MiB | Processes | CPUs | `/tmp` MiB | `/scratch` MiB | Reason of the limits |
 |---|---|---|---|---|---|---|---|
@@ -287,4 +324,4 @@ The step refuses a dump whose tensors are not exactly those its steps name. `rec
 
 **The readers.** Every reader renders the text from the token ids, so that NeMo's ` ⁇ `, onnx-asr's `<unk>` and Transformers' id 0 never differ: `domain/transcripts/run_readers.py` reads the ids of NeMo and of Transformers, and maps onnx-asr's pieces back to ids through the candidate's `vocab.txt`, with `▁` written as a space; `domain/transcripts/token_rendering.py` joins the pieces, writes `▁` as a space and `<unk>` as itself, and counts `<unk>` from the ids, refusing the blank and an id beyond the vocabulary. `domain/transcripts/vocabulary.py` accepts `vocab.txt` only at the SHA-256 of v3's vocabulary, with `<unk>` first, `<blk>` last, its indexes in order, no piece twice and no raw space in a piece, so that the mapping of pieces back to ids is one to one.
 
-The conversions and the acceptance of each run and parity come with the rest of the build (planned).
+The acceptance of each run and parity comes with the rest of the build (planned).

@@ -26,6 +26,11 @@ from mostt_model_builder.application.clean_run import (
     clean_step,
     remove_candidate,
 )
+from mostt_model_builder.application.convert_variants import (
+    ConversionOutcome,
+    ConversionRun,
+    convert_variants,
+)
 from mostt_model_builder.application.fetch_sources import (
     DownloadError,
     FetchError,
@@ -62,6 +67,7 @@ from mostt_model_builder.domain.containers.container_files import ContainerFileE
 from mostt_model_builder.domain.containers.container_steps import (
     CLEAN_STEP_NAME,
     CONTAINER_USER_ID,
+    CONVERT_STEP_NAME,
     CORE_IMAGES,
     FLEURS_CHECK_STEP_NAME,
     INSPECT_STEP_NAME,
@@ -85,6 +91,7 @@ from mostt_model_builder.domain.contract.recipe_contract import (
     RecipeContract,
     RecipeContractError,
     RecipeFacts,
+    build_conversion_request,
     find_runnable_row,
     judge_recipe,
     list_entry_modules,
@@ -99,7 +106,13 @@ from mostt_model_builder.domain.lock.lock_check import (
     LockError,
 )
 from mostt_model_builder.domain.lock.lock_freshness import LockFreshnessError
-from mostt_model_builder.domain.onnx.graph_rules import GraphRuleError, count_products
+from mostt_model_builder.domain.onnx.conversion_report import ConversionReportError
+from mostt_model_builder.domain.onnx.conversion_request import ConversionRequestError
+from mostt_model_builder.domain.onnx.graph_rules import (
+    GraphRuleError,
+    count_eight_bit_block_products,
+    count_products,
+)
 from mostt_model_builder.domain.onnx.inspection_report import InspectionReportError
 from mostt_model_builder.domain.onnx.node_placement import NodePlacementError, PlacementSummary
 from mostt_model_builder.domain.sources.source_pins import (
@@ -128,6 +141,7 @@ CUDA_PROVIDER = "CUDAExecutionProvider"
 RECIPES = {contract.name: contract for contract in (PARAKEET_TDT_RECIPE,)}
 STEP_NAMES = sorted(
     {row.name for row in RUNNABLE_CORE_ROWS}
+    | {CONVERT_STEP_NAME}
     | {step.name for contract in RECIPES.values() for step in contract.steps}
 )
 TEXT_ENCODING = "utf-8"
@@ -164,6 +178,8 @@ COMMAND_ERRORS = (
     ExternalDataError,
     NodePlacementError,
     HypothesisError,
+    ConversionRequestError,
+    ConversionReportError,
     ValueError,
     OSError,
 )
@@ -499,6 +515,7 @@ def build_candidate_request(recipe: JudgedRecipe, context: BuildContext) -> Cand
         candidate=recipe.candidate,
         rows=recipe.rows,
         conversion_input=recipe.conversion_input,
+        conversions=recipe.conversions,
     )
 
 
@@ -517,11 +534,47 @@ def inspect_candidate(recipe: JudgedRecipe, context: BuildContext, files: WorkFi
         print(
             f"inspected {inspection.name}: {sum(node.count for node in inspection.nodes)} nodes, "
             f"{counts.constant_weight_count} products of a constant weight, "
-            f"{counts.plain_count} of them plain, {len(inspection.external_tensors)} external "
-            "tensors",
+            f"{counts.plain_count} of them plain, "
+            f"{count_eight_bit_block_products(inspection)} in 8-bit blocks, "
+            f"{len(inspection.external_tensors)} external tensors",
             flush=True,
         )
     print(describe_peaks(assembled.peaks), flush=True)
+
+
+def convert(recipe: JudgedRecipe, context: BuildContext, files: WorkFiles) -> None:
+    row = find_runnable_row(recipe, CONVERT_STEP_NAME)
+    outcome = convert_variants(
+        ConversionRun(
+            row=row,
+            request=build_conversion_request(recipe),
+            recipe_name=recipe.name,
+            commit=context.commit,
+            work_root=context.work_root,
+            head_tree=context.head_tree,
+            host=context.host,
+        ),
+        DockerEngine(PurePosixPath(CLONE_ROOT)),
+        files,
+    )
+    describe_conversion(row, outcome)
+
+
+def describe_conversion(row: StepRow, outcome: ConversionOutcome) -> None:
+    print(f"{row.name}:", flush=True)
+    for converted in outcome.report.files:
+        print(
+            f"  wrote {converted.output}, {outcome.outputs.sizes_bytes[converted.output]} bytes, "
+            f"{converted.kind.value}: {converted.node_count} nodes, "
+            f"{converted.quantized_product_count} products in 8-bit blocks, "
+            f"{', '.join(converted.kept_float32_operators) or 'no operator'} kept in float32, "
+            f"{converted.below_min_positive_count} values raised to the minimum and "
+            f"{converted.above_max_finite_count} lowered to the maximum in "
+            f"{converted.clamped_initializer_count} initializers, "
+            f"{converted.realigned_cast_count} Cast nodes realigned",
+            flush=True,
+        )
+    print(f"  {describe_peaks(outcome.outputs.peaks)}", flush=True)
 
 
 def run_named_step(
@@ -533,6 +586,9 @@ def run_named_step(
     context = read_build_context(work_directory)
     if step_name == INSPECT_STEP_NAME:
         inspect_candidate(recipe, context, files)
+        return
+    if step_name == CONVERT_STEP_NAME:
+        convert(recipe, context, files)
         return
     runs = [run for run in recipe.runs if run.step == step_name]
     if not runs:
