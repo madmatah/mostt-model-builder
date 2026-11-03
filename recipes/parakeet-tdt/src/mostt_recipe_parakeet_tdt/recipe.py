@@ -16,6 +16,7 @@ from mostt_model_builder.domain.contract.recipe_contract import (
     REFERENCE_VARIANT,
     CandidateFile,
     DeviceTemplate,
+    EarlierOutputMount,
     HostContentOrigin,
     Parity,
     RecipeContract,
@@ -32,8 +33,8 @@ from mostt_model_builder.domain.onnx.node_placement import (
 )
 from mostt_recipe_parakeet_tdt.domain.export.tensor_fixtures import NAME_LIST_MAX_SIZE_BYTES
 from mostt_recipe_parakeet_tdt.domain.transcripts.run_readers import (
-    read_nemo_lines,
     read_onnx_asr_lines,
+    read_token_id_lines,
 )
 from mostt_recipe_parakeet_tdt.domain.variants.candidate_layout import (
     CONFIGURATION_FILE_NAME,
@@ -50,9 +51,13 @@ ULTRA_TOKENIZER = "tokenizer.json"
 ULTRA_WEIGHTS = "model.safetensors"
 NEMO_REPOSITORY = "nvidia/parakeet-tdt-0.6b-v3"
 NEMO_ARCHIVE = "parakeet-tdt-0.6b-v3.nemo"
+PROCESSOR_CONFIGURATION = "processor_config.json"
+TOKENIZER_CONFIGURATION = "tokenizer_config.json"
+GENERATION_CONFIGURATION = "generation_config.json"
 EXPORT_IMAGE_NAME = "export"
 TRANSCRIBE_CPU_IMAGE_NAME = "transcribe-cpu"
 TRANSCRIBE_GPU_IMAGE_NAME = "transcribe-gpu"
+TRANSFORMERS_IMAGE_NAME = "transformers-reference"
 DESCRIBE_STEP_NAME = "describe"
 ULTRA_TENSORS_FILE_NAME = "moondream-tensors"
 NEMO_STATE_DICT_FILE_NAME = "nemo-state-dict"
@@ -69,6 +74,12 @@ NEMO_RUN_NAME = "nemo"
 ENCODER_PARITY_FILE_NAME = "encoder-parity.json"
 ENCODER_PARITY_NAME = "encoder-onnx-against-nemo"
 PARITY_LANGUAGE = "fr_fr"
+TRANSFORMERS_STEP_NAME = "transformers-reference"
+TRANSFORMERS_RUN_NAME = "transformers"
+TRANSFORMERS_ENCODER_PARITY_FILE_NAME = "transformers-encoder-parity.json"
+TRANSFORMERS_ENCODER_PARITY_NAME = "encoder-transformers-against-nemo"
+TRANSFORMERS_JOINT_PARITY_FILE_NAME = "transformers-joint-parity.json"
+TRANSFORMERS_JOINT_PARITY_NAME = "joint-transformers-against-nemo"
 
 EXPORT_IMAGE = RecipeImage(
     name=EXPORT_IMAGE_NAME,
@@ -86,12 +97,26 @@ TRANSCRIBE_GPU_IMAGE = RecipeImage(
     device=Device.GPU,
     extra=f"{RECIPE_NAME}-{TRANSCRIBE_GPU_IMAGE_NAME}",
 )
+TRANSFORMERS_IMAGE = RecipeImage(
+    name=TRANSFORMERS_IMAGE_NAME,
+    device=Device.CPU,
+    extra=f"{RECIPE_NAME}-{TRANSFORMERS_IMAGE_NAME}",
+)
 ULTRA_WEIGHTS_MOUNT = SourceMount(ULTRA_REPOSITORY, ULTRA_WEIGHTS)
 ULTRA_TOKENIZER_AND_WEIGHTS_MOUNTS = (
     SourceMount(ULTRA_REPOSITORY, ULTRA_TOKENIZER),
     ULTRA_WEIGHTS_MOUNT,
 )
+ULTRA_MOUNTS = (
+    SourceMount(ULTRA_REPOSITORY, ULTRA_CONFIGURATION),
+    *ULTRA_TOKENIZER_AND_WEIGHTS_MOUNTS,
+)
 NEMO_ARCHIVE_MOUNT = SourceMount(NEMO_REPOSITORY, NEMO_ARCHIVE)
+PROCESSOR_MOUNTS = (
+    SourceMount(NEMO_REPOSITORY, PROCESSOR_CONFIGURATION),
+    SourceMount(NEMO_REPOSITORY, TOKENIZER_CONFIGURATION),
+    SourceMount(NEMO_REPOSITORY, GENERATION_CONFIGURATION),
+)
 PARITY_BENCH_MOUNTS = tuple(
     SourceMount(FLEURS_REPOSITORY, path) for path in locate_bench_files(PARITY_LANGUAGE)
 )
@@ -177,6 +202,54 @@ REFERENCE_STEP = RecipeStep(
         ),
     ),
 )
+# Transformers' check peaked at 5.4 GiB and 79 processes.
+TRANSFORMERS_LIMITS = StepLimits(
+    memory_mib=7168, process_count=128, cpu_count=8, temporary_directory_mib=512
+)
+# Transformers reads Moondream's files as they are published, so that a weight that the mapping
+# onto NeMo's names misplaced shows as a difference against NeMo's reference.
+TRANSFORMERS_STEP = RecipeStep(
+    name=TRANSFORMERS_STEP_NAME,
+    image=None,
+    entry_module="mostt_recipe_parakeet_tdt.steps.transformers_reference",
+    mounts=(
+        *ULTRA_MOUNTS,
+        *PROCESSOR_MOUNTS,
+        *PARITY_BENCH_MOUNTS,
+        EarlierOutputMount(REFERENCE_STEP_NAME, REFERENCE_TENSORS_FILE_NAME),
+        EarlierOutputMount(REFERENCE_STEP_NAME, REFERENCE_STEPS_FILE_NAME),
+    ),
+    outputs=(
+        DeclaredOutput(TRANSFORMERS_ENCODER_PARITY_FILE_NAME, PARITY_REPORT_MAX_SIZE_BYTES),
+        DeclaredOutput(TRANSFORMERS_JOINT_PARITY_FILE_NAME, PARITY_REPORT_MAX_SIZE_BYTES),
+        PEAKS_OUTPUT,
+    ),
+    limits=None,
+    devices=(
+        DeviceTemplate(
+            device=Device.CPU,
+            image=TRANSFORMERS_IMAGE_NAME,
+            limits=TRANSFORMERS_LIMITS,
+            outputs=(RUN_LINES_OUTPUT,),
+        ),
+    ),
+)
+# The trial build measured 1.34e-6 between Transformers' encoder and NeMo's on the same features,
+# over 5 utterances, and 5.3e-5 between their joints over 25 steps once each head, the tokens and
+# the durations, is log-softmaxed on its own, since NeMo log-softmaxes the two together: each
+# tolerance is about ten times that.
+TRANSFORMERS_ENCODER_PARITY = Parity(
+    name=TRANSFORMERS_ENCODER_PARITY_NAME,
+    step=TRANSFORMERS_STEP_NAME,
+    output=TRANSFORMERS_ENCODER_PARITY_FILE_NAME,
+    absolute_difference_tolerance=1.5e-5,
+)
+TRANSFORMERS_JOINT_PARITY = Parity(
+    name=TRANSFORMERS_JOINT_PARITY_NAME,
+    step=TRANSFORMERS_STEP_NAME,
+    output=TRANSFORMERS_JOINT_PARITY_FILE_NAME,
+    absolute_difference_tolerance=5.3e-4,
+)
 # A transcription runs one process of 8 threads on the GPU, which peaked at 3.4 GiB and 99
 # processes, and on the CPU four of 2 threads, each in its own container, which peaked at 3.4 GiB
 # and 33 processes each.
@@ -248,7 +321,16 @@ RUNS = (
         variant=REFERENCE_VARIANT,
         languages=BENCH_LANGUAGES,
         shard_count=1,
-        reader=read_nemo_lines,
+        reader=read_token_id_lines,
+    ),
+    Run(
+        name=TRANSFORMERS_RUN_NAME,
+        step=TRANSFORMERS_STEP_NAME,
+        device=Device.CPU,
+        variant=REFERENCE_VARIANT,
+        languages=(PARITY_LANGUAGE,),
+        shard_count=1,
+        reader=read_token_id_lines,
     ),
     Run(
         name="float32-cpu",
@@ -271,10 +353,10 @@ RUNS = (
 )
 RECIPE = RecipeContract(
     name=RECIPE_NAME,
-    images=(EXPORT_IMAGE, TRANSCRIBE_CPU_IMAGE, TRANSCRIBE_GPU_IMAGE),
-    steps=(DESCRIBE_STEP, EXPORT_STEP, REFERENCE_STEP, TRANSCRIBE_STEP),
+    images=(EXPORT_IMAGE, TRANSFORMERS_IMAGE, TRANSCRIBE_CPU_IMAGE, TRANSCRIBE_GPU_IMAGE),
+    steps=(DESCRIBE_STEP, EXPORT_STEP, REFERENCE_STEP, TRANSFORMERS_STEP, TRANSCRIBE_STEP),
     candidate=CANDIDATE,
-    parities=(ENCODER_PARITY,),
+    parities=(ENCODER_PARITY, TRANSFORMERS_ENCODER_PARITY, TRANSFORMERS_JOINT_PARITY),
     runs=RUNS,
     conversion_input=ENCODER_ORIGIN,
     build_order=(
@@ -282,6 +364,7 @@ RECIPE = RecipeContract(
         EXPORT_STEP_NAME,
         "inspect",
         REFERENCE_STEP_NAME,
+        TRANSFORMERS_STEP_NAME,
         TRANSCRIBE_STEP_NAME,
     ),
 )

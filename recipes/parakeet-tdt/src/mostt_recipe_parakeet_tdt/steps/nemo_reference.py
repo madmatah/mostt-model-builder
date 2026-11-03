@@ -18,6 +18,15 @@ from mostt_model_builder.domain.contract.derived_rows import (
 )
 from mostt_model_builder.steps.bound_sources import find_bound_source
 from mostt_model_builder.steps.output_modes import finish_outputs
+from mostt_recipe_parakeet_tdt.domain.export.reference_dump import (
+    DumpedUtterance,
+    JointStep,
+    ReferenceSteps,
+    name_encoder_outputs,
+    name_features,
+    name_joint_logits,
+    render_reference_steps,
+)
 from mostt_recipe_parakeet_tdt.recipe import (
     NEMO_ARCHIVE,
     NEMO_REPOSITORY,
@@ -107,7 +116,7 @@ class ReferenceDump:
     def __init__(self, durations: list[int]) -> None:
         self.durations = durations
         self.tensors: dict[str, TorchTensor] = {}
-        self.utterances: list[dict[str, object]] = []
+        self.utterances: list[DumpedUtterance] = []
 
     def is_full(self) -> bool:
         return len(self.utterances) >= DUMPED_UTTERANCE_COUNT
@@ -121,29 +130,29 @@ class ReferenceDump:
         lengths: tuple[int, int],
     ) -> None:
         position = len(self.utterances)
-        self.tensors[f"features_{position}"] = features[0].contiguous()
-        self.tensors[f"encoded_{position}"] = encoded[0].contiguous()
+        self.tensors[name_features(position)] = features[0].contiguous()
+        self.tensors[name_encoder_outputs(position)] = encoded[0].contiguous()
         steps = trace_joint_steps(model, encoded, self.durations)
         for step_position, (_, _, logits) in enumerate(steps):
-            self.tensors[f"logits_{position}_{step_position}"] = logits.contiguous()
+            self.tensors[name_joint_logits(position, step_position)] = logits.contiguous()
         self.utterances.append(
-            {
-                "utterance_id": recording.utterance_id,
-                "feature_frames": lengths[0],
-                "encoded_frames": lengths[1],
-                "steps": [{"frame": frame, "prefix": prefix} for frame, prefix, _ in steps],
-            }
+            DumpedUtterance(
+                utterance_id=recording.utterance_id,
+                feature_frames=lengths[0],
+                encoded_frames=lengths[1],
+                steps=tuple(JointStep(frame, tuple(prefix)) for frame, prefix, _ in steps),
+            )
         )
 
     def write(self, model: NemoModel, output_directory: Path) -> None:
         save_file(self.tensors, str(output_directory / REFERENCE_TENSORS_FILE_NAME))
-        document = {
-            "utterances": self.utterances,
-            "durations": self.durations,
-            "blank_id": int(model.decoder.blank_idx),
-        }
-        (output_directory / REFERENCE_STEPS_FILE_NAME).write_text(
-            json.dumps(document, indent=1), encoding="ascii"
+        reference_steps = ReferenceSteps(
+            utterances=tuple(self.utterances),
+            durations=tuple(self.durations),
+            blank_id=int(model.decoder.blank_idx),
+        )
+        (output_directory / REFERENCE_STEPS_FILE_NAME).write_bytes(
+            render_reference_steps(reference_steps)
         )
 
 

@@ -27,6 +27,13 @@ parakeet-tdt-transcribe-gpu = [
     "onnx-asr==0.12.0",
     "onnxruntime-gpu[cuda,cudnn]==1.31.0",
 ]
+parakeet-tdt-transformers-reference = [
+    "librosa==1.0.0",
+    "numpy==2.5.4",
+    "safetensors==0.8.0",
+    "torch==2.15.0",
+    "transformers==5.22.1",
+]
 
 # A package published as an sdist alone, which uv refuses under no-build = true even with its
 # dependency metadata declared, is built in a build stage of its image, without network.

@@ -9,10 +9,10 @@ import pytest
 from mostt_model_builder.domain.bench.hypotheses import Hypothesis, HypothesisError, RunReader
 from mostt_recipe_parakeet_tdt.domain.transcripts.run_readers import (
     RunLineError,
-    read_nemo_lines,
-    read_nemo_lines_with,
     read_onnx_asr_lines,
     read_onnx_asr_lines_with,
+    read_token_id_lines,
+    read_token_id_lines_with,
 )
 from mostt_recipe_parakeet_tdt.domain.transcripts.vocabulary import (
     VOCABULARY_SHA256,
@@ -36,7 +36,7 @@ def render_lines(*records: Mapping[str, object]) -> bytes:
     return b"".join(json.dumps(record).encode() + b"\n" for record in records)
 
 
-def build_nemo_record(
+def build_token_id_record(
     token_ids: Sequence[object] = (1, 2), **overrides: object
 ) -> dict[str, object]:
     return {
@@ -64,9 +64,9 @@ def drop_key(record: Mapping[str, object], key: str) -> dict[str, object]:
     return {name: entry for name, entry in record.items() if name != key}
 
 
-NEMO_LINES = render_lines(
-    build_nemo_record((1, 2, 3, 4), decoding_time_ms=FRENCH_DECODING_TIME_MS),
-    build_nemo_record(
+TOKEN_ID_LINES = render_lines(
+    build_token_id_record((1, 2, 3, 4), decoding_time_ms=FRENCH_DECODING_TIME_MS),
+    build_token_id_record(
         (1, 0, 2),
         language="en_us",
         utterance_id="2.wav",
@@ -84,74 +84,76 @@ ONNX_ASR_LINES = render_lines(
         decoding_time_ms=ENGLISH_DECODING_TIME_MS,
     ),
 )
-REFUSED_NEMO_LINES: dict[str, tuple[bytes, type[ValueError], str]] = {
+REFUSED_TOKEN_ID_LINES: dict[str, tuple[bytes, type[ValueError], str]] = {
     "a missing key": (
-        render_lines(build_nemo_record(), drop_key(build_nemo_record(), "decoding_time_ms")),
+        render_lines(
+            build_token_id_record(), drop_key(build_token_id_record(), "decoding_time_ms")
+        ),
         RunLineError,
         "line 2 lacks decoding_time_ms",
     ),
     "the key of the other reader": (
-        render_lines(drop_key(build_nemo_record(), "token_ids") | {"pieces": [" the"]}),
+        render_lines(drop_key(build_token_id_record(), "token_ids") | {"pieces": [" the"]}),
         RunLineError,
         "line 1 lacks token_ids",
     ),
     "an extra key": (
-        render_lines(build_nemo_record(text="the cat")),
+        render_lines(build_token_id_record(text="the cat")),
         RunLineError,
         "line 1 holds the unexpected 'text'",
     ),
     "a language that is not a string": (
-        render_lines(build_nemo_record(language=1)),
+        render_lines(build_token_id_record(language=1)),
         RunLineError,
         "line 1: language is 1, not a string",
     ),
     "an utterance id that is not a string": (
-        render_lines(build_nemo_record(utterance_id=1)),
+        render_lines(build_token_id_record(utterance_id=1)),
         RunLineError,
         "line 1: utterance_id is 1, not a string",
     ),
     "a decoding time that is a boolean": (
-        render_lines(build_nemo_record(decoding_time_ms=True)),
+        render_lines(build_token_id_record(decoding_time_ms=True)),
         RunLineError,
         "line 1: decoding_time_ms is True, not a number",
     ),
     "a decoding time that is a string": (
-        render_lines(build_nemo_record(decoding_time_ms="1.5")),
+        render_lines(build_token_id_record(decoding_time_ms="1.5")),
         RunLineError,
         "line 1: decoding_time_ms is '1.5', not a number",
     ),
     "token ids that are not a list": (
-        render_lines(build_nemo_record() | {"token_ids": "1 2"}),
+        render_lines(build_token_id_record() | {"token_ids": "1 2"}),
         RunLineError,
         "line 1: token_ids is '1 2', not a list",
     ),
     "a token id that is a boolean": (
-        render_lines(build_nemo_record((1, True))),
+        render_lines(build_token_id_record((1, True))),
         RunLineError,
         "line 1: token_ids holds True, not an integer",
     ),
     "a token id that is a float": (
-        render_lines(build_nemo_record((1, 2.0))),
+        render_lines(build_token_id_record((1, 2.0))),
         RunLineError,
         "line 1: token_ids holds 2.0, not an integer",
     ),
     "a token id that is a string": (
-        render_lines(build_nemo_record((1, "2"))),
+        render_lines(build_token_id_record((1, "2"))),
         RunLineError,
         "line 1: token_ids holds '2', not an integer",
     ),
     "more token ids than the bound": (
-        render_lines(build_nemo_record((1,) * (MAX_TOKEN_COUNT + 1))),
+        render_lines(build_token_id_record((1,) * (MAX_TOKEN_COUNT + 1))),
         RunLineError,
         f"line 1: token_ids holds {MAX_TOKEN_COUNT + 1} tokens, more than {MAX_TOKEN_COUNT}",
     ),
     "a token id beyond the vocabulary": (
-        render_lines(build_nemo_record(), build_nemo_record((1, 6), utterance_id="2.wav")),
+        render_lines(build_token_id_record(), build_token_id_record((1, 6), utterance_id="2.wav")),
         RunLineError,
         "line 2: the token id 6 is outside the vocabulary",
     ),
     "the blank's id": (
-        render_lines(build_nemo_record((1, 5))),
+        render_lines(build_token_id_record((1, 5))),
         RunLineError,
         "line 1: the token id 5 is the blank",
     ),
@@ -161,12 +163,12 @@ REFUSED_NEMO_LINES: dict[str, tuple[bytes, type[ValueError], str]] = {
         "line 1 is not a JSON object",
     ),
     "two lines for one utterance": (
-        render_lines(build_nemo_record(), build_nemo_record()),
+        render_lines(build_token_id_record(), build_token_id_record()),
         HypothesisError,
         "the utterance 1.wav of fr_fr has two hypotheses",
     ),
     "a language outside the bench": (
-        render_lines(build_nemo_record(language="de_de")),
+        render_lines(build_token_id_record(language="de_de")),
         HypothesisError,
         "is in 'de_de', not a language of its run",
     ),
@@ -223,11 +225,13 @@ REFUSED_ONNX_ASR_LINES: dict[str, tuple[bytes, type[ValueError], str]] = {
 
 
 class TestTheRunReaders:
-    class TestTheReadNemoLinesWithFunction:
+    class TestTheReadTokenIdLinesWithFunction:
         class TestWhenEachLineHoldsTheTokenIdsOfAnUtterance:
             @pytest.fixture
             def hypotheses(self) -> tuple[Hypothesis, ...]:
-                return read_nemo_lines_with(NEMO_LINES, CANDIDATE_TEXTS, VOCABULARY_CONTENT_SHA256)
+                return read_token_id_lines_with(
+                    TOKEN_ID_LINES, CANDIDATE_TEXTS, VOCABULARY_CONTENT_SHA256
+                )
 
             def test_should_render_each_text_and_count_its_unknown_tokens_from_the_ids(
                 self, hypotheses: tuple[Hypothesis, ...]
@@ -238,8 +242,8 @@ class TestTheRunReaders:
             @pytest.fixture
             def read_act(self) -> Callable[[], tuple[Hypothesis, ...]]:
                 return partial(
-                    read_nemo_lines_with,
-                    NEMO_LINES,
+                    read_token_id_lines_with,
+                    TOKEN_ID_LINES,
                     {"config.json": b"{}"},
                     VOCABULARY_CONTENT_SHA256,
                 )
@@ -254,14 +258,14 @@ class TestTheRunReaders:
 
         @pytest.mark.parametrize(
             ("lines", "error", "reason"),
-            list(REFUSED_NEMO_LINES.values()),
-            ids=list(REFUSED_NEMO_LINES.keys()),
+            list(REFUSED_TOKEN_ID_LINES.values()),
+            ids=list(REFUSED_TOKEN_ID_LINES.keys()),
         )
         class TestWhenALineIsMalformed:
             @pytest.fixture
             def read_act(self, lines: bytes) -> Callable[[], tuple[Hypothesis, ...]]:
                 return partial(
-                    read_nemo_lines_with, lines, CANDIDATE_TEXTS, VOCABULARY_CONTENT_SHA256
+                    read_token_id_lines_with, lines, CANDIDATE_TEXTS, VOCABULARY_CONTENT_SHA256
                 )
 
             def test_should_refuse_it_and_say_why(
@@ -327,8 +331,8 @@ class TestTheRunReaders:
 
     @pytest.mark.parametrize(
         ("read_lines", "lines"),
-        [(read_nemo_lines, NEMO_LINES), (read_onnx_asr_lines, ONNX_ASR_LINES)],
-        ids=["read_nemo_lines", "read_onnx_asr_lines"],
+        [(read_token_id_lines, TOKEN_ID_LINES), (read_onnx_asr_lines, ONNX_ASR_LINES)],
+        ids=["read_token_id_lines", "read_onnx_asr_lines"],
     )
     class TestThePublicReaders:
         class TestWhenTheVocabularyIsNotThePinnedOne:

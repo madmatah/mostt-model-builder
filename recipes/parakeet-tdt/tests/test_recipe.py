@@ -4,6 +4,7 @@ import pytest
 
 from mostt_model_builder.domain.contract.recipe_contract import (
     CANDIDATE_MOUNT,
+    EarlierOutputMount,
     JudgedRecipe,
     RecipeFacts,
     SourceMount,
@@ -13,8 +14,8 @@ from mostt_model_builder.domain.contract.recipe_contract import (
 from mostt_model_builder.domain.sources.source_pins import SourcePin, parse_source_pins
 from mostt_model_builder.host_main import CLONE_ROOT, find_present_entry_modules, read_pins
 from mostt_recipe_parakeet_tdt.domain.transcripts.run_readers import (
-    read_nemo_lines,
     read_onnx_asr_lines,
+    read_token_id_lines,
 )
 from mostt_recipe_parakeet_tdt.recipe import (
     DESCRIBE_STEP,
@@ -23,6 +24,7 @@ from mostt_recipe_parakeet_tdt.recipe import (
     RECIPE,
     REFERENCE_STEP,
     TRANSCRIBE_STEP,
+    TRANSFORMERS_STEP,
 )
 
 RECIPE_SOURCES_PATH = Path(__file__).resolve().parent.parent / "sources.toml"
@@ -36,6 +38,9 @@ PINNED_FILES = {
     (ULTRA_REPOSITORY, ULTRA_REVISION, "tokenizer.json"),
     (ULTRA_REPOSITORY, ULTRA_REVISION, "model.safetensors"),
     NEMO_ARCHIVE,
+    (NEMO_REPOSITORY, NEMO_REVISION, "processor_config.json"),
+    (NEMO_REPOSITORY, NEMO_REVISION, "tokenizer_config.json"),
+    (NEMO_REPOSITORY, NEMO_REVISION, "generation_config.json"),
 }
 FLEURS_REPOSITORY = "google/fleurs"
 EXPORTED_FILES = {
@@ -65,14 +70,60 @@ REFERENCE_FILES = {
     SourceMount(NEMO_REPOSITORY, "parakeet-tdt-0.6b-v3.nemo"),
     *BENCH_FILES,
 }
+TRANSFORMERS_FILES = {
+    SourceMount(ULTRA_REPOSITORY, "config.json"),
+    SourceMount(ULTRA_REPOSITORY, "tokenizer.json"),
+    SourceMount(ULTRA_REPOSITORY, "model.safetensors"),
+    SourceMount(NEMO_REPOSITORY, "processor_config.json"),
+    SourceMount(NEMO_REPOSITORY, "tokenizer_config.json"),
+    SourceMount(NEMO_REPOSITORY, "generation_config.json"),
+    SourceMount(FLEURS_REPOSITORY, "data/fr_fr/test.tsv"),
+    SourceMount(FLEURS_REPOSITORY, "data/fr_fr/audio/test.tar.gz"),
+    EarlierOutputMount("reference", "reference.safetensors"),
+    EarlierOutputMount("reference", "reference.json"),
+}
+TRANSFORMERS_OUTPUTS = [
+    "transformers-encoder-parity.json",
+    "transformers-joint-parity.json",
+    "peaks.json",
+]
+TRANSFORMERS_ROW_SOURCES = {
+    (ULTRA_REPOSITORY, "config.json"),
+    (ULTRA_REPOSITORY, "tokenizer.json"),
+    (ULTRA_REPOSITORY, "model.safetensors"),
+    (NEMO_REPOSITORY, "processor_config.json"),
+    (NEMO_REPOSITORY, "tokenizer_config.json"),
+    (NEMO_REPOSITORY, "generation_config.json"),
+    (FLEURS_REPOSITORY, "data/fr_fr/test.tsv"),
+    (FLEURS_REPOSITORY, "data/fr_fr/audio/test.tar.gz"),
+}
+TRANSFORMERS_ROW_INPUTS = {
+    ("reference", "reference.safetensors"),
+    ("reference", "reference.json"),
+}
+PARITIES = [
+    ("export", "encoder-parity.json", 5e-5),
+    ("transformers-reference", "transformers-encoder-parity.json", 1.5e-5),
+    ("transformers-reference", "transformers-joint-parity.json", 5.3e-4),
+]
 BOTH_LANGUAGES = ("fr_fr", "en_us")
 RUNS = [
-    ("nemo", "reference", "cpu", "reference", BOTH_LANGUAGES, 1, read_nemo_lines),
+    ("nemo", "reference", "cpu", "reference", BOTH_LANGUAGES, 1, read_token_id_lines),
+    (
+        "transformers",
+        "transformers-reference",
+        "cpu",
+        "reference",
+        ("fr_fr",),
+        1,
+        read_token_id_lines,
+    ),
     ("float32-cpu", "transcribe", "cpu", "float32", BOTH_LANGUAGES, 4, read_onnx_asr_lines),
     ("float32-gpu", "transcribe", "gpu", "float32", BOTH_LANGUAGES, 1, read_onnx_asr_lines),
 ]
 DERIVED_ROW_NAMES = [
     "reference",
+    "transformers-reference",
     "transcribe-float32-cpu-0",
     "transcribe-float32-cpu-1",
     "transcribe-float32-cpu-2",
@@ -113,7 +164,7 @@ class TestTheParakeetTdtRecipe:
         def recipe_pins(self) -> tuple[SourcePin, ...]:
             return parse_source_pins(RECIPE_SOURCES_PATH.read_text(encoding="utf-8"))
 
-        def test_should_pin_moondreams_three_files_and_the_v3_nemo_at_their_revisions(
+        def test_should_pin_moondreams_three_files_and_v3s_nemo_and_processor_at_their_revisions(
             self, recipe_pins: tuple[SourcePin, ...]
         ) -> None:
             assert {(pin.repository, pin.revision, pin.path) for pin in recipe_pins} == (
@@ -161,13 +212,13 @@ class TestTheParakeetTdtRecipe:
             assert [output.name for output in EXPORT_STEP.outputs] == EXPORT_OUTPUTS
 
     class TestItsParities:
-        def test_should_hold_the_encoder_against_nemo_within_5e_5_from_the_exports_report(
+        def test_should_hold_the_onnx_encoder_and_transformers_encoder_and_joint_against_nemo(
             self,
         ) -> None:
             assert [
                 (parity.step, parity.output, parity.absolute_difference_tolerance)
                 for parity in RECIPE.parities
-            ] == [("export", "encoder-parity.json", 5e-5)]
+            ] == PARITIES
 
     class TestItsReferenceStep:
         def test_should_bind_moondreams_tokenizer_and_weights_the_nemo_and_both_benches_alone(
@@ -183,6 +234,23 @@ class TestTheParakeetTdtRecipe:
                 ("cpu", EXPORT_IMAGE_NAME)
             ]
 
+    class TestItsTransformersReferenceStep:
+        def test_should_bind_moondreams_files_v3s_processor_french_and_the_references_dump_alone(
+            self,
+        ) -> None:
+            assert set(TRANSFORMERS_STEP.mounts) == TRANSFORMERS_FILES
+
+        def test_should_bind_each_file_once(self) -> None:
+            assert len(TRANSFORMERS_STEP.mounts) == len(TRANSFORMERS_FILES)
+
+        def test_should_run_on_the_cpu_in_its_own_image(self) -> None:
+            assert [
+                (template.device, template.image) for template in TRANSFORMERS_STEP.devices
+            ] == [("cpu", "transformers-reference")]
+
+        def test_should_write_its_two_parities_and_its_peaks(self) -> None:
+            assert [output.name for output in TRANSFORMERS_STEP.outputs] == TRANSFORMERS_OUTPUTS
+
     class TestItsTranscribeStep:
         def test_should_bind_the_candidate_and_both_benches_alone(self) -> None:
             assert set(TRANSCRIBE_STEP.mounts) == {CANDIDATE_MOUNT, *BENCH_FILES}
@@ -194,7 +262,7 @@ class TestTheParakeetTdtRecipe:
             ]
 
     class TestItsRuns:
-        def test_should_run_nemo_and_float32_on_both_devices_in_both_languages(self) -> None:
+        def test_should_run_nemo_transformers_in_french_and_float32_on_both_devices(self) -> None:
             assert [
                 (
                     run.name,
@@ -239,5 +307,26 @@ class TestTheParakeetTdtRecipe:
                 "export",
                 "inspect",
                 "reference",
+                "transformers-reference",
                 "transcribe",
             )
+
+        def test_should_bind_each_pinned_file_of_the_transformers_row_by_itself_and_no_nemo(
+            self, judged_recipe: JudgedRecipe
+        ) -> None:
+            assert {
+                (source.repository, source.path)
+                for row in judged_recipe.rows
+                if row.name == "transformers-reference"
+                for source in row.sources
+            } == TRANSFORMERS_ROW_SOURCES
+
+        def test_should_bind_each_dumped_file_of_the_reference_to_the_transformers_row_by_itself(
+            self, judged_recipe: JudgedRecipe
+        ) -> None:
+            assert {
+                (earlier_output.step, earlier_output.output.name)
+                for row in judged_recipe.rows
+                if row.name == "transformers-reference"
+                for earlier_output in row.earlier_outputs
+            } == TRANSFORMERS_ROW_INPUTS

@@ -29,7 +29,7 @@ UTTERANCE_ID_KEY = "utterance_id"
 TOKEN_IDS_KEY = "token_ids"
 PIECES_KEY = "pieces"
 DECODING_TIME_KEY = "decoding_time_ms"
-NEMO_LINE_KEYS = frozenset({LANGUAGE_KEY, UTTERANCE_ID_KEY, TOKEN_IDS_KEY, DECODING_TIME_KEY})
+TOKEN_ID_LINE_KEYS = frozenset({LANGUAGE_KEY, UTTERANCE_ID_KEY, TOKEN_IDS_KEY, DECODING_TIME_KEY})
 ONNX_ASR_LINE_KEYS = frozenset({LANGUAGE_KEY, UTTERANCE_ID_KEY, PIECES_KEY, DECODING_TIME_KEY})
 
 type TokenIdReader = Callable[[RunLine, str], tuple[int, ...]]
@@ -39,8 +39,10 @@ class RunLineError(ValueError):
     pass
 
 
-def read_nemo_lines(lines: bytes, candidate_texts: Mapping[str, bytes]) -> tuple[Hypothesis, ...]:
-    return read_nemo_lines_with(lines, candidate_texts, VOCABULARY_SHA256)
+def read_token_id_lines(
+    lines: bytes, candidate_texts: Mapping[str, bytes]
+) -> tuple[Hypothesis, ...]:
+    return read_token_id_lines_with(lines, candidate_texts, VOCABULARY_SHA256)
 
 
 def read_onnx_asr_lines(
@@ -49,11 +51,11 @@ def read_onnx_asr_lines(
     return read_onnx_asr_lines_with(lines, candidate_texts, VOCABULARY_SHA256)
 
 
-def read_nemo_lines_with(
+def read_token_id_lines_with(
     lines: bytes, candidate_texts: Mapping[str, bytes], expected_sha256: str
 ) -> tuple[Hypothesis, ...]:
     vocabulary = read_vocabulary(candidate_texts, expected_sha256)
-    return read_run_lines(lines, vocabulary, NEMO_LINE_KEYS, read_nemo_token_ids)
+    return read_run_lines(lines, vocabulary, TOKEN_ID_LINE_KEYS, read_listed_token_ids)
 
 
 def read_onnx_asr_lines_with(
@@ -108,7 +110,7 @@ def read_hypothesis(
     return Hypothesis(language, utterance_id, text, unknown_token_count, decoding_time_ms)
 
 
-def read_nemo_token_ids(line: RunLine, where: str) -> tuple[int, ...]:
+def read_listed_token_ids(line: RunLine, where: str) -> tuple[int, ...]:
     entries = read_bounded_list(line, TOKEN_IDS_KEY, where)
     token_ids: list[int] = []
     for entry in entries:

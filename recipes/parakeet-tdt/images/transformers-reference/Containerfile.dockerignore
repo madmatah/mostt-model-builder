@@ -1,0 +1,7 @@
+*
+!images/pyproject.toml
+!images/uv.lock
+!src/mostt_model_builder
+!recipes/parakeet-tdt/src/mostt_recipe_parakeet_tdt
+**/__pycache__
+**/*.pyc
