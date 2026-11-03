@@ -10,7 +10,9 @@ BOOTSTRAP_PATH = (
 HOST_ENTRY_MODULE = "mostt_model_builder.host_main"
 USAGE_START = "usage: model-build.sh"
 UNKNOWN_COMMAND = "unknown-command"
+COMMANDS = ("fetch",)
 ARGUMENT_ERROR_EXIT_STATUS = 2
+COMMAND_FAILURE_EXIT_STATUS = 1
 COMMAND_LINE_TIMEOUT_S = 60
 
 
@@ -40,6 +42,13 @@ class TestTheHostMain:
             def test_should_succeed(self, help_run: subprocess.CompletedProcess[str]) -> None:
                 assert help_run.returncode == 0
 
+            @pytest.mark.parametrize("command", COMMANDS)
+            class TestWhenItListsTheCommands:
+                def test_should_name_each_one(
+                    self, help_run: subprocess.CompletedProcess[str], command: str
+                ) -> None:
+                    assert f"    {command} " in help_run.stdout
+
         class TestWhenGivenAnUnknownCommand:
             @pytest.fixture(scope="class")
             @classmethod
@@ -60,3 +69,26 @@ class TestTheHostMain:
                 self, unknown_command_run: subprocess.CompletedProcess[str]
             ) -> None:
                 assert unknown_command_run.returncode == ARGUMENT_ERROR_EXIT_STATUS
+
+        class TestWhenFetchIsGivenAWorkDirectoryThatDoesNotExist:
+            @pytest.fixture(scope="class")
+            @classmethod
+            def missing_work_directory(cls, tmp_path_factory: pytest.TempPathFactory) -> Path:
+                return tmp_path_factory.mktemp("parent").resolve() / "missing-work"
+
+            @pytest.fixture(scope="class")
+            @classmethod
+            def fetch_run(cls, missing_work_directory: Path) -> subprocess.CompletedProcess[str]:
+                return run_command_line(["--work", str(missing_work_directory), "fetch"])
+
+            def test_should_say_why_on_the_error_stream(
+                self,
+                fetch_run: subprocess.CompletedProcess[str],
+                missing_work_directory: Path,
+            ) -> None:
+                assert fetch_run.stderr == (
+                    f"model-build: the work directory {missing_work_directory} does not exist\n"
+                )
+
+            def test_should_fail(self, fetch_run: subprocess.CompletedProcess[str]) -> None:
+                assert fetch_run.returncode == COMMAND_FAILURE_EXIT_STATUS

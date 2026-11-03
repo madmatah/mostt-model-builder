@@ -1,6 +1,6 @@
 # mostt-model-builder — Foundations
 
-This document explains the design of mostt-model-builder and the reasons behind it: the stack, the architecture, the repository layout and the testing approach. The rules that follow from it live in `.claude/rules/`, indexed in `CLAUDE.md`, and the procedures in `.claude/skills/`.
+This document explains the design of mostt-model-builder and the reasons behind it: the stack, the architecture, the repository layout and the testing approach. `docs/model-build.md` describes the build part by part. The rules that follow from it live in `.claude/rules/`, indexed in `CLAUDE.md`, and the procedures in `.claude/skills/`.
 
 ## The project
 
@@ -12,9 +12,9 @@ These constraints drive the choices in this document:
 |---|---|
 | The code of the models, and their pickles, are untrusted | The libraries of the models and the files that run code when they load are loaded only in containers without network, privilege or any of the host's files but those a step names (planned). The host's side runs on the standard library, and treats what a container writes as hostile input. |
 | Nothing is installed on the host | The host's side runs on the host's Python 3.12; the development tools live in the project's own `.venv/`, and every library of a build in a container image (planned). uv builds no package on the host. |
-| The outputs are reproducible and verified before publication | Sources are pinned by revision, size and hash, images by digest and packages by hash (planned); an export is compared with its reference framework and measured on FLEURS before it becomes a candidate (planned). |
+| The outputs are reproducible and verified before publication | Sources are pinned by revision, size and hash; images by digest and packages by hash (planned); an export is compared with its reference framework and measured on FLEURS before it becomes a candidate (planned). |
 | Publication is the maintainer's | The build ends at a candidate directory laid out for Hugging Face (planned); no command of the repository publishes on its own, and no agent publishes. |
-| mostt pins the published files by hash, not this code | The contract with mostt is the published files: their layout, their names and their formats. This repository shares no code with mostt and can change freely while that contract holds. |
+| mostt pins the published files by hash, not this code | The contract with mostt is the published files: their layout, their names and their formats. This repository shares no code with mostt and can change freely while that contract holds. The rules on the published names are adapted from mostt's model store, so that every published file passes it, and this repository holds them as its own. |
 
 ## Technology stack
 
@@ -26,6 +26,7 @@ These constraints drive the choices in this document:
 | mypy | 2.4.1 | Type checker, in strict mode |
 | pytest | 9.2.0 | Test runner |
 | import-linter | 2.15 | Checks the imports between the layers (`lint-imports`) |
+| curl | — | Downloads the pinned sources on the host, over HTTPS alone |
 | Docker | — | Runs each step of a build in a confined container, and builds their images (planned) |
 | GitHub CLI (`gh`) | — | Opens and updates the pull requests |
 
@@ -61,11 +62,11 @@ The project follows Clean Architecture: the rules live in a pure domain at the c
 
 | Layer | Module | Responsibility | Depends on |
 |---|---|---|---|
-| Composition roots | `core` | The project's package, `mostt_model_builder`; its command line on the host, `host_main.py`, which reads the terminal's input and wires the adapters and the recipes (planned); and its bootstrap, `bootstrap.py`, which puts the packages on the path and runs an entry module, on the host and in every step | every layer, and each recipe's `recipe.py` and domain |
+| Composition roots | `core` | The project's package, `mostt_model_builder`; its command line on the host, `host_main.py`, which reads the terminal's input and wires the adapters, and the recipes (planned); and its bootstrap, `bootstrap.py`, which puts the packages on the path and runs an entry module, on the host and in every step | every layer, and each recipe's `recipe.py` and domain |
 | Composition roots | `steps` (planned) | The entry module of each of the core's container steps, which runs in its container on the libraries of its image | `domain` |
-| Adapters | `adapters` (planned) | curl, Docker, git and the files of the work directory | `application`, `domain` |
-| Application | `application` (planned) | Fetches the sources, runs a step, cleans its outputs, assembles the candidate and verifies it | `domain` |
-| Domain | `domain` (planned) | The rules: the pins, the work directory, the step table, the recipe contract, the formats, the parsers of what containers write, the FLEURS bench and its acceptance | — |
+| Adapters | `adapters` | curl and the files of the work directory; Docker and git (planned) | `application`, `domain` |
+| Application | `application` | Opens the work directory and fetches the sources; runs a step, cleans its outputs, assembles the candidate and verifies it (planned) | `domain` |
+| Domain | `domain` | The rules: the pins of the sources, the work directory and the refused suffixes of a file name; the step table, the recipe contract, the formats, the parsers of what containers write, the FLEURS bench and its acceptance (planned) | — |
 | Domain, composition roots | `parakeet-tdt` (planned) | The recipe of the Parakeet TDT family, which builds Parakeet Ultra in ONNX: its sources, its export with NeMo, its check against Transformers, its variants and its transcription with onnx-asr | `domain`, `steps` |
 
 ## Repository layout
@@ -79,7 +80,8 @@ mostt-model-builder/
 │   ├── pull_request_template.md # The body of every pull request, with its checklist
 │   └── workflows/               # CI: the gate on every pull request and every push to main
 ├── docs/
-│   └── foundations.md           # This document
+│   ├── foundations.md           # This document
+│   └── model-build.md           # The build, part by part, and the published layout
 ├── scripts/
 │   ├── check.sh                 # The gate
 │   └── check-commit.sh          # The check of the last commit
@@ -93,6 +95,7 @@ mostt-model-builder/
 ├── README.md
 ├── model-build.sh               # The launcher: runs the bootstrap on the host's Python, isolated
 ├── pyproject.toml               # The manifest: dependencies, and the configuration of the tools
+├── sources.toml                 # The core's pinned sources: the FLEURS test sets
 └── uv.lock                      # The lockfile
 ```
 
@@ -106,9 +109,9 @@ The project is a single module, and its packages stand for the modules of [Layer
 src/mostt_model_builder/
 ├── __init__.py                  # The package
 ├── bootstrap.py                 # Run by path: puts the packages on the path, runs an entry module
-├── domain/                      # (planned) the pure rules, one concept per file
-├── application/                 # (planned) the use cases and their ports
-├── adapters/                    # (planned) one file or directory per technology
+├── domain/                      # The pure rules, a directory per concern, one concept per file
+├── application/                 # The use cases and their ports
+├── adapters/                    # One file or directory per technology
 ├── steps/                       # (planned) the entry modules of the core's container steps
 └── host_main.py                 # The command line on the host
 recipes/<family>/                # (planned) a recipe
@@ -120,6 +123,8 @@ recipes/<family>/                # (planned) a recipe
 └── tests/
 ```
 
+The domain groups its files in a directory per concern, such as `domain/sources/` for the pins and their URLs or `domain/containers/` for the work directory, since it holds the rules of every part of the build. These directories are not modules: the domain keeps its one row, and its files still import one another without a cycle.
+
 A recipe keeps its own package, apart from the core's, so that the import contracts can tell the two apart and keep the core from importing a recipe, and one recipe from importing another. All of them share one manifest and one lock, so that a build pins one version of each library.
 
 ### Enforcement
@@ -128,12 +133,16 @@ Each row names a rule, the rules file that states it, and what enforces it.
 
 | Rule | Enforced by |
 |---|---|
-| Dependencies point inward (`.claude/rules/architecture.md` > Layers) | `lint-imports`, from the layers contract of `pyproject.toml` |
+| Dependencies point inward (`.claude/rules/architecture.md` > Layers) | `lint-imports`, from the layers contract of `pyproject.toml` and the contract of each layer |
+| The domain holds the rules and is pure (`.claude/rules/architecture.md` > Responsibilities) | `lint-imports`, which keeps out of the domain the modules of the standard library that reach the outside world; review, the rest |
 | Formatted by `ruff format` and linted by `ruff check` (`.claude/rules/conventions.md` > Python) | `ruff format --check` and `ruff check`, in the gate |
 | Typed strictly (`.claude/rules/conventions.md` > Python) | `mypy`, strict with `warn_unreachable`, in the gate |
 | Python 3.12 syntax (`.claude/rules/conventions.md` > Python) | `ruff`'s `UP` rules, with `target-version = "py312"` |
 | The host runs on its own Python and the standard library, isolated (`.claude/rules/container-security.md` > The host) | `tests/test_mostt_model_builder.py`, which imports the command line under `-I -S -B`; `tests/test_model_build_launcher.py`, which checks that the launcher runs the bootstrap under `-I -S -B`; `tests/test_bootstrap.py`, which checks the paths the bootstrap appends; `lint-imports`, which keeps the bootstrap's imports out of the packages |
 | Root is refused (`.claude/rules/container-security.md` > The host) | `tests/test_bootstrap.py`, on each of the six ids |
+| A source is fetched over HTTPS alone, and kept only once it matches its pin (`.claude/rules/container-security.md` > The host) | `tests/domain/sources/test_source_pins.py`, the refusals of the pins; `tests/application/test_fetch_sources.py`, which keeps a download only once it matches; `tests/adapters/test_curl_downloader.py`, curl's options |
+| A source's name never marks code, a pickle or an archive (`.claude/rules/container-security.md` > The host) | `tests/domain/sources/test_source_pins.py`, on each refused suffix |
+| The work directory is the user's own, outside the home directory and the clone (`.claude/rules/container-security.md` > The host) | `tests/domain/containers/test_work_directory.py` and `tests/application/test_open_work_directory.py`, on each refusal |
 | uv never builds a package on the host (`.claude/rules/container-security.md` > The host) | `no-build = true` in `[tool.uv]`, which `tests/test_project_manifests.py` holds, with the host's empty dependencies and its exact pins |
 | Markers are strict and warnings are errors (`.claude/rules/tests.md` > pytest) | `--strict-markers`, `--strict-config` and `filterwarnings = ["error"]` in `pyproject.toml` |
 | A commit footer holds only what tools read (`CLAUDE.md` > Workflow) | `attribution` in `.claude/settings.json`, which keeps Claude Code's own commit trailers and pull request line out |

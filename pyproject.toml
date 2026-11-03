@@ -45,6 +45,7 @@ filterwarnings = ["error"]
 
 [tool.importlinter]
 root_package = "mostt_model_builder"
+include_external_packages = true
 
 [[tool.importlinter.contracts]]
 name = "Dependencies point inward: the host's composition root, then the adapters, the application and the domain"
@@ -57,3 +58,43 @@ name = "The bootstrap imports nothing of the packages, since it runs before they
 type = "forbidden"
 source_modules = ["mostt_model_builder.bootstrap"]
 forbidden_modules = ["mostt_model_builder.*"]
+
+[[tool.importlinter.contracts]]
+name = "The domain is pure: no other layer, and no module of the standard library that reaches the outside world"
+type = "forbidden"
+source_modules = ["mostt_model_builder.domain"]
+forbidden_modules = [
+    "mostt_model_builder.application",
+    "mostt_model_builder.adapters",
+    "mostt_model_builder.steps",
+    "mostt_model_builder.host_main",
+    "mostt_model_builder.bootstrap",
+    "subprocess",
+    "socket",
+    "urllib",
+    "http",
+    "shutil",
+    "tempfile",
+    "asyncio",
+]
+
+[[tool.importlinter.contracts]]
+name = "The application reaches the outside world only through its ports"
+type = "forbidden"
+source_modules = ["mostt_model_builder.application"]
+forbidden_modules = [
+    "mostt_model_builder.adapters",
+    "mostt_model_builder.steps",
+    "mostt_model_builder.host_main",
+    "mostt_model_builder.bootstrap",
+]
+
+[[tool.importlinter.contracts]]
+name = "The adapters are wired only by a composition root"
+type = "forbidden"
+source_modules = ["mostt_model_builder.adapters"]
+forbidden_modules = [
+    "mostt_model_builder.steps",
+    "mostt_model_builder.host_main",
+    "mostt_model_builder.bootstrap",
+]
