@@ -7,7 +7,7 @@ mostt-model-builder is the tooling of reproducible, confined builds of speech re
 ## Requirements
 
 - git, and the GitHub CLI (`gh`), which the pull requests use;
-- [uv](https://docs.astral.sh/uv/) 0.13.6, the version CI runs, which finds or downloads Python 3.12, the version `.python-version` names;
+- [uv](https://docs.astral.sh/uv/) 0.13.7, the version CI runs, which finds or downloads Python 3.12, the version `.python-version` names;
 - Docker, for the containers of the build (planned).
 
 ## Getting started

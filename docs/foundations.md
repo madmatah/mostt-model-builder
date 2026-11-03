@@ -21,7 +21,7 @@ These constraints drive the choices in this document:
 | Tool | Version | Role |
 |---|---|---|
 | Python | 3.12 | The language of the host's side and of the steps, pinned by `.python-version` and `requires-python` |
-| uv | 0.13.6 | Package manager and runner: installs the environment from `uv.lock`, and runs each tool of the gate |
+| uv | 0.13.7 | Package manager and runner: installs the environment from `uv.lock`, and runs each tool of the gate |
 | ruff | 0.17.3 | Formatter and linter |
 | mypy | 2.4.1 | Type checker, in strict mode |
 | pytest | 9.2.0 | Test runner |
@@ -34,7 +34,7 @@ Notes:
 - **CI runs on GitHub Actions** (`.github/workflows/check.yml`):
   - `scripts/check.sh` runs on every pull request and every push to `main`;
   - actions are pinned to full commit SHAs, and the job may only read the repository;
-  - `setup-uv` installs uv 0.13.6, the one pin of uv, and uv installs the Python that `.python-version` names;
+  - `setup-uv` installs uv 0.13.7, the one pin of uv, and uv installs the Python that `.python-version` names;
   - no cache is saved or restored: the install takes seconds, and a restored cache would run in the gate unchecked.
 - **`CLAUDE.md` and `.claude/` are the agent guidance** ([Agent guidance](#agent-guidance)).
 - **The project has no build backend** (`package = false`): it is a tool run from its clone, never installed as a package, so each tool is given the path of its packages, `mypy_path` for mypy, `pythonpath` for pytest and `PYTHONPATH` for `lint-imports`, and the host's launcher (planned) appends them itself.
