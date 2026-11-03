@@ -19,7 +19,7 @@ Read first: `.claude/rules/container-security.md`, `.claude/rules/configuration.
 
 ## Checks
 
-- **The host runs on its own Python and the standard library, isolated** (`.claude/rules/container-security.md` > The host): a host module that imports a third-party package or a library of the steps, directly or through another module; a launcher that drops `-I`, `-S` or `-B`, or a change of `sys.path` outside its bootstrap; or a weakened import test.
+- **The host runs on its own Python and the standard library, isolated** (`.claude/rules/container-security.md` > The host): a host module that imports a third-party package or a library of the steps, directly or through another module; a launcher that drops `-I`, `-S` or `-B`, or a change of `sys.path` outside its bootstrap; a bootstrap that imports a package of the project, or appends a path other than the project's `src` and the real, well-named recipes' own; or a weakened import test.
 - **A container step's Python runs under `-I -B`** (`.claude/rules/container-security.md` > The host): a step started without them, through another interpreter, or through an image's own entry point.
 - **Root is refused** (`.claude/rules/container-security.md` > The host): an entry point that reads anything before its check of the ids, that forgets one of them, or that exits with another status.
 - **uv never builds a package on the host** (`.claude/rules/container-security.md` > The host): `no-build` removed or set to false in `[tool.uv]`, or a uv command on the host that allows a build.

@@ -8,7 +8,7 @@ English is the reference language of this repository. Everything committed is wr
 
 ## Project
 
-mostt-model-builder is the tooling of reproducible, confined builds of speech recognition models from their original weights: export, quantization and FLEURS verification. Nothing of the build is written yet: the repository holds the gate, its package skeleton and the agent guidance. Planned: a core, with the pinned sources, the confined containers and their boundary with the host, the formats and their inspection, the FLEURS bench and its acceptance, and one recipe per model family behind a contract that forces no format, the first for Parakeet TDT, which builds Parakeet Ultra in ONNX. The checked files land in a candidate directory laid out for Hugging Face, where the user publishes them, and mostt pins them by hash. `docs/foundations.md` explains the stack, the architecture, the repository layout and the testing approach, with their reasons. Read it before changing the architecture, the dependencies or the tooling.
+mostt-model-builder is the tooling of reproducible, confined builds of speech recognition models from their original weights: export, quantization and FLEURS verification. Its command line, `model-build.sh`, runs on the host's Python and the standard library, isolated, and runs every library of a model in a confined container. It is made of a core, with the pinned sources, the confined containers and their boundary with the host, the formats and their inspection, the FLEURS bench and its acceptance, and of one recipe per model family behind a contract that forces no format, the first for Parakeet TDT, which builds Parakeet Ultra in ONNX. The checked files land in a candidate directory laid out for Hugging Face, where the user publishes them, and mostt pins them by hash. `docs/foundations.md` explains the stack, the architecture, the repository layout and the testing approach, with their reasons, and its Layers and modules say which parts are built. Read it before changing the architecture, the dependencies or the tooling.
 
 ## Project management
 
@@ -50,6 +50,7 @@ Never run `git clean` with `-ff` at the repository root: a double `-f` deletes n
 
 ## Commands
 
+- `./model-build.sh --help`: prints the build's usage.
 - `uv sync --frozen`: installs the dependencies from the lockfile, without changing it.
 - `uv run --locked pytest`: runs the tests.
 - `uv run --locked ruff format && uv run --locked ruff check --fix`: formats the code and applies safe lint fixes.

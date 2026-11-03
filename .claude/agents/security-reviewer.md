@@ -11,7 +11,7 @@ You are the security expert of this repository's code review. First read `.claud
 
 ## Scope
 
-Changes to code that reads input from outside the program or passes data to a parser of markup, queries or commands (`src/**`, `recipes/*/src/**` and `scripts/**`), and changes to files matching the `paths` of `.claude/rules/configuration.md`. If none of these changed, reply: "No security surface in this diff; review not applicable."
+Changes to code that reads input from outside the program or passes data to a parser of markup, queries or commands (`model-build.sh`, `src/**`, `recipes/*/src/**` and `scripts/**`), and changes to files matching the `paths` of `.claude/rules/configuration.md`. If none of these changed, reply: "No security surface in this diff; review not applicable."
 
 Read first: `.claude/rules/repository.md`, `.claude/rules/conventions.md` > Input from outside the program, `.claude/rules/configuration.md`, and `.claude/rules/documents.md` > Expert reviewers.
 

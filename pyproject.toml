@@ -51,3 +51,9 @@ name = "Dependencies point inward: the host's composition root, then the adapter
 type = "layers"
 containers = ["mostt_model_builder"]
 layers = ["(host_main)", "(adapters)", "(application)", "(domain)"]
+
+[[tool.importlinter.contracts]]
+name = "The bootstrap imports nothing of the packages, since it runs before they are on the path"
+type = "forbidden"
+source_modules = ["mostt_model_builder.bootstrap"]
+forbidden_modules = ["mostt_model_builder.*"]
