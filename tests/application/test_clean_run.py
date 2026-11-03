@@ -18,6 +18,7 @@ from run_step_fakes import (
 from mostt_model_builder.application.clean_run import CleanOutcome, CleanRequest, clean_step
 from mostt_model_builder.application.run_step import HostIdentity, ImageFacts, StepError
 from mostt_model_builder.domain.containers.account_ranges import HostAccounts
+from mostt_model_builder.domain.containers.base_images import ENVIRONMENT_PYTHON
 from mostt_model_builder.domain.containers.container_files import (
     ContainerFileError,
     FileFacts,
@@ -26,15 +27,21 @@ from mostt_model_builder.domain.containers.container_files import (
 from mostt_model_builder.domain.containers.container_steps import (
     FLEURS_CHECK_ROW,
     OUTPUT_IN_THE_CONTAINER,
+    PEAKS_OUTPUT,
     BindMount,
+    ContainerImage,
     ContainerRun,
+    Device,
+    StepLimits,
+    StepRow,
 )
 
 WORK_ROOT = PurePosixPath("/data/builds/work")
 COMMIT = "e949fa3a2eb8bf218e96c2c03625bbd36e4342b1"
 HEAD_TREE = "3f1d1ffe79bc3336eb583331cfbf9b189fd45f01"
 IMAGE_ID = "sha256:" + "d" * 64
-RUN_DIRECTORY = PurePosixPath(f"runs/core/{COMMIT}")
+RECIPE_NAME = "parakeet-tdt"
+RUN_DIRECTORY = PurePosixPath(f"runs/{RECIPE_NAME}/{COMMIT}")
 OUTPUT_DIRECTORY = WORK_ROOT / RUN_DIRECTORY / "fleurs-check"
 REQUEST_DIRECTORY = WORK_ROOT / RUN_DIRECTORY / "requests/fleurs-check"
 LOGS_DIRECTORY = WORK_ROOT / RUN_DIRECTORY / "logs"
@@ -42,7 +49,16 @@ LOG_PATH = LOGS_DIRECTORY / "fleurs-check.log"
 CLEAN_LOG_PATH = WORK_ROOT / RUN_DIRECTORY / "logs/clean-fleurs-check.log"
 LINK_FACTS = FileFacts(FileKind.LINK, USER_ID, 0o777, 10, 1)
 HOST = HostIdentity(USER_ID, GROUP_ID, 20, HostAccounts(False, (), ()))
-REQUEST = CleanRequest(FLEURS_CHECK_ROW, COMMIT, WORK_ROOT, HEAD_TREE, HOST)
+REQUEST = CleanRequest(FLEURS_CHECK_ROW, RECIPE_NAME, COMMIT, WORK_ROOT, HEAD_TREE, HOST)
+RECIPE_ROW = StepRow(
+    name="describe",
+    image=ContainerImage(RECIPE_NAME, "export", Device.CPU, ENVIRONMENT_PYTHON),
+    entry_module="mostt_recipe_parakeet_tdt.steps.nemo_description",
+    sources=(),
+    has_request=False,
+    outputs=(PEAKS_OUTPUT,),
+    limits=StepLimits(memory_mib=1024, process_count=64, cpu_count=2, temporary_directory_mib=64),
+)
 
 
 @dataclass(frozen=True)
@@ -230,3 +246,28 @@ class TestTheCleanRun:
                     [],
                     True,
                 )
+
+        class TestWhenTheStepIsTheRecipesOwn:
+            @pytest.fixture
+            def clean_record(self) -> CleanRecord:
+                files = FakeStepFiles()
+                files.add_directory(WORK_ROOT)
+                describe_directory = WORK_ROOT / RUN_DIRECTORY / "describe"
+                files.add_directory(describe_directory, build_directory_facts(0o2770))
+                files.add_file(describe_directory / "peaks.json", *build_step_output(b"{}"))
+                engine = FakeContainerEngine(
+                    files=files, images={RECIPE_ROW.image.tag: ImageFacts(IMAGE_ID, HEAD_TREE)}
+                )
+                outcome = clean_step(
+                    CleanRequest(RECIPE_ROW, RECIPE_NAME, COMMIT, WORK_ROOT, HEAD_TREE, HOST),
+                    engine,
+                    files,
+                )
+                return CleanRecord(outcome, engine.runs, engine.log_paths, files)
+
+            def test_should_run_the_cores_cleaning_in_the_recipes_image(
+                self, clean_record: CleanRecord
+            ) -> None:
+                assert [(run.image_id, run.entry_module) for run in clean_record.runs] == [
+                    (IMAGE_ID, "mostt_model_builder.steps.clean_output")
+                ]

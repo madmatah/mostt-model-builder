@@ -1,0 +1,37 @@
+# Parakeet Ultra's weights are Moondream's post-training of NVIDIA's Parakeet TDT 0.6B v3, so
+# NeMo builds its model from the configuration of v3's .nemo before it loads them.
+
+[[sources]]
+repository_type = "model"
+repository = "moondream/parakeet-ultra"
+revision = "73175eb7aeb0d82f1e2a6b53b3aabc10a90bcd0b"
+path = "config.json"
+size_bytes = 1153
+sha256 = "e747b85e1bdfd300c8b8ac63bac8dd5221f8fe9bc275b48d06c735fcd6971b6e"
+
+[[sources]]
+repository_type = "model"
+repository = "moondream/parakeet-ultra"
+revision = "73175eb7aeb0d82f1e2a6b53b3aabc10a90bcd0b"
+path = "tokenizer.json"
+size_bytes = 1159960
+sha256 = "bd321b096832a3f270bd3b2a88823957920f1a5c5ada71114a26ea729d0cbe91"
+
+[[sources]]
+repository_type = "model"
+repository = "moondream/parakeet-ultra"
+revision = "73175eb7aeb0d82f1e2a6b53b3aabc10a90bcd0b"
+path = "model.safetensors"
+size_bytes = 1255353386
+sha256 = "c9608f36d0ab956c14bfcc525479b0746b3b42a56f6949ec85c14eb7466717dc"
+
+# A .nemo holds a pickled checkpoint: only the export image reads it, and only its configuration
+# and its tokenizer's files, never the checkpoint.
+[[sources]]
+repository_type = "model"
+repository = "nvidia/parakeet-tdt-0.6b-v3"
+revision = "541d1f99c6b0c3cd0b11a95167540bb8edefd82b"
+path = "parakeet-tdt-0.6b-v3.nemo"
+size_bytes = 2509332480
+sha256 = "3cbdc85877e668ca7b82d0d56770eb1fac76691f55d6b97545e8d61ca588d10d"
+runs_code_when_loaded = true

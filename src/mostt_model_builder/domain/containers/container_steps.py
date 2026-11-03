@@ -19,14 +19,20 @@ CORE_OWNER = "core"
 IMAGE_TAG_PREFIX = "mostt-model-builder"
 CONTAINERFILE_NAME = "Containerfile"
 IMAGES_DIRECTORY_NAME = "images"
+RECIPES_DIRECTORY_NAME = "recipes"
 STEP_NAME_GRAMMAR = re.compile(r"[a-z0-9][a-z0-9-]{0,31}")
 ENTRY_MODULE_GRAMMAR = re.compile(r"[a-z_][a-z0-9_]*(\.[a-z_][a-z0-9_]*)*")
-CORE_STEPS_PACKAGE = "mostt_model_builder.steps"
+CORE_PACKAGE = "mostt_model_builder"
+RECIPE_PACKAGE_PREFIX = "mostt_recipe_"
+STEPS_PACKAGE_NAME = "steps"
+CORE_STEPS_PACKAGE = f"{CORE_PACKAGE}.{STEPS_PACKAGE_NAME}"
 IMAGE_ROOT = PurePosixPath("/opt/model-builder")
 BOOTSTRAP_IN_THE_IMAGE = IMAGE_ROOT / "src" / "mostt_model_builder" / "bootstrap.py"
 CONTAINER_ROOT = PurePosixPath("/")
+SOURCES_IN_THE_CONTAINER = CONTAINER_ROOT / "sources"
 REQUEST_IN_THE_CONTAINER = PurePosixPath("/request")
 OUTPUT_IN_THE_CONTAINER = PurePosixPath("/output")
+INPUTS_IN_THE_CONTAINER = PurePosixPath("/inputs")
 TEMPORARY_DIRECTORY_IN_THE_CONTAINER = PurePosixPath("/tmp")
 SCRATCH_IN_THE_CONTAINER = PurePosixPath("/scratch")
 ISOLATION_OPTIONS = ("-I", "-B")
@@ -92,7 +98,12 @@ class ContainerImage:
 
     @property
     def containerfile(self) -> PurePosixPath:
-        return PurePosixPath(IMAGES_DIRECTORY_NAME, self.name, CONTAINERFILE_NAME)
+        images_directory = PurePosixPath(IMAGES_DIRECTORY_NAME)
+        if self.owner != CORE_OWNER:
+            images_directory = PurePosixPath(
+                RECIPES_DIRECTORY_NAME, self.owner, IMAGES_DIRECTORY_NAME
+            )
+        return images_directory / self.name / CONTAINERFILE_NAME
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,6 +128,13 @@ class SourceReference:
 
 
 @dataclass(frozen=True, slots=True)
+class EarlierOutput:
+    step: str
+    output: DeclaredOutput
+    step_output_names: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class StepRow:
     name: str
     image: ContainerImage
@@ -127,6 +145,7 @@ class StepRow:
     limits: StepLimits
     uses_gpu: bool = False
     has_network: bool = False
+    earlier_outputs: tuple[EarlierOutput, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,6 +161,7 @@ class BindMount:
     container_path: PurePosixPath
     is_read_only: bool
     is_file: bool
+    is_written_by_a_step: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -206,6 +226,16 @@ RUNNABLE_CORE_ROWS = (FLEURS_CHECK_ROW,)
 CLEAN_LIMITS = StepLimits(memory_mib=256, process_count=32, cpu_count=1, temporary_directory_mib=16)
 
 
+def find_package_of_owner(owner: str) -> str:
+    if owner == CORE_OWNER:
+        return CORE_PACKAGE
+    return RECIPE_PACKAGE_PREFIX + owner.replace("-", "_")
+
+
+def locate_earlier_output(earlier_output: EarlierOutput) -> PurePosixPath:
+    return INPUTS_IN_THE_CONTAINER / earlier_output.step / earlier_output.output.name
+
+
 def build_clean_row(image: ContainerImage) -> StepRow:
     return StepRow(
         name=CLEAN_STEP_NAME,
@@ -216,13 +246,6 @@ def build_clean_row(image: ContainerImage) -> StepRow:
         outputs=(),
         limits=CLEAN_LIMITS,
     )
-
-
-def find_runnable_core_row(name: str) -> StepRow:
-    for row in RUNNABLE_CORE_ROWS:
-        if row.name == name:
-            return row
-    raise StepTableError(f"no step of the core is named {name!a}")
 
 
 def judge_row(row: StepRow, host_cpu_count: int) -> None:
@@ -245,10 +268,18 @@ def refuse_foreign_entry_module(row: StepRow, where: str) -> None:
         raise StepTableError(
             f"{where}: its entry module {row.entry_module!a} is not a dotted module name"
         )
-    if row.image.owner == CORE_OWNER and not row.entry_module.startswith(f"{CORE_STEPS_PACKAGE}."):
+    steps_package = find_steps_package(row)
+    if not row.entry_module.startswith(f"{steps_package}."):
         raise StepTableError(
-            f"{where}: its entry module {row.entry_module} lies outside {CORE_STEPS_PACKAGE}"
+            f"{where}: its entry module {row.entry_module} lies outside {steps_package}, "
+            f"the steps of the image {row.image.tag}"
         )
+
+
+def find_steps_package(row: StepRow) -> str:
+    if row.name == CLEAN_STEP_NAME:
+        return CORE_STEPS_PACKAGE
+    return f"{find_package_of_owner(row.image.owner)}.{STEPS_PACKAGE_NAME}"
 
 
 def judge_limits(limits: StepLimits, host_cpu_count: int, where: str) -> None:
@@ -314,6 +345,7 @@ def plan_container_run(
     source_paths: Mapping[SourceReference, PurePosixPath],
     work_root: PurePosixPath,
     group_id: int,
+    earlier_output_directories: Mapping[str, PurePosixPath],
 ) -> ContainerRun:
     mounts = [
         BindMount(
@@ -324,6 +356,16 @@ def plan_container_run(
         )
         for reference in row.sources
     ]
+    mounts.extend(
+        BindMount(
+            host_path=earlier_output_directories[earlier_output.step] / earlier_output.output.name,
+            container_path=locate_earlier_output(earlier_output),
+            is_read_only=True,
+            is_file=True,
+            is_written_by_a_step=True,
+        )
+        for earlier_output in row.earlier_outputs
+    )
     if row.has_request:
         if placement.request_directory is None:
             raise StepTableError(f"the step {row.name} needs a request, and was given none")

@@ -23,7 +23,6 @@ from mostt_model_builder.domain.bench.fleurs_check_request import (
 from mostt_model_builder.domain.bench.fleurs_index import BENCH_LANGUAGES, locate_bench_files
 from mostt_model_builder.domain.containers.container_steps import (
     CONTAINER_ROOT,
-    CORE_OWNER,
     FLEURS_CHECK_ROW,
     FLEURS_REPOSITORY,
     SourceReference,
@@ -39,6 +38,7 @@ from mostt_model_builder.domain.sources.source_pins import SourcePin
 @dataclass(frozen=True, slots=True)
 class FleursCheckRun:
     pins: Sequence[SourcePin]
+    recipe_name: str
     commit: str
     work_root: PurePosixPath
     head_tree: str
@@ -71,7 +71,7 @@ def check_fleurs_bench(
     outputs = run_step(
         StepRunRequest(
             row=row,
-            placement=place_step(CORE_OWNER, run.commit, row.name),
+            placement=place_step(run.recipe_name, run.commit, row.name),
             request_files={FLEURS_CHECK_REQUEST_FILE_NAME: request_content},
             source_paths=source_paths,
             work_root=run.work_root,

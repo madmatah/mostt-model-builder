@@ -24,7 +24,7 @@ no-build = true
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-src = ["src", "tests"]
+src = ["src", "tests", "recipes/parakeet-tdt/src", "recipes/parakeet-tdt/tests"]
 
 [tool.ruff.lint]
 select = ["E", "W", "F", "I", "B", "UP", "SIM", "PT", "ARG", "RUF"]
@@ -33,18 +33,24 @@ select = ["E", "W", "F", "I", "B", "UP", "SIM", "PT", "ARG", "RUF"]
 python_version = "3.12"
 strict = true
 warn_unreachable = true
-files = ["src", "tests"]
-mypy_path = "src"
+files = ["src", "tests", "recipes/parakeet-tdt/src", "recipes/parakeet-tdt/tests"]
+mypy_path = ["src", "recipes/parakeet-tdt/src"]
+
+# The libraries of the steps are installed in their images alone, never on the host, where mypy
+# runs: a step uses them untyped, through composition, never through a subclass of their classes.
+[[tool.mypy.overrides]]
+module = ["nemo", "nemo.*", "torch", "torch.*"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 minversion = "9.0"
-testpaths = ["tests"]
-pythonpath = ["src"]
+testpaths = ["tests", "recipes/parakeet-tdt/tests"]
+pythonpath = ["src", "recipes/parakeet-tdt/src"]
 addopts = ["--strict-markers", "--strict-config"]
 filterwarnings = ["error"]
 
 [tool.importlinter]
-root_package = "mostt_model_builder"
+root_packages = ["mostt_model_builder", "mostt_recipe_parakeet_tdt"]
 include_external_packages = true
 
 [[tool.importlinter.contracts]]
@@ -57,7 +63,7 @@ layers = ["(host_main)", "(adapters)", "(application)", "(domain)"]
 name = "The bootstrap imports nothing of the packages, since it runs before they are on the path"
 type = "forbidden"
 source_modules = ["mostt_model_builder.bootstrap"]
-forbidden_modules = ["mostt_model_builder.*"]
+forbidden_modules = ["mostt_model_builder.*", "mostt_recipe_parakeet_tdt"]
 
 [[tool.importlinter.contracts]]
 name = "The domain is pure: no other layer, and no module of the standard library that reaches the outside world"
@@ -69,6 +75,7 @@ forbidden_modules = [
     "mostt_model_builder.steps",
     "mostt_model_builder.host_main",
     "mostt_model_builder.bootstrap",
+    "mostt_recipe_parakeet_tdt",
     "subprocess",
     "socket",
     "urllib",
@@ -87,6 +94,7 @@ forbidden_modules = [
     "mostt_model_builder.steps",
     "mostt_model_builder.host_main",
     "mostt_model_builder.bootstrap",
+    "mostt_recipe_parakeet_tdt",
 ]
 
 [[tool.importlinter.contracts]]
@@ -97,6 +105,7 @@ forbidden_modules = [
     "mostt_model_builder.steps",
     "mostt_model_builder.host_main",
     "mostt_model_builder.bootstrap",
+    "mostt_recipe_parakeet_tdt",
 ]
 
 [[tool.importlinter.contracts]]
@@ -108,13 +117,48 @@ forbidden_modules = [
     "mostt_model_builder.adapters",
     "mostt_model_builder.host_main",
     "mostt_model_builder.bootstrap",
+    "mostt_recipe_parakeet_tdt",
 ]
 
 [[tool.importlinter.contracts]]
 name = "The host never imports a container step, which runs only in its container"
 type = "forbidden"
 source_modules = ["mostt_model_builder.host_main"]
-forbidden_modules = ["mostt_model_builder.steps"]
+forbidden_modules = ["mostt_model_builder.steps", "mostt_recipe_parakeet_tdt.steps"]
+
+[[tool.importlinter.contracts]]
+name = "A recipe's domain and its contract are pure: the core's domain alone, and no module of the standard library that reaches the outside world"
+type = "forbidden"
+source_modules = ["mostt_recipe_parakeet_tdt.domain", "mostt_recipe_parakeet_tdt.recipe"]
+forbidden_modules = [
+    "mostt_model_builder.application",
+    "mostt_model_builder.adapters",
+    "mostt_model_builder.steps",
+    "mostt_model_builder.host_main",
+    "mostt_model_builder.bootstrap",
+    "mostt_recipe_parakeet_tdt.steps",
+    "subprocess",
+    "socket",
+    "urllib",
+    "http",
+    "shutil",
+    "tempfile",
+    "asyncio",
+]
+
+[[tool.importlinter.contracts]]
+name = "A recipe's container step runs on its own domain, the core's domain and the core's shared step modules alone"
+type = "forbidden"
+source_modules = ["mostt_recipe_parakeet_tdt.steps"]
+forbidden_modules = [
+    "mostt_model_builder.application",
+    "mostt_model_builder.adapters",
+    "mostt_model_builder.host_main",
+    "mostt_model_builder.bootstrap",
+    "mostt_model_builder.steps.fleurs_check",
+    "mostt_model_builder.steps.clean_output",
+    "mostt_model_builder.steps.lock_resolution",
+]
 
 [[tool.importlinter.contracts]]
 name = "The libraries of the models load only in the steps that need them, never on the host"
@@ -131,6 +175,9 @@ source_modules = [
     "mostt_model_builder.steps.output_modes",
     "mostt_model_builder.steps.control_group_peaks",
     "mostt_model_builder.steps.lock_resolution",
+    "mostt_model_builder.steps.bound_sources",
+    "mostt_recipe_parakeet_tdt.domain",
+    "mostt_recipe_parakeet_tdt.recipe",
 ]
 forbidden_modules = [
     "torch",

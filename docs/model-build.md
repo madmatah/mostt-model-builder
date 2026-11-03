@@ -4,9 +4,9 @@ This document describes the build part by part: what each command does, and the 
 
 ## The core
 
-The core holds what every model family shares. Built: the work directory, the sources, the confined containers and their boundary with the host, the images and their lock, and the check of the FLEURS bench, which the sections below describe. Planned: the formats and their inspection, the measures of the FLEURS bench and its acceptance, and the recipe contract.
+The core holds what every model family shares. Built: the work directory, the sources, the confined containers and their boundary with the host, the images and their lock, the check of the FLEURS bench, the recipe contract and the names of the formats, which the sections below describe. Planned: the checks of the formats and their inspection, the candidate, the measures of the FLEURS bench and its acceptance.
 
-Every command runs as `./model-build.sh --work <dir> <command>`, on the host's Python and its standard library, isolated from the environment and the site packages.
+Every command runs as `./model-build.sh --work <dir> --recipe <name> <command>`, on the host's Python and its standard library, isolated from the environment and the site packages. `--recipe` names the model family to build, [Recipes](#recipes) lists them, and every command needs it but `lock`, which resolves the libraries of every recipe's images at once.
 
 ### The work directory
 
@@ -19,15 +19,15 @@ Its layout:
 | Path | Holds |
 |---|---|
 | `sources/<namespace>/<name>/<revision>/<path>` | Each pinned source, read-only, at the place its pin gives it, shared by every recipe |
-| `runs/<owner>/<commit>/<step>/` | The outputs of a step at a commit, in mode 2770, which its container writes; the owner is `core` for the core's steps |
-| `runs/<owner>/<commit>/requests/<step>/` | The request the host writes for that step, in mode 0750 |
-| `runs/<owner>/<commit>/logs/<step>.log` | What its container printed, through the printable filter, and the log of its cleaning, `clean-<step>.log` |
+| `runs/<recipe>/<commit>/<step>/` | The outputs of a step of the recipe's build at a commit, the core's steps included, in mode 2770, which its container writes |
+| `runs/<recipe>/<commit>/requests/<step>/` | The request the host writes for that step, in mode 0750 |
+| `runs/<recipe>/<commit>/logs/<step>.log` | What its container printed, through the printable filter, and the log of its cleaning, `clean-<step>.log` |
 | `lock/<n>/` | A run of `lock`: its `request/`, the copies of the images' manifest and lock, its `output/`, the new lock and its peaks, and its `logs/`, a new number each time |
 | `image-builds/<image>.log` | The output of the last build of each image, through the printable filter |
 
 ### The sources
 
-A build reads only files that it pins. The core pins its own in `sources.toml`, at the root of the clone: the FLEURS test sets of French (`fr_fr`) and English (`en_us`), each as its index, `test.tsv`, and its audio, `audio/test.tar.gz`, from the dataset `google/fleurs` at its commit `70bb2e84b976b7e960aa89f1c648e09c59f894dd`. A recipe pins its own the same way (planned).
+A build reads only files that it pins. The core pins its own in `sources.toml`, at the root of the clone: the FLEURS test sets of French (`fr_fr`) and English (`en_us`), each as its index, `test.tsv`, and its audio, `audio/test.tar.gz`, from the dataset `google/fleurs` at its commit `70bb2e84b976b7e960aa89f1c648e09c59f894dd`. A recipe pins its own the same way, in `recipes/<family>/sources.toml`, and a build reads the core's pins and its recipe's together, which may not pin the same file twice.
 
 Each pin gives:
 
@@ -39,16 +39,17 @@ Each pin gives:
 | `path` | The file's path in the repository |
 | `size_bytes` | The file's size, in bytes |
 | `sha256` | The file's SHA-256, in lowercase hexadecimal |
+| `runs_code_when_loaded` | Optional, `false` by default: `true` for a file that runs code when it loads, such as a `.nemo` archive, which holds a pickle |
 
-A revision is a commit rather than a branch or a tag, which can move, so that a pin names one content forever, and the size and the hash check that content whatever served it.
+A revision is a commit rather than a branch or a tag, which can move, so that a pin names one content forever, and the size and the hash check that content whatever served it. A pin whose file name has a suffix that marks code, a pickle or an archive, such as `.nemo`, is refused unless it says `runs_code_when_loaded = true`, and the core then binds that file only in the one image its recipe declares to read it, so that such a file never reaches a container by mistake.
 
-`./model-build.sh --work <dir> fetch` downloads each pinned file into the work directory, at `sources/<namespace>/<name>/<revision>/<path>`, with curl, from the file's `resolve` URL on huggingface.co, which redirects to the hub's storage. A download goes into the file's name followed by `.partial`, and a fetch that stops, or fails, resumes it where it ended. Once complete, its size and its SHA-256 are compared with its pin's: a file that matches takes its name, read-only, and one that does not is removed, and the fetch fails, naming both sizes and both hashes. A file fetched earlier is checked again at every fetch, so a file changed since fails the fetch rather than reach a container, and is left for the user to look at and remove.
+`./model-build.sh --work <dir> --recipe <name> fetch` downloads the core's pinned files and the recipe's, each into the work directory, at `sources/<namespace>/<name>/<revision>/<path>`, with curl, from the file's `resolve` URL on huggingface.co, which redirects to the hub's storage. A download goes into the file's name followed by `.partial`, and a fetch that stops, or fails, resumes it where it ended. Once complete, its size and its SHA-256 are compared with its pin's: a file that matches takes its name, read-only, and one that does not is removed, and the fetch fails, naming both sizes and both hashes. A file fetched earlier is checked again at every fetch, so a file changed since fails the fetch rather than reach a container, and is left for the user to look at and remove.
 
 The fetch reads no token and sends none, since every source is public.
 
 ## The containers
 
-Every step of a build runs in a container, started by the host, which takes from the step table, `domain/containers/container_steps.py`, everything Docker is given. The step table holds the core's rows, and each recipe's (planned); `.claude/rules/container-security.md` > Confinement states what each container may and may not have.
+Every step of a build runs in a container, started by the host, which takes from the step table, `domain/containers/container_steps.py`, everything Docker is given. The step table holds the core's rows, and the rows of the recipe that a command names, which the core judges when it loads the recipe ([The recipe contract](#the-recipe-contract)); `.claude/rules/container-security.md` > Confinement states what each container may and may not have.
 
 A row of the step table gives:
 
@@ -58,6 +59,7 @@ A row of the step table gives:
 | image | The image it runs in, and the image's Python: `/opt/venv/bin/python` in an image with an environment, the base's `/usr/local/bin/python3.12` in one without |
 | entry module | The module the image's copy of the bootstrap runs, under `-I -B` |
 | sources | The pinned files it reads, each bound by itself, read-only, at its pin's layout under `/sources` |
+| earlier outputs | The declared outputs of earlier steps it reads, each bound by itself, read-only, at `/inputs/<step>/<name>` |
 | request | Whether the host writes a request for it, bound read-only at `/request` |
 | outputs | The files it leaves at the top of `/output`, each with its size bound; `peaks.json` among them, except for `clean` |
 | limits | Its memory in MiB, with the swap at the same value, its processes, its CPUs, and the size of its `/tmp`, and of its `/scratch` where it asks for one |
@@ -78,25 +80,27 @@ A run of a step:
 1. refuses an image that is missing, or whose label is not the tree of HEAD, and refuses the run when an account or a subordinate range holds the container user, 65531;
 2. makes the step's output directory, and refuses a step whose outputs exist, naming `clean`;
 3. writes its request, if it has one;
-4. judges each mount, from the work directory down, entry by entry;
+4. judges each mount, from the work directory down, entry by entry, and each output of an earlier step that it binds as it judges any output: the directory of that step holds exactly the names its row declares, and the file is a regular file of the container user's, in mode 0640, within its bound and with a single link;
 5. runs the container, its output going to its log, through the printable filter, capped at 16 MiB;
 6. on a failure, shows the last 8 KiB of the log;
 7. otherwise judges the output directory, then each declared output through its descriptor, by its facts, and reads only the step's peaks and the reports that the host parses, through their own strict parsers, and never reads any other output.
 
 Every step ends through the core's shared step modules: it writes its control group's `memory.peak` and `pids.peak` into `peaks.json`, read inside the container at its exit, since the host's polling misses a short container, then sets each of its outputs to mode 0640, since some libraries write theirs readable by their owner alone, which the host is not.
 
-`./model-build.sh --work <dir> clean [<step>]` removes the outputs of a step at HEAD's commit, or of every step: a container of the step's image empties the output directory, mounting it alone, since a directory that a step made there belongs to the container user; the host then removes the empty directory, the request and the log.
+`./model-build.sh --work <dir> --recipe <name> clean [<step>]` removes the outputs of a step at HEAD's commit, or of every step of the core and the recipe: a container of the step's image, with the core's entry module even in a recipe's image, empties the output directory, mounting it alone, since a directory that a step made there belongs to the container user; the host then removes the empty directory, the request and the log.
 
 ## The images
 
-Each image has a Containerfile in `images/<image>/`, built with the repository's root as its context and an allow-list dockerignore beside it, `Containerfile.dockerignore`, which excludes everything but what the image copies. The core's images:
+Each image has a Containerfile, the core's in `images/<image>/` and a recipe's in `recipes/<family>/images/<image>/`, built with the repository's root as its context and an allow-list dockerignore beside it, `Containerfile.dockerignore`, which excludes everything but what the image copies. The core's images:
 
 | Image | Holds |
 |---|---|
 | `bench` | The Python base and the core's sources: the FLEURS check runs on the standard library |
 | `uv` | The Python base, the uv binary of the pinned uv image, and the core's sources: the lock's resolution |
 
-`./model-build.sh --work <dir> images` builds them, from a clone with no change and no untracked file, under the tags `mostt-model-builder-<owner>-<image>`, such as `mostt-model-builder-core-bench`, so that they never clash with other images. Each carries the git tree of HEAD as its `mostt-model-builder.tree` label, set by the last lines of its Containerfile, after the heavy layers, which a change of code then reuses: a step runs an image by its ID only while its label is the tree of HEAD, so that a step never runs code that no commit names. The bases are pinned by digest in `domain/containers/base_images.py`.
+An image of a recipe also copies the recipe's sources, at the repository's layout, and installs its libraries from its extra of the images' environment ([Recipes](#recipes) lists them).
+
+`./model-build.sh --work <dir> --recipe <name> images` builds the core's images and the recipe's, from a clone with no change and no untracked file, under the tags `mostt-model-builder-<owner>-<image>`, such as `mostt-model-builder-core-bench`, so that they never clash with other images. Each carries the git tree of HEAD as its `mostt-model-builder.tree` label, set by the last lines of its Containerfile, after the heavy layers, which a change of code then reuses: a step runs an image by its ID only while its label is the tree of HEAD, so that a step never runs code that no commit names. The bases are pinned by digest in `domain/containers/base_images.py`.
 
 ## The images' environment and its lock
 
@@ -115,6 +119,72 @@ Both checks read a lock as text, with `tomllib`, since no command on the host ma
 
 A resolution may run the build code of an sdist, which the images' environment allows: `.claude/rules/container-security.md` > Images and outputs states the risks that remain and what stands against them.
 
+A package published as an sdist alone is named in the manifest's `[[tool.uv.dependency-metadata]]`, with its version and no dependency, so that a resolution never builds it to learn them, and an image that needs it builds it in a stage of its own, from the hashes the repository holds and without the network, rather than through `pip download`, which would run its `setup.py` with the network to read its metadata. `.claude/rules/container-security.md` > Images and outputs, "A build is reproducible", gives what such a stage holds, and `tests/test_recipe_listing.py` holds each build stage to it.
+
+The one such package is antlr4-python3-runtime 4.9.3, which hydra-core and omegaconf require for NeMo and which publishes no wheel, built with setuptools 84.2.1 in the export image of Parakeet TDT.
+
 ## The FLEURS check
 
-`./model-build.sh --work <dir> step fleurs-check` checks the bench before any recipe reads it: in the `bench` image, on the standard library, it reads the index of each language, then its archive member by member, and requires every recording of the index exactly once, under `test/<recording>`, as a WAV file of one channel at 16 kHz, in 16-bit integers or 32-bit floats, with the count of samples its index gives. It reads no member outside the index, and the archives are read in a container only, never on the host. Its report, `fleurs-check.json`, gives each recording's duration in samples, in the order of the index, for the reports of the measures (planned); the host reads it through its strict parser.
+`./model-build.sh --work <dir> --recipe <name> step fleurs-check` checks the bench before any recipe reads it: in the `bench` image, on the standard library, it reads the index of each language, then its archive member by member, and requires every recording of the index exactly once, under `test/<recording>`, as a WAV file of one channel at 16 kHz, in 16-bit integers or 32-bit floats, with the count of samples its index gives. It reads no member outside the index, and the archives are read in a container only, never on the host. Its report, `fleurs-check.json`, gives each recording's duration in samples, in the order of the index, for the reports of the measures (planned); the host reads it through its strict parser.
+
+## The recipe contract
+
+A recipe gives the core plain data, `RECIPE` in its `recipe.py`, of the type `RecipeContract` of `domain/contract/recipe_contract.py`, and the core judges every field of it when it loads the recipe, before any command runs. The host's command line imports a recipe's `recipe.py` and domain, never its steps, which run only in their containers. A recipe adds what its family needs without changing the core, and cannot widen the confinement the core imposes: `.claude/rules/container-security.md` > Confinement gives each check.
+
+| Field | Holds |
+|---|---|
+| `name` | The recipe's name, `[a-z0-9][a-z0-9-]{0,31}`, equal to its directory under `recipes/`; its package is `mostt_recipe_<name>`, with `-` turned into `_` |
+| `images` | Its images, each with its name, never one of the core's, its device, `cpu` or `gpu`, and its extra of the images' environment, `<recipe>-<image>`; at most one of them reads the sources that run code when they load |
+| `steps` | Its rows of the step table, each with its name, never one of the core's, its image, the recipe's or the core's, its entry module inside the recipe's `steps` package, or the core's for a core image, its mounts, its outputs with their size bounds, its limits, and whether it uses the GPU |
+| `candidate` | The files of the candidate, each with its name, its format, the variants it serves, and where it comes from: a declared output of a step, or a content that the host writes, such as a small configuration file a runtime reads (planned: the candidate's assembly) |
+
+A mount names either a pinned file of the core's or the recipe's sources, by its repository and its path, or a declared output of an earlier step of the recipe, by the step and the file's name. A directory is never mounted, so that a step sees only the files its row names.
+
+Fields for the parities, the runs and their readers, and the comparisons of the measures come with the parts of the build that read them (planned).
+
+## The formats
+
+Every file of a candidate has one of three formats, which the core knows by name, `domain/formats/file_formats.py`; the contract refuses any other, and a format comes with the first recipe that needs it:
+
+| Format | Holds |
+|---|---|
+| `onnx` | An ONNX model |
+| `text` | A text file in UTF-8, such as a vocabulary or a configuration |
+| `onnx-external-data` | The external data of one `onnx` file, its tensors at the offsets that file gives |
+
+Whatever its format, a candidate's name follows the grammar of a published file name, `[A-Za-z0-9][A-Za-z0-9._-]{0,127}`, and is refused with a suffix that marks code, a pickle or an archive, in any position and whatever its case, so that no published file can carry one. The checks of each format's structure, and the inspection of the ONNX files, come with the candidate (planned).
+
+## The published layout
+
+The published files are the contract with mostt, which pins them by hash: their names, their formats and their structure. The two repositories share no code, and the names and the suffixes that this one refuses are those of mostt's model store, so that every published file passes it. The candidate of Parakeet TDT, laid out for onnx-asr (planned: the files below are the target of its build, which writes none of them yet):
+
+| File | Format |
+|---|---|
+| `encoder-model.onnx` | `onnx`, the FP32 encoder |
+| `encoder-model.onnx.data` | `onnx-external-data`, the external data of `encoder-model.onnx` |
+| `encoder-model.fp16.onnx`, `encoder-model.bf16.onnx`, `encoder-model.int8.onnx` | `onnx`, the converted encoders, each a single file |
+| `decoder_joint-model.onnx`, `decoder_joint-model.fp16.onnx`, `decoder_joint-model.bf16.onnx`, `decoder_joint-model.int8.onnx` | `onnx`, the FP32 decoder and joint, the same file under each name, since onnx-asr picks one file per quantization |
+| `vocab.txt` | `text`, the vocabulary of Parakeet TDT 0.6B v3, at the SHA-256 `d58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d` |
+| `config.json` | `text`: `{"model_type": "nemo-conformer-tdt", "features_size": 128, "subsampling_factor": 8, "max_tokens_per_step": 10}`, which onnx-asr reads, since its defaults would choose the wrong preprocessor |
+
+## Recipes
+
+| Recipe | Builds |
+|---|---|
+| `parakeet-tdt` | Parakeet Ultra, Moondream's post-training of NVIDIA's Parakeet TDT 0.6B v3, in ONNX |
+
+### Parakeet TDT
+
+**Sources.** `recipes/parakeet-tdt/sources.toml` pins Moondream's `config.json`, `tokenizer.json` and `model.safetensors` from `moondream/parakeet-ultra`, and the `.nemo` archive of `nvidia/parakeet-tdt-0.6b-v3`, the one source of the build that runs code when it loads. Moondream publishes weights in the layout of Transformers, without a `.nemo`, so NeMo builds the model from the configuration of v3's archive, whose architecture and vocabulary Ultra keeps, and loads Moondream's weights into it.
+
+**The export image,** `mostt-model-builder-parakeet-tdt-export`, installs the extra `parakeet-tdt-export`: NeMo 3.0.0 with its speech recognition, torch 2.15.0, safetensors, onnx, onnxscript, onnx-ir, ONNX Runtime and numpy, each pinned exactly, and antlr4-python3-runtime from its build stage. It is the one image that reads the `.nemo`.
+
+**`describe`** lists the tensors on both sides of the weights' mapping, so that the mapping is tested on the host against real names without loading a model there: Moondream's, read from the header of its safetensors file without loading a tensor, and those of NeMo's model, built from the `.nemo`'s configuration alone. NeMo reads the configuration with `restore_from(return_config=True)`, which reads no checkpoint; the step extracts only the tokenizer's files that the configuration names, `nemo:<file name>`, each found by its exact name at the archive's root, into the container's `/tmp`, points the configuration at them, and sets to null the sections of the training, validation and test data, which would otherwise build data loaders for datasets that are not there. The checkpoint, a pickle, is never loaded: the weights come from Moondream's safetensors file. `recipes/parakeet-tdt/src/mostt_recipe_parakeet_tdt/domain/export/nemo_configuration.py` holds that preparation, tested on the archive's real names.
+
+| Row | Image | Memory MiB | Processes | CPUs | `/tmp` MiB | Reason of the limits |
+|---|---|---|---|---|---|---|
+| `describe` | `export` | 5 120 | 128 | 8 | 512 | NeMo's build of the model, with Moondream's weights loaded, peaked at 3.4 GiB and 60 processes |
+
+Its outputs, `moondream-tensors` and `nemo-state-dict`, give one tensor per line, its name, its type and its shape, separated by tabs.
+
+The export, its checks against NeMo and Transformers, the variants, and the transcription of FLEURS with onnx-asr come with the rest of the build (planned).

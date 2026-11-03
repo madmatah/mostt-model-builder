@@ -12,7 +12,6 @@ from mostt_model_builder.application.run_step import (
 )
 from mostt_model_builder.domain.containers.container_files import FileKind, judge_mount
 from mostt_model_builder.domain.containers.container_steps import (
-    CORE_OWNER,
     StepRow,
     build_clean_row,
     plan_container_run,
@@ -36,6 +35,7 @@ class CleanOutcome(Enum):
 @dataclass(frozen=True, slots=True)
 class CleanRequest:
     row: StepRow
+    recipe_name: str
     commit: str
     work_root: PurePosixPath
     head_tree: str
@@ -43,7 +43,7 @@ class CleanRequest:
 
 
 def clean_step(request: CleanRequest, engine: ContainerEngine, files: CleanFiles) -> CleanOutcome:
-    placement = place_step(CORE_OWNER, request.commit, request.row.name)
+    placement = place_step(request.recipe_name, request.commit, request.row.name)
     output_directory = placement.output_directory
     request_directory = placement.request_directory
     has_outputs = is_judged_directory(request, output_directory, files)
@@ -85,8 +85,8 @@ def empty_output_directory(
 ) -> None:
     clean_row = build_clean_row(request.row.image)
     image_id = prepare_container(clean_row, request.head_tree, request.host, engine)
-    clean_placement = place_clean(CORE_OWNER, request.commit, request.row.name)
+    clean_placement = place_clean(request.recipe_name, request.commit, request.row.name)
     run = plan_container_run(
-        clean_row, image_id, clean_placement, {}, request.work_root, request.host.group_id
+        clean_row, image_id, clean_placement, {}, request.work_root, request.host.group_id, {}
     )
     run_judged_container(run, clean_placement.log_path, clean_row.name, request.host, engine, files)

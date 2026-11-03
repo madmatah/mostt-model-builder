@@ -30,6 +30,18 @@ from mostt_model_builder.domain.containers.container_steps import (
     build_clean_row,
     plan_container_run,
 )
+from mostt_model_builder.domain.contract.recipe_contract import (
+    RECIPES_DIRECTORY_NAME,
+    JudgedRecipe,
+    RecipeFacts,
+    judge_recipe,
+)
+from mostt_model_builder.host_main import (
+    CLONE_ROOT,
+    RECIPES,
+    find_present_entry_modules,
+    read_pins,
+)
 
 IMAGE_ID = "sha256:" + "b" * 64
 TREE_HASH = "3f1d1ffe79bc3336eb583331cfbf9b189fd45f01"
@@ -41,7 +53,32 @@ PLACEMENT = StepPlacement(
     request_directory=PurePosixPath("runs/core/c0ffee/requests/step"),
     log_path=PurePosixPath("runs/core/c0ffee/logs/step.log"),
 )
-EVERY_ROW = (FLEURS_CHECK_ROW, LOCK_ROW, *(build_clean_row(image) for image in CORE_IMAGES))
+HOST_CPU_COUNT = 20
+
+
+def judge_every_recipe() -> tuple[JudgedRecipe, ...]:
+    return tuple(
+        judge_recipe(
+            contract,
+            RecipeFacts(
+                core_pins=read_pins(CLONE_ROOT),
+                recipe_pins=read_pins(CLONE_ROOT / RECIPES_DIRECTORY_NAME / contract.name),
+                present_entry_modules=find_present_entry_modules(contract),
+                host_cpu_count=HOST_CPU_COUNT,
+            ),
+        )
+        for contract in RECIPES.values()
+    )
+
+
+JUDGED_RECIPES = judge_every_recipe()
+EVERY_ROW = (
+    FLEURS_CHECK_ROW,
+    LOCK_ROW,
+    *(build_clean_row(image) for image in CORE_IMAGES),
+    *(row for recipe in JUDGED_RECIPES for row in recipe.rows),
+    *(build_clean_row(image) for recipe in JUDGED_RECIPES for image in recipe.images),
+)
 ROW_IDS = [f"{row.name} in {row.image.tag}" for row in EVERY_ROW]
 CONFINEMENT_SEQUENCES = {
     "removed once it exits": ["--rm"],
@@ -79,7 +116,13 @@ def plan_row(row: StepRow) -> ContainerRun:
         reference: PurePosixPath("sources", reference.repository, REVISION, reference.path)
         for reference in row.sources
     }
-    return plan_container_run(row, IMAGE_ID, PLACEMENT, source_paths, WORK_ROOT, GROUP_ID)
+    earlier_output_directories = {
+        earlier_output.step: PurePosixPath("runs/core/c0ffee", earlier_output.step)
+        for earlier_output in row.earlier_outputs
+    }
+    return plan_container_run(
+        row, IMAGE_ID, PLACEMENT, source_paths, WORK_ROOT, GROUP_ID, earlier_output_directories
+    )
 
 
 def find_sequence(arguments: list[str], sequence: list[str]) -> int | None:
@@ -180,8 +223,12 @@ class TestTheDockerEngine:
                     if setting.split("=", 1)[0] in PROXY_VARIABLE_NAMES
                 ) == sorted(f"{name}=" for name in PROXY_VARIABLE_NAMES)
 
-            def test_should_give_no_device(self, run_arguments: list[str]) -> None:
-                assert read_option_values(run_arguments, "--device") == []
+            def test_should_give_the_gpus_to_a_row_that_uses_them_alone(
+                self, run_arguments: list[str], row: StepRow
+            ) -> None:
+                assert read_option_values(run_arguments, "--device") == (
+                    ["nvidia.com/gpu=all"] if row.uses_gpu else []
+                )
 
             def test_should_mount_only_the_rows_files_and_directories(
                 self, run_arguments: list[str], row: StepRow
