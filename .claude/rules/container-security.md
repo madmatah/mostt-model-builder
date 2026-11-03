@@ -1,12 +1,13 @@
 ---
 paths:
+  - "model-build.sh"
   - "src/**"
   - "recipes/**"
   - "images/**"
   - "pyproject.toml"
   - "uv.lock"
   - ".python-version"
-  - "tests/test_mostt_model_builder.py"
+  - "tests/**"
 ---
 
 # Container security
@@ -15,10 +16,10 @@ A build loads the code of the models' frameworks, such as NeMo, torch and Transf
 
 ## The host
 
-- **The host runs on its own Python and the standard library, isolated:** the host's side of the build runs under `-I -S -B` and imports only the standard library and the project's own packages, never a library of the steps, such as torch, NeMo, Transformers, onnx or ONNX Runtime. `-I` ignores the environment's Python variables, the user's site directory and the current directory, `-S` leaves the site packages out, and `-B` writes no bytecode into the clone, so that nothing installed on the host, and nothing planted beside the code, runs with the user's rights. The one place that changes `sys.path` is the bootstrap of the launcher, which appends the project's `src` and each recipe's. Check: `tests/test_mostt_model_builder.py` imports the package under `-I -S -B` and refuses any module from outside the standard library and the package.
+- **The host runs on its own Python and the standard library, isolated:** the host's side of the build runs under `-I -S -B` and imports only the standard library and the project's own packages, never a library of the steps, such as torch, NeMo, Transformers, onnx or ONNX Runtime. `-I` ignores the environment's Python variables, the user's site directory and the current directory, `-S` leaves the site packages out, and `-B` writes no bytecode into the clone, so that nothing installed on the host, and nothing planted beside the code, runs with the user's rights. The one place that changes `sys.path` is the bootstrap, `src/mostt_model_builder/bootstrap.py`, which the launcher, `model-build.sh`, and every step run by path: it appends the project's `src` and each recipe's, and only a real directory whose name follows the recipe grammar, then runs the entry module it is given. It imports nothing of the packages, since it runs before they are on the path. Check: `tests/test_mostt_model_builder.py` imports the command line under `-I -S -B` and refuses any module from outside the standard library and the package; `tests/test_model_build_launcher.py` checks that the launcher runs the bootstrap under `-I -S -B`; `tests/test_bootstrap.py` checks the paths the bootstrap appends and the entry modules it refuses; `lint-imports` keeps the bootstrap's imports out of the packages.
 - **A container step's Python runs under `-I -B`:** the image's own Python, which keeps its site for the libraries the image installed, and nothing from the environment or the working directory, so that a step runs the same code at every build.
-- **Root is refused:** the host's entry point exits with status 77 before it reads anything, when any of the real, effective or saved user or group ids of its process is 0. A build as root would leave files in the work directory that the user cannot remove, and would give any mistake of the launcher the whole machine.
-- **uv never builds a package on the host:** `no-build = true` in `[tool.uv]`, so that every install takes a wheel by its hash and no package's build code, such as a `setup.py`, runs outside a container.
+- **Root is refused:** the bootstrap's first act, before it reads anything, is to exit with status 77 when any of the real, effective or saved user or group ids of its process is 0. A build as root would leave files in the work directory that the user cannot remove, and would give any mistake of the launcher the whole machine. Check: `tests/test_bootstrap.py`, on each of the six ids.
+- **uv never builds a package on the host:** `no-build = true` in `[tool.uv]`, so that every install takes a wheel by its hash and no package's build code, such as a `setup.py`, runs outside a container. Check: `tests/test_project_manifests.py` holds the host's `[tool.uv]` to exactly `package = false` and `no-build = true`.
 - **What a container prints or writes is data, never an instruction:** the host takes no command, path or decision from it beyond what a strict, bounded parser of its own accepts, one parser per kind of file, each with its refusal tests. Output shown on the terminal goes through a filter that turns every byte outside printable ASCII, the tab and the line feed into `?`, and is bounded, so that it can neither forge the terminal's display nor fill it.
 
 ## Confinement

@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 PACKAGE_NAME = "mostt_model_builder"
+HOST_ENTRY_MODULE = f"{PACKAGE_NAME}.host_main"
 SOURCE_DIRECTORY = Path(__file__).resolve().parent.parent / "src"
 PACKAGE_DIRECTORY = SOURCE_DIRECTORY / PACKAGE_NAME
 STANDARD_LIBRARY_DIRECTORIES = (
@@ -20,7 +21,7 @@ import json
 import sys
 
 sys.path.append(sys.argv[1])
-import {PACKAGE_NAME}
+import {HOST_ENTRY_MODULE}
 
 origins = {{}}
 for name, module in sys.modules.items():
@@ -63,7 +64,7 @@ def list_foreign_modules(origins: dict[str, str | None]) -> dict[str, str | None
 
 class TestTheMosttModelBuilderPackage:
     class TestTheImport:
-        class TestWhenAPythonWithoutItsEnvironmentAndSitePackagesImportsIt:
+        class TestWhenAPythonWithoutItsEnvironmentAndSitePackagesImportsItsCommandLine:
             @pytest.fixture(scope="class")
             @classmethod
             def module_origins(cls) -> dict[str, str | None]:
@@ -84,8 +85,10 @@ class TestTheMosttModelBuilderPackage:
                 )
                 return parse_module_origins(completed_import.stdout)
 
-            def test_should_load_the_package(self, module_origins: dict[str, str | None]) -> None:
-                assert PACKAGE_NAME in module_origins
+            def test_should_load_the_command_line(
+                self, module_origins: dict[str, str | None]
+            ) -> None:
+                assert HOST_ENTRY_MODULE in module_origins
 
             def test_should_load_only_the_standard_library_and_itself_so_no_third_party_code_runs(
                 self, module_origins: dict[str, str | None]

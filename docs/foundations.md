@@ -37,7 +37,7 @@ Notes:
   - `setup-uv` installs uv 0.13.7, the one pin of uv, and uv installs the Python that `.python-version` names;
   - no cache is saved or restored: the install takes seconds, and a restored cache would run in the gate unchecked.
 - **`CLAUDE.md` and `.claude/` are the agent guidance** ([Agent guidance](#agent-guidance)).
-- **The project has no build backend** (`package = false`): it is a tool run from its clone, never installed as a package, so each tool is given the path of its packages, `mypy_path` for mypy, `pythonpath` for pytest and `PYTHONPATH` for `lint-imports`, and the host's launcher (planned) appends them itself.
+- **The project has no build backend** (`package = false`): it is a tool run from its clone, never installed as a package, so each tool is given the path of its packages, `mypy_path` for mypy, `pythonpath` for pytest and `PYTHONPATH` for `lint-imports`, and the bootstrap appends them itself, run by path from the launcher, `model-build.sh`, and from every step.
 - **No package is built on the host** (`no-build = true`): every development tool publishes wheels, and a package built from its source would run its build code with the user's rights.
 - **`ruff format` checks the Python blocks of the Markdown documents too,** such as the example of `.claude/rules/tests.md`, so that an example reads as the code it shows.
 - **Python 3.12** is the version of the base image of the planned build images, so that the host's side and the steps run the same language.
@@ -61,7 +61,7 @@ The project follows Clean Architecture: the rules live in a pure domain at the c
 
 | Layer | Module | Responsibility | Depends on |
 |---|---|---|---|
-| Composition roots | `core` | The project's package, `mostt_model_builder`, and its command line on the host, `host_main.py` (planned), which reads the terminal's input and wires the adapters and the recipes | every layer, and each recipe's `recipe.py` and domain |
+| Composition roots | `core` | The project's package, `mostt_model_builder`; its command line on the host, `host_main.py`, which reads the terminal's input and wires the adapters and the recipes (planned); and its bootstrap, `bootstrap.py`, which puts the packages on the path and runs an entry module, on the host and in every step | every layer, and each recipe's `recipe.py` and domain |
 | Composition roots | `steps` (planned) | The entry module of each of the core's container steps, which runs in its container on the libraries of its image | `domain` |
 | Adapters | `adapters` (planned) | curl, Docker, git and the files of the work directory | `application`, `domain` |
 | Application | `application` (planned) | Fetches the sources, runs a step, cleans its outputs, assembles the candidate and verifies it | `domain` |
@@ -91,6 +91,7 @@ mostt-model-builder/
 ├── CREDITS.md                   # External work reused, with its terms
 ├── LICENSE                      # MIT
 ├── README.md
+├── model-build.sh               # The launcher: runs the bootstrap on the host's Python, isolated
 ├── pyproject.toml               # The manifest: dependencies, and the configuration of the tools
 └── uv.lock                      # The lockfile
 ```
@@ -104,11 +105,12 @@ The project is a single module, and its packages stand for the modules of [Layer
 ```
 src/mostt_model_builder/
 ├── __init__.py                  # The package
+├── bootstrap.py                 # Run by path: puts the packages on the path, runs an entry module
 ├── domain/                      # (planned) the pure rules, one concept per file
 ├── application/                 # (planned) the use cases and their ports
 ├── adapters/                    # (planned) one file or directory per technology
 ├── steps/                       # (planned) the entry modules of the core's container steps
-└── host_main.py                 # (planned) the command line on the host
+└── host_main.py                 # The command line on the host
 recipes/<family>/                # (planned) a recipe
 ├── images/                      # its Containerfiles
 ├── src/mostt_recipe_<family>/
@@ -130,8 +132,9 @@ Each row names a rule, the rules file that states it, and what enforces it.
 | Formatted by `ruff format` and linted by `ruff check` (`.claude/rules/conventions.md` > Python) | `ruff format --check` and `ruff check`, in the gate |
 | Typed strictly (`.claude/rules/conventions.md` > Python) | `mypy`, strict with `warn_unreachable`, in the gate |
 | Python 3.12 syntax (`.claude/rules/conventions.md` > Python) | `ruff`'s `UP` rules, with `target-version = "py312"` |
-| The host runs on its own Python and the standard library, isolated (`.claude/rules/container-security.md` > The host) | `tests/test_mostt_model_builder.py`, which imports the package under `-I -S -B` |
-| uv never builds a package on the host (`.claude/rules/container-security.md` > The host) | `no-build = true` in `[tool.uv]` |
+| The host runs on its own Python and the standard library, isolated (`.claude/rules/container-security.md` > The host) | `tests/test_mostt_model_builder.py`, which imports the command line under `-I -S -B`; `tests/test_model_build_launcher.py`, which checks that the launcher runs the bootstrap under `-I -S -B`; `tests/test_bootstrap.py`, which checks the paths the bootstrap appends; `lint-imports`, which keeps the bootstrap's imports out of the packages |
+| Root is refused (`.claude/rules/container-security.md` > The host) | `tests/test_bootstrap.py`, on each of the six ids |
+| uv never builds a package on the host (`.claude/rules/container-security.md` > The host) | `no-build = true` in `[tool.uv]`, which `tests/test_project_manifests.py` holds, with the host's empty dependencies and its exact pins |
 | Markers are strict and warnings are errors (`.claude/rules/tests.md` > pytest) | `--strict-markers`, `--strict-config` and `filterwarnings = ["error"]` in `pyproject.toml` |
 | A commit footer holds only what tools read (`CLAUDE.md` > Workflow) | `attribution` in `.claude/settings.json`, which keeps Claude Code's own commit trailers and pull request line out |
 | Every rule no tool can check: architecture, tests as specification… | `/expert-review` ([Code review](#code-review)), before every pull request |
