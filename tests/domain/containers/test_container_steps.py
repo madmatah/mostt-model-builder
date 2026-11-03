@@ -13,11 +13,13 @@ from mostt_model_builder.domain.containers.container_steps import (
     CANDIDATE_IN_THE_CONTAINER,
     CLEAN_STEP_NAME,
     CONTAINER_USER_ID,
+    CONVERT_STEP_NAME,
     CORE_IMAGES,
     FLEURS_CHECK_ROW,
     INSPECT_ROW,
     LOCK_ROW,
     LOCK_STEP_NAME,
+    ONNX_CONVERT_IMAGE,
     ONNX_INSPECT_IMAGE,
     OUTPUT_IN_THE_CONTAINER,
     PEAKS_FILE_NAME,
@@ -30,6 +32,7 @@ from mostt_model_builder.domain.containers.container_steps import (
     ContainerRun,
     DeclaredOutput,
     Device,
+    EarlierOutput,
     SourceReference,
     StepLimits,
     StepPlacement,
@@ -37,6 +40,7 @@ from mostt_model_builder.domain.containers.container_steps import (
     StepTableError,
     TemporaryFilesystem,
     build_clean_row,
+    build_convert_row,
     judge_row,
     plan_container_run,
 )
@@ -109,6 +113,15 @@ GOOD_LIMITS = StepLimits(memory_mib=1024, process_count=64, cpu_count=2, tempora
 CLEAN_ROW = build_clean_row(CORE_IMAGES[0])
 GPU_IMAGE = ContainerImage("core", "gpu-probe", Device.GPU, BASE_PYTHON)
 RECIPE_IMAGE = ContainerImage("family", "export", Device.CPU, BASE_PYTHON)
+EXPORT_OUTPUT_NAMES = ("encoder.onnx", "encoder.onnx.data", PEAKS_FILE_NAME)
+CONVERSION_INPUTS = (
+    EarlierOutput("export", DeclaredOutput("encoder.onnx", 2**20), EXPORT_OUTPUT_NAMES),
+    EarlierOutput("export", DeclaredOutput("encoder.onnx.data", 2**31), EXPORT_OUTPUT_NAMES),
+)
+CONVERTED_OUTPUTS = (
+    DeclaredOutput("encoder.fp16.onnx", 2**31),
+    DeclaredOutput("encoder.int8.onnx", 2**31),
+)
 SCRATCH_ROW = replace(FLEURS_CHECK_ROW, limits=replace(GOOD_LIMITS, scratch_mib=256))
 REFUSED_ROWS = {
     "a name outside the grammar": (
@@ -343,6 +356,7 @@ class TestTheContainerSteps:
                 "mostt-model-builder-core-bench",
                 "mostt-model-builder-core-uv",
                 "mostt-model-builder-core-onnx-inspect",
+                "mostt-model-builder-core-onnx-convert",
             ]
 
         def test_should_run_the_bench_and_the_uv_images_on_the_bases_python_without_a_venv(
@@ -355,6 +369,11 @@ class TestTheContainerSteps:
         ) -> None:
             assert ONNX_INSPECT_IMAGE.python == ENVIRONMENT_PYTHON
 
+        def test_should_convert_in_the_venv_of_its_image_which_installs_the_converters(
+            self,
+        ) -> None:
+            assert ONNX_CONVERT_IMAGE.python == ENVIRONMENT_PYTHON
+
         def test_should_inspect_the_candidate_within_three_gib_and_two_cpus(self) -> None:
             assert (INSPECT_ROW.limits, INSPECT_ROW.binds_candidate) == (
                 StepLimits(
@@ -362,6 +381,54 @@ class TestTheContainerSteps:
                 ),
                 True,
             )
+
+    class TestTheBuildConvertRowFunction:
+        class TestWhenTheConversionsReadAnEncoderAndItsExternalData:
+            @pytest.fixture
+            def convert_row(self) -> StepRow:
+                return build_convert_row(CONVERSION_INPUTS, CONVERTED_OUTPUTS)
+
+            def test_should_run_the_cores_conversion_in_the_conversions_image(
+                self, convert_row: StepRow
+            ) -> None:
+                assert (convert_row.name, convert_row.image, convert_row.entry_module) == (
+                    CONVERT_STEP_NAME,
+                    ONNX_CONVERT_IMAGE,
+                    "mostt_model_builder.steps.onnx_conversion",
+                )
+
+            def test_should_bind_the_input_and_its_external_data_each_by_itself(
+                self, convert_row: StepRow
+            ) -> None:
+                assert (convert_row.earlier_outputs, convert_row.sources) == (
+                    CONVERSION_INPUTS,
+                    (),
+                )
+
+            def test_should_read_a_request_and_no_candidate(self, convert_row: StepRow) -> None:
+                assert (convert_row.has_request, convert_row.binds_candidate) == (True, False)
+
+            def test_should_write_each_converted_file_then_its_report_and_its_peaks(
+                self, convert_row: StepRow
+            ) -> None:
+                assert convert_row.outputs == (
+                    *CONVERTED_OUTPUTS,
+                    DeclaredOutput("conversion-report.json", 64 * 1024),
+                    DeclaredOutput(PEAKS_FILE_NAME, 4096),
+                )
+
+            def test_should_convert_within_thirteen_gib_and_four_cpus_without_the_gpu(
+                self, convert_row: StepRow
+            ) -> None:
+                assert (convert_row.limits, convert_row.uses_gpu) == (
+                    StepLimits(
+                        memory_mib=13_312,
+                        process_count=64,
+                        cpu_count=4,
+                        temporary_directory_mib=256,
+                    ),
+                    False,
+                )
 
     class TestThePlanContainerRunFunction:
         @pytest.mark.parametrize("row", EVERY_ROW, ids=ROW_IDS)

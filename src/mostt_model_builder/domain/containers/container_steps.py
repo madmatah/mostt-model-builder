@@ -12,6 +12,10 @@ from mostt_model_builder.domain.bench.fleurs_index import BENCH_LANGUAGES, locat
 from mostt_model_builder.domain.containers.base_images import BASE_PYTHON, ENVIRONMENT_PYTHON
 from mostt_model_builder.domain.formats.file_names import is_file_name
 from mostt_model_builder.domain.lock.lock_check import LOCK_FILE_NAME, LOCK_MAX_SIZE_BYTES
+from mostt_model_builder.domain.onnx.conversion_report import (
+    CONVERSION_REPORT_FILE_NAME,
+    CONVERSION_REPORT_MAX_SIZE_BYTES,
+)
 from mostt_model_builder.domain.onnx.inspection_report import (
     INSPECTION_REPORT_FILE_NAME,
     INSPECTION_REPORT_MAX_SIZE_BYTES,
@@ -70,6 +74,7 @@ FLEURS_CHECK_STEP_NAME = "fleurs-check"
 CLEAN_STEP_NAME = "clean"
 LOCK_STEP_NAME = "lock"
 INSPECT_STEP_NAME = "inspect"
+CONVERT_STEP_NAME = "convert"
 # Docker reads 0 or -1 as no limit, and refuses a memory limit under 6 MiB; the ceilings only
 # refuse a value that no step could mean on the machines a build runs on.
 MIN_MEMORY_MIB = 6
@@ -204,7 +209,8 @@ class ContainerRun:
 BENCH_IMAGE = ContainerImage(CORE_OWNER, "bench", Device.CPU, BASE_PYTHON)
 UV_CONTAINER_IMAGE = ContainerImage(CORE_OWNER, "uv", Device.CPU, BASE_PYTHON)
 ONNX_INSPECT_IMAGE = ContainerImage(CORE_OWNER, "onnx-inspect", Device.CPU, ENVIRONMENT_PYTHON)
-CORE_IMAGES = (BENCH_IMAGE, UV_CONTAINER_IMAGE, ONNX_INSPECT_IMAGE)
+ONNX_CONVERT_IMAGE = ContainerImage(CORE_OWNER, "onnx-convert", Device.CPU, ENVIRONMENT_PYTHON)
+CORE_IMAGES = (BENCH_IMAGE, UV_CONTAINER_IMAGE, ONNX_INSPECT_IMAGE, ONNX_CONVERT_IMAGE)
 PEAKS_OUTPUT = DeclaredOutput(PEAKS_FILE_NAME, PEAKS_MAX_SIZE_BYTES)
 FLEURS_CHECK_ROW = StepRow(
     name=FLEURS_CHECK_STEP_NAME,
@@ -251,6 +257,14 @@ INSPECT_ROW = StepRow(
 )
 RUNNABLE_CORE_ROWS = (FLEURS_CHECK_ROW, INSPECT_ROW)
 CLEAN_LIMITS = StepLimits(memory_mib=256, process_count=32, cpu_count=1, temporary_directory_mib=16)
+# The conversions of the encoder, its 2.4 GB of weights loaded whole for each variant, peaked at
+# 9.7 GiB and 41 processes.
+CONVERT_LIMITS = StepLimits(
+    memory_mib=13_312, process_count=64, cpu_count=4, temporary_directory_mib=256
+)
+CONVERSION_REPORT_OUTPUT = DeclaredOutput(
+    CONVERSION_REPORT_FILE_NAME, CONVERSION_REPORT_MAX_SIZE_BYTES
+)
 
 
 def find_package_of_owner(owner: str) -> str:
@@ -272,6 +286,21 @@ def build_clean_row(image: ContainerImage) -> StepRow:
         has_request=False,
         outputs=(),
         limits=CLEAN_LIMITS,
+    )
+
+
+def build_convert_row(
+    inputs: tuple[EarlierOutput, ...], converted_outputs: tuple[DeclaredOutput, ...]
+) -> StepRow:
+    return StepRow(
+        name=CONVERT_STEP_NAME,
+        image=ONNX_CONVERT_IMAGE,
+        entry_module=f"{CORE_STEPS_PACKAGE}.onnx_conversion",
+        sources=(),
+        has_request=True,
+        outputs=(*converted_outputs, CONVERSION_REPORT_OUTPUT, PEAKS_OUTPUT),
+        limits=CONVERT_LIMITS,
+        earlier_outputs=inputs,
     )
 
 

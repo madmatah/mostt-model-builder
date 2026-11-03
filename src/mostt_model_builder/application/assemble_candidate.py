@@ -37,7 +37,9 @@ from mostt_model_builder.domain.contract.recipe_contract import (
     HostContentOrigin,
     JudgedCandidateFile,
     StepOutputOrigin,
+    VariantConversion,
     find_candidate_file_max_size_bytes,
+    find_graph_source,
 )
 from mostt_model_builder.domain.formats.external_data import judge_external_data
 from mostt_model_builder.domain.formats.file_formats import (
@@ -50,7 +52,7 @@ from mostt_model_builder.domain.formats.file_signatures import (
     SIGNATURE_HEAD_BYTES,
     find_signature_refusal,
 )
-from mostt_model_builder.domain.onnx.graph_rules import GraphSource, judge_graph
+from mostt_model_builder.domain.onnx.graph_rules import judge_graph
 from mostt_model_builder.domain.onnx.inspection_report import (
     INSPECTION_REPORT_FILE_NAME,
     INSPECTION_REQUEST_FILE_NAME,
@@ -94,6 +96,7 @@ class CandidateRequest:
     candidate: Sequence[JudgedCandidateFile]
     rows: Sequence[StepRow]
     conversion_input: StepOutputOrigin | None
+    conversions: Sequence[VariantConversion] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -272,13 +275,10 @@ def judge_inspected_candidate(
     for candidate_file in request.candidate:
         if candidate_file.file_format is not FileFormat.ONNX:
             continue
-        source = (
-            GraphSource.CONVERSION_INPUT
-            if candidate_file.origin == request.conversion_input
-            else GraphSource.OTHER
-        )
         judge_graph(
-            inspections[candidate_file.name], source, external_data_files.get(candidate_file.name)
+            inspections[candidate_file.name],
+            find_graph_source(candidate_file.origin, request.conversion_input, request.conversions),
+            external_data_files.get(candidate_file.name),
         )
     tensors_by_onnx_file = {
         name: inspection.external_tensors for name, inspection in inspections.items()

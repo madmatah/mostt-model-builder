@@ -2,8 +2,8 @@
 
 mostt-model-builder is the tooling of reproducible, confined builds of speech recognition models from their original weights: export, quantization and FLEURS verification.
 
-- **Built:** the command line, `model-build.sh`, which runs on the host's Python and the standard library, isolated from the environment and the site packages, and refuses to run as root; `fetch`, which downloads the pinned sources into a work directory, each checked by its size and its SHA-256; the confined containers in which every step runs, with their images, the lock of the images' libraries, and the check of the FLEURS bench; `clean`; and the first recipe, `parakeet-tdt`, for the Parakeet TDT family, which builds Parakeet Ultra: its sources, its images, `describe`, which lists the tensors of Moondream's weights and of NeMo's model, `export`, which writes Parakeet Ultra's FP32 ONNX files and measures the encoder against NeMo's, `inspect`, which copies and checks the candidate and inspects its graphs, `reference`, NeMo's transcription of FLEURS, `transformers-reference`, which checks Moondream's weights in Transformers against NeMo's reference and transcribes FLEURS fr, and `transcribe`, onnx-asr's from the candidate, on the CPU and the GPU.
-- **Planned:** the rest of the build: Parakeet Ultra's variants; in the core, the conversions, the measures of the FLEURS bench and their acceptance. The checked files land in a candidate directory laid out for Hugging Face, where the maintainer publishes them, and mostt, the local dictation project, pins them by hash.
+- **Built:** the command line, `model-build.sh`, which runs on the host's Python and the standard library, isolated from the environment and the site packages, and refuses to run as root; `fetch`, which downloads the pinned sources into a work directory, each checked by its size and its SHA-256; the confined containers in which every step runs, with their images, the lock of the images' libraries, and the check of the FLEURS bench; `clean`; and the first recipe, `parakeet-tdt`, for the Parakeet TDT family, which builds Parakeet Ultra: its sources, its images, `describe`, which lists the tensors of Moondream's weights and of NeMo's model, `export`, which writes Parakeet Ultra's FP32 ONNX files and measures the encoder against NeMo's, `convert`, the core's conversions of the exported encoder to float16, bfloat16 and 8-bit blocks, `inspect`, which copies and checks the candidate and inspects its graphs, `reference`, NeMo's transcription of FLEURS, `transformers-reference`, which checks Moondream's weights in Transformers against NeMo's reference and transcribes FLEURS fr, and `transcribe`, onnx-asr's of each variant from the candidate, on the CPU and the GPU.
+- **Planned:** the rest of the build: in the core, the measures of the FLEURS bench and their acceptance. The checked files land in a candidate directory laid out for Hugging Face, where the maintainer publishes them, and mostt, the local dictation project, pins them by hash.
 
 ## Requirements
 
@@ -13,7 +13,7 @@ mostt-model-builder is the tooling of reproducible, confined builds of speech re
 - [uv](https://docs.astral.sh/uv/) 0.13.7, the version CI runs, which finds or downloads Python 3.12, the version `.python-version` names;
 - Docker, with BuildKit, its default builder, for the containers of the build and their images;
 - the NVIDIA Container Toolkit 1.17.8 or later, with its Container Device Interface (CDI) set up, `nvidia.com/gpu=all`, for the steps on the GPU;
-- disk: about 26.3 GB of images, 4.5 GB of sources and 6 GB of work directory now, and about 27 GB of images and 30 GB of work directory for a whole build (planned).
+- disk: about 27 GB of images, 4.5 GB of sources and 11 GB of work directory for a whole build.
 
 ## Getting started
 
@@ -47,6 +47,7 @@ Every other step runs in a confined container, from an image that `images` build
 ./model-build.sh --work /data/model-build --recipe parakeet-tdt step fleurs-check
 ./model-build.sh --work /data/model-build --recipe parakeet-tdt step describe
 ./model-build.sh --work /data/model-build --recipe parakeet-tdt step export
+./model-build.sh --work /data/model-build --recipe parakeet-tdt step convert
 ./model-build.sh --work /data/model-build --recipe parakeet-tdt step inspect
 ./model-build.sh --work /data/model-build --recipe parakeet-tdt step reference
 ./model-build.sh --work /data/model-build --recipe parakeet-tdt step transformers-reference
@@ -64,12 +65,13 @@ Every other step runs in a confined container, from an image that `images` build
 | `mostt-model-builder-core-bench` | 186 MB | The Python base and the core's code, for the FLEURS check |
 | `mostt-model-builder-core-uv` | 261 MB | The same, with uv, for the lock of the images' libraries |
 | `mostt-model-builder-core-onnx-inspect` | 401 MB | onnx, for the inspection of the candidate's graphs |
+| `mostt-model-builder-core-onnx-convert` | 605 MB | onnx, onnxconverter-common, ml_dtypes and ONNX Runtime, for the conversions of the exported encoder |
 | `mostt-model-builder-parakeet-tdt-export` | 10.7 GB | NeMo, torch and the ONNX exporters, with the core's and the recipe's code, for the steps that read NVIDIA's archive |
 | `mostt-model-builder-parakeet-tdt-transformers-reference` | 9.83 GB | Transformers, torch and librosa, with the core's and the recipe's code, for the check of Moondream's weights against NeMo's reference |
 | `mostt-model-builder-parakeet-tdt-transcribe-gpu` | 4.39 GB | onnx-asr on ONNX Runtime's CUDA provider, with CUDA and cuDNN, for the transcriptions on the GPU |
 | `mostt-model-builder-parakeet-tdt-transcribe-cpu` | 467 MB | onnx-asr on ONNX Runtime, for the transcriptions on the CPU |
 
-`step fleurs-check` checks, before any recipe reads them, that every recording of the FLEURS index is in its archive, once, in a format the bench reads, and reports their durations. `step describe` lists the tensors of Moondream's weights and of the model that NeMo builds from the configuration of NVIDIA's archive, without loading the archive's checkpoint. `step export` writes Parakeet Ultra's encoder, with its external data, its decoder and joint, and its vocabulary, in ONNX, in about a minute and up to 14 GiB of memory, and prints the largest difference between the exported encoder and NeMo's on 20 utterances of FLEURS fr, beside its tolerance. `step inspect` copies the files of the candidate, laid out as they will be published, into `runs/<recipe>/<commit>/candidate/`, checks each one, and inspects their graphs. `step reference` transcribes FLEURS fr and en with NeMo, on the CPU, in about a quarter of an hour. `step transformers-reference` loads Moondream's weights in Transformers, prints the largest differences of its encoder and its joint with NeMo's on the utterances and the steps that `step reference` kept, beside their tolerances, and transcribes FLEURS fr, in about four minutes. `step transcribe` transcribes FLEURS fr and en with onnx-asr from the candidate, on the CPU in four containers at once and on the GPU through CDI, in a few minutes each. Each transcription prints, per language, its count of utterances, of unknown tokens, and its decoding time. A step writes its outputs under `runs/` in the work directory, and refuses to run again over them: `clean` removes them, through a container, since some of their files belong to the containers' user.
+`step fleurs-check` checks, before any recipe reads them, that every recording of the FLEURS index is in its archive, once, in a format the bench reads, and reports their durations. `step describe` lists the tensors of Moondream's weights and of the model that NeMo builds from the configuration of NVIDIA's archive, without loading the archive's checkpoint. `step export` writes Parakeet Ultra's encoder, with its external data, its decoder and joint, and its vocabulary, in ONNX, in about a minute and up to 14 GiB of memory, and prints the largest difference between the exported encoder and NeMo's on 20 utterances of FLEURS fr, beside its tolerance. `step convert` converts the exported encoder to float16, bfloat16 and 8-bit blocks, one file each, and prints, for each, its nodes, its products in 8-bit blocks, the operators it kept in float32 and the weights it clamped into float16's range. `step inspect` copies the files of the candidate, laid out as they will be published, into `runs/<recipe>/<commit>/candidate/`, checks each one, and inspects their graphs. `step reference` transcribes FLEURS fr and en with NeMo, on the CPU, in about a quarter of an hour. `step transformers-reference` loads Moondream's weights in Transformers, prints the largest differences of its encoder and its joint with NeMo's on the utterances and the steps that `step reference` kept, beside their tolerances, and transcribes FLEURS fr, in about four minutes. `step transcribe` transcribes FLEURS fr and en with onnx-asr from the candidate, each variant on its devices, on the CPU in four containers at once and on the GPU through CDI, in a few minutes each. Each transcription prints, per language, its count of utterances, of unknown tokens, and its decoding time. A step writes its outputs under `runs/` in the work directory, and refuses to run again over them: `clean` removes them, through a container, since some of their files belong to the containers' user.
 
 ```sh
 ./model-build.sh --work /data/model-build --recipe parakeet-tdt clean describe
@@ -86,12 +88,13 @@ The images take some room in Docker's storage. Remove them by name, never with a
 
 ```sh
 docker image rm mostt-model-builder-core-bench mostt-model-builder-core-uv \
-    mostt-model-builder-core-onnx-inspect mostt-model-builder-parakeet-tdt-export \
+    mostt-model-builder-core-onnx-inspect mostt-model-builder-core-onnx-convert \
+    mostt-model-builder-parakeet-tdt-export \
     mostt-model-builder-parakeet-tdt-transformers-reference \
     mostt-model-builder-parakeet-tdt-transcribe-gpu mostt-model-builder-parakeet-tdt-transcribe-cpu
 ```
 
-The conversions and the acceptance of the measures come with the rest of the build (planned).
+The acceptance of the measures comes with the rest of the build (planned).
 
 `docs/model-build.md` describes each step and the reasons behind its method.
 
@@ -105,6 +108,7 @@ The conversions and the acceptance of the measures come with the rest of the bui
 | `./model-build.sh --work <dir> --recipe <name> step fleurs-check` | Checks the FLEURS bench in its container: every indexed recording in its archive, once, in a format the bench reads. |
 | `./model-build.sh --work <dir> --recipe parakeet-tdt step describe` | Lists the tensors of Moondream's weights and of the model that NeMo builds from the configuration of NVIDIA's archive. |
 | `./model-build.sh --work <dir> --recipe parakeet-tdt step export` | Exports Parakeet Ultra's FP32 encoder, decoder and joint to ONNX, with its vocabulary, and measures the encoder against NeMo's. |
+| `./model-build.sh --work <dir> --recipe <name> step convert` | Converts the recipe's exported graph to its variants in a container, and checks the conversion's report. |
 | `./model-build.sh --work <dir> --recipe <name> step inspect` | Copies the candidate's files into the candidate, checks their signatures and formats, and inspects their graphs in a container. |
 | `./model-build.sh --work <dir> --recipe parakeet-tdt step reference` | Transcribes FLEURS fr and en with NeMo, on the CPU, as the reference of the export. |
 | `./model-build.sh --work <dir> --recipe parakeet-tdt step transformers-reference` | Measures Moondream's weights in Transformers against NeMo's reference, and transcribes FLEURS fr with Transformers. |

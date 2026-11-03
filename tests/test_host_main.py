@@ -17,7 +17,15 @@ USAGE_START = "usage: model-build.sh"
 UNKNOWN_COMMAND = "unknown-command"
 COMMANDS = ("fetch", "lock", "images", "step", "build", "clean")
 RECIPE_NAME = "parakeet-tdt"
-RECIPE_STEPS = ("fleurs-check", "describe", "export", "inspect", "reference", "transcribe")
+RECIPE_STEPS = (
+    "fleurs-check",
+    "describe",
+    "export",
+    "convert",
+    "inspect",
+    "reference",
+    "transcribe",
+)
 ARGUMENT_ERROR_EXIT_STATUS = 2
 COMMAND_FAILURE_EXIT_STATUS = 1
 COMMAND_LINE_TIMEOUT_S = 60

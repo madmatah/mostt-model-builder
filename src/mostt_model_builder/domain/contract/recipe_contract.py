@@ -10,6 +10,7 @@ from mostt_model_builder.domain.bench.hypotheses import RUN_LINES_FILE_NAME, Run
 from mostt_model_builder.domain.containers.base_images import BASE_PYTHON, ENVIRONMENT_PYTHON
 from mostt_model_builder.domain.containers.container_steps import (
     CLEAN_STEP_NAME,
+    CONVERT_STEP_NAME,
     CORE_IMAGES,
     CORE_OWNER,
     CORE_PACKAGE,
@@ -28,6 +29,7 @@ from mostt_model_builder.domain.containers.container_steps import (
     StepLimits,
     StepRow,
     StepTableError,
+    build_convert_row,
     find_package_of_owner,
     judge_row,
 )
@@ -52,6 +54,14 @@ from mostt_model_builder.domain.formats.file_names import (
     find_refused_suffixes,
     is_file_name,
 )
+from mostt_model_builder.domain.onnx.conversion_request import (
+    Conversion,
+    ConversionRequest,
+    ConversionRequestError,
+    EightBitBlocksConversion,
+    judge_conversions,
+)
+from mostt_model_builder.domain.onnx.graph_rules import EightBitBlocksOutput, GraphSource
 from mostt_model_builder.domain.onnx.node_placement import PLACEMENT_FILE_NAME
 from mostt_model_builder.domain.sources.source_pins import (
     PATH_SEPARATOR,
@@ -69,7 +79,7 @@ RECIPES_DIRECTORY_NAME = "recipes"
 MODULE_SEPARATOR = "."
 PYTHON_SOURCE_SUFFIX = ".py"
 CORE_STEP_NAMES = frozenset(
-    {FLEURS_CHECK_STEP_NAME, CLEAN_STEP_NAME, LOCK_STEP_NAME, INSPECT_STEP_NAME}
+    {FLEURS_CHECK_STEP_NAME, CLEAN_STEP_NAME, LOCK_STEP_NAME, INSPECT_STEP_NAME, CONVERT_STEP_NAME}
 )
 # A step's outputs live beside the run's requests, logs and candidate, under the same commit.
 RESERVED_STEP_NAMES = frozenset(
@@ -174,6 +184,13 @@ class Run:
 
 
 @dataclass(frozen=True, slots=True)
+class VariantConversion:
+    variant: str
+    conversion: Conversion
+    max_size_bytes: int
+
+
+@dataclass(frozen=True, slots=True)
 class RecipeContract:
     name: str
     images: tuple[RecipeImage, ...]
@@ -183,6 +200,7 @@ class RecipeContract:
     runs: tuple[Run, ...] = ()
     conversion_input: StepOutputOrigin | None = None
     build_order: tuple[str, ...] = ()
+    conversions: tuple[VariantConversion, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -225,6 +243,7 @@ class JudgedRecipe:
     derived_rows: tuple[DerivedRow, ...] = ()
     conversion_input: StepOutputOrigin | None = None
     build_order: tuple[str, ...] = ()
+    conversions: tuple[VariantConversion, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -285,6 +304,32 @@ def find_candidate_file_max_size_bytes(
     )
 
 
+def build_conversion_request(recipe: JudgedRecipe) -> ConversionRequest:
+    if recipe.conversion_input is None or not recipe.conversions:
+        raise RecipeContractError(f"the recipe {recipe.name} converts none of its variants")
+    return ConversionRequest(
+        input_step=recipe.conversion_input.step,
+        input_name=recipe.conversion_input.output,
+        conversions=tuple(variant.conversion for variant in recipe.conversions),
+    )
+
+
+def find_graph_source(
+    origin: StepOutputOrigin | HostContentOrigin,
+    conversion_input: StepOutputOrigin | None,
+    conversions: Sequence[VariantConversion],
+) -> GraphSource | EightBitBlocksOutput:
+    if origin == conversion_input:
+        return GraphSource.CONVERSION_INPUT
+    for variant_conversion in conversions:
+        conversion = variant_conversion.conversion
+        if isinstance(conversion, EightBitBlocksConversion) and origin == StepOutputOrigin(
+            CONVERT_STEP_NAME, conversion.output
+        ):
+            return EightBitBlocksOutput(conversion.quantized_product_count)
+    return GraphSource.OTHER
+
+
 def list_entry_modules(contract: RecipeContract) -> tuple[str, ...]:
     return tuple(step.entry_module for step in contract.steps)
 
@@ -299,7 +344,11 @@ def judge_recipe(contract: RecipeContract, facts: RecipeFacts) -> JudgedRecipe:
     images = judge_images(contract, where)
     runs = judge_runs(contract, where)
     rows, derived_rows = judge_steps(contract, images, pins, facts, runs, where)
+    convert_row = judge_conversions_of_recipe(contract, rows, facts.host_cpu_count, where)
+    if convert_row is not None:
+        rows = (*rows, convert_row)
     candidate = judge_candidate(contract.candidate, rows, where)
+    judge_converted_files(contract.conversions, candidate, where)
     return JudgedRecipe(
         name=contract.name,
         pins=pins,
@@ -310,7 +359,10 @@ def judge_recipe(contract: RecipeContract, facts: RecipeFacts) -> JudgedRecipe:
         runs=runs,
         derived_rows=derived_rows,
         conversion_input=judge_conversion_input(contract.conversion_input, candidate, where),
-        build_order=judge_build_order(contract.build_order, contract.steps, where),
+        build_order=judge_build_order(
+            contract.build_order, contract.steps, bool(contract.conversions), where
+        ),
+        conversions=contract.conversions,
     )
 
 
@@ -755,10 +807,115 @@ def judge_conversion_input(
     return conversion_input
 
 
+def judge_conversions_of_recipe(
+    contract: RecipeContract, rows: Sequence[StepRow], host_cpu_count: int, where: str
+) -> StepRow | None:
+    if not contract.conversions:
+        return None
+    conversion_input = contract.conversion_input
+    if conversion_input is None:
+        raise RecipeContractError(f"{where} converts its variants, and names no conversions' input")
+    variants: set[str] = set()
+    for variant_conversion in contract.conversions:
+        variant = variant_conversion.variant
+        if not isinstance(variant, str) or not VARIANT_GRAMMAR.fullmatch(variant):
+            raise RecipeContractError(
+                f"{where}: its conversion to the variant {variant!a} is not named under "
+                f"{VARIANT_GRAMMAR.pattern}"
+            )
+        if variant in variants:
+            raise RecipeContractError(
+                f"{where}: its conversion to the variant {variant} is declared twice"
+            )
+        variants.add(variant)
+    try:
+        judge_conversions([variant.conversion for variant in contract.conversions])
+    except ConversionRequestError as error:
+        raise RecipeContractError(f"{where}: {error}") from error
+    for variant_conversion in contract.conversions:
+        judge_candidate_name(
+            variant_conversion.conversion.output,
+            f"{where}: the output of its conversion {variant_conversion.variant}",
+        )
+    earlier_rows = {row.name: row for row in rows}
+    inputs = [
+        find_earlier_output(
+            EarlierOutputMount(conversion_input.step, conversion_input.output),
+            earlier_rows,
+            f"{where}: its conversions",
+        )
+    ]
+    external_data = find_external_data_of_origin(contract.candidate, conversion_input)
+    if external_data is not None:
+        if (
+            not isinstance(external_data.origin, StepOutputOrigin)
+            or external_data.origin.step != conversion_input.step
+        ):
+            raise RecipeContractError(
+                f"{where}: the external data {external_data.name} of the conversions' input does "
+                f"not come from {conversion_input.step}, beside its onnx file"
+            )
+        inputs.append(
+            find_earlier_output(
+                EarlierOutputMount(conversion_input.step, external_data.origin.output),
+                earlier_rows,
+                f"{where}: its conversions",
+            )
+        )
+    row = build_convert_row(
+        tuple(inputs),
+        tuple(
+            DeclaredOutput(variant.conversion.output, variant.max_size_bytes)
+            for variant in contract.conversions
+        ),
+    )
+    try:
+        judge_row(row, host_cpu_count)
+    except StepTableError as error:
+        raise RecipeContractError(f"{where}: {error}") from error
+    return row
+
+
+def find_external_data_of_origin(
+    candidate: Sequence[CandidateFile], origin: StepOutputOrigin
+) -> CandidateFile | None:
+    onnx_names = {
+        candidate_file.name
+        for candidate_file in candidate
+        if candidate_file.origin == origin and candidate_file.file_format == FileFormat.ONNX
+    }
+    for candidate_file in candidate:
+        if candidate_file.external_data_of in onnx_names:
+            return candidate_file
+    return None
+
+
+def judge_converted_files(
+    conversions: Sequence[VariantConversion],
+    candidate: Sequence[JudgedCandidateFile],
+    where: str,
+) -> None:
+    for variant_conversion in conversions:
+        origin = StepOutputOrigin(CONVERT_STEP_NAME, variant_conversion.conversion.output)
+        if not any(
+            candidate_file.origin == origin
+            and candidate_file.file_format is FileFormat.ONNX
+            and candidate_file.variants == (variant_conversion.variant,)
+            for candidate_file in candidate
+        ):
+            raise RecipeContractError(
+                f"{where}: its conversion to the variant {variant_conversion.variant} writes "
+                f"{variant_conversion.conversion.output}, which no onnx file of the candidate "
+                "serving that variant alone comes from"
+            )
+
+
 def judge_build_order(
-    build_order: Sequence[str], steps: Sequence[RecipeStep], where: str
+    build_order: Sequence[str], steps: Sequence[RecipeStep], converts: bool, where: str
 ) -> tuple[str, ...]:
     known = {*BUILT_CORE_STEP_NAMES, *(step.name for step in steps)}
+    if converts:
+        known.add(CONVERT_STEP_NAME)
     for step_name in build_order:
         if step_name not in known:
             raise RecipeContractError(

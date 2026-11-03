@@ -10,6 +10,14 @@ requires-python = "==3.12.*"
 dependencies = []
 
 [project.optional-dependencies]
+core-onnx-convert = [
+    "ml-dtypes==0.6.0",
+    "numpy==2.5.4",
+    "onnx==1.23.2",
+    "onnx-ir==1.1.0",
+    "onnxconverter-common==1.16.0",
+    "onnxruntime==1.31.0",
+]
 core-onnx-inspect = ["onnx==1.23.2"]
 parakeet-tdt-export = [
     "nemo-toolkit[asr]==3.0.0",
@@ -47,6 +55,7 @@ exclude-newer = "2026-11-02T16:10:00Z"
 required-version = "==0.13.7"
 # onnxruntime-gpu installs the same onnxruntime package as onnxruntime, so no image installs both.
 conflicts = [
+    [{ extra = "parakeet-tdt-transcribe-gpu" }, { extra = "core-onnx-convert" }],
     [{ extra = "parakeet-tdt-transcribe-gpu" }, { extra = "parakeet-tdt-export" }],
     [{ extra = "parakeet-tdt-transcribe-gpu" }, { extra = "parakeet-tdt-transcribe-cpu" }],
 ]

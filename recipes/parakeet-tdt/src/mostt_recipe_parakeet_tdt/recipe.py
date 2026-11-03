@@ -5,6 +5,7 @@ from mostt_model_builder.domain.bench.hypotheses import (
     RUN_LINES_MAX_SIZE_BYTES,
 )
 from mostt_model_builder.domain.containers.container_steps import (
+    CONVERT_STEP_NAME,
     FLEURS_REPOSITORY,
     PEAKS_OUTPUT,
     DeclaredOutput,
@@ -25,6 +26,7 @@ from mostt_model_builder.domain.contract.recipe_contract import (
     Run,
     SourceMount,
     StepOutputOrigin,
+    VariantConversion,
 )
 from mostt_model_builder.domain.formats.file_formats import FileFormat
 from mostt_model_builder.domain.onnx.node_placement import (
@@ -42,6 +44,12 @@ from mostt_recipe_parakeet_tdt.domain.variants.candidate_layout import (
     VOCABULARY_FILE_NAME,
     name_decoder_joint_file,
     name_encoder_file,
+)
+from mostt_recipe_parakeet_tdt.domain.variants.variants import (
+    CONVERTED_ENCODER_MAX_SIZE_BYTES,
+    FLOAT32_VARIANT,
+    VARIANTS,
+    name_run,
 )
 
 RECIPE_NAME = "parakeet-tdt"
@@ -62,7 +70,6 @@ DESCRIBE_STEP_NAME = "describe"
 ULTRA_TENSORS_FILE_NAME = "moondream-tensors"
 NEMO_STATE_DICT_FILE_NAME = "nemo-state-dict"
 EXPORT_STEP_NAME = "export"
-FLOAT32_VARIANT = "float32"
 ENCODER_FILE_NAME = name_encoder_file(FLOAT32_VARIANT)
 ENCODER_DATA_FILE_NAME = f"{ENCODER_FILE_NAME}.data"
 DECODER_JOINT_FILE_NAME = name_decoder_joint_file(FLOAT32_VARIANT)
@@ -259,6 +266,7 @@ TRANSCRIBE_GPU_LIMITS = StepLimits(
 TRANSCRIBE_CPU_LIMITS = StepLimits(
     memory_mib=5120, process_count=64, cpu_count=2, temporary_directory_mib=256
 )
+TRANSCRIPTION_SHARD_COUNTS = {Device.CPU: 4, Device.GPU: 1}
 TRANSCRIBE_STEP = RecipeStep(
     name=TRANSCRIBE_STEP_NAME,
     image=None,
@@ -285,6 +293,15 @@ TRANSCRIBE_STEP = RecipeStep(
     ),
 )
 ENCODER_ORIGIN = StepOutputOrigin(EXPORT_STEP_NAME, ENCODER_FILE_NAME)
+DECODER_JOINT_ORIGIN = StepOutputOrigin(EXPORT_STEP_NAME, DECODER_JOINT_FILE_NAME)
+VARIANT_NAMES = tuple(variant.name for variant in VARIANTS)
+CONVERSIONS = tuple(
+    VariantConversion(variant.name, variant.conversion, CONVERTED_ENCODER_MAX_SIZE_BYTES)
+    for variant in VARIANTS
+    if variant.conversion is not None
+)
+# onnx-asr picks one encoder and one decoder per quantization by their names, so the decoder and
+# joint, which stays in float32 for every variant, is published under each variant's name.
 CANDIDATE = (
     CandidateFile(ENCODER_FILE_NAME, FileFormat.ONNX, (FLOAT32_VARIANT,), ENCODER_ORIGIN),
     CandidateFile(
@@ -294,25 +311,35 @@ CANDIDATE = (
         StepOutputOrigin(EXPORT_STEP_NAME, ENCODER_DATA_FILE_NAME),
         external_data_of=ENCODER_FILE_NAME,
     ),
-    CandidateFile(
-        DECODER_JOINT_FILE_NAME,
-        FileFormat.ONNX,
-        (FLOAT32_VARIANT,),
-        StepOutputOrigin(EXPORT_STEP_NAME, DECODER_JOINT_FILE_NAME),
+    *(
+        CandidateFile(
+            conversion.conversion.output,
+            FileFormat.ONNX,
+            (conversion.variant,),
+            StepOutputOrigin(CONVERT_STEP_NAME, conversion.conversion.output),
+        )
+        for conversion in CONVERSIONS
+    ),
+    *(
+        CandidateFile(
+            name_decoder_joint_file(variant), FileFormat.ONNX, (variant,), DECODER_JOINT_ORIGIN
+        )
+        for variant in VARIANT_NAMES
     ),
     CandidateFile(
         VOCABULARY_FILE_NAME,
         FileFormat.TEXT,
-        (FLOAT32_VARIANT,),
+        VARIANT_NAMES,
         StepOutputOrigin(EXPORT_STEP_NAME, VOCABULARY_FILE_NAME),
     ),
     CandidateFile(
         CONFIGURATION_FILE_NAME,
         FileFormat.TEXT,
-        (FLOAT32_VARIANT,),
+        VARIANT_NAMES,
         HostContentOrigin(ONNX_ASR_CONFIGURATION),
     ),
 )
+
 RUNS = (
     Run(
         name=NEMO_RUN_NAME,
@@ -332,23 +359,18 @@ RUNS = (
         shard_count=1,
         reader=read_token_id_lines,
     ),
-    Run(
-        name="float32-cpu",
-        step=TRANSCRIBE_STEP_NAME,
-        device=Device.CPU,
-        variant=FLOAT32_VARIANT,
-        languages=BENCH_LANGUAGES,
-        shard_count=4,
-        reader=read_onnx_asr_lines,
-    ),
-    Run(
-        name="float32-gpu",
-        step=TRANSCRIBE_STEP_NAME,
-        device=Device.GPU,
-        variant=FLOAT32_VARIANT,
-        languages=BENCH_LANGUAGES,
-        shard_count=1,
-        reader=read_onnx_asr_lines,
+    *(
+        Run(
+            name=name_run(variant.name, device),
+            step=TRANSCRIBE_STEP_NAME,
+            device=device,
+            variant=variant.name,
+            languages=BENCH_LANGUAGES,
+            shard_count=TRANSCRIPTION_SHARD_COUNTS[device],
+            reader=read_onnx_asr_lines,
+        )
+        for variant in VARIANTS
+        for device in variant.devices
     ),
 )
 RECIPE = RecipeContract(
@@ -359,9 +381,11 @@ RECIPE = RecipeContract(
     parities=(ENCODER_PARITY, TRANSFORMERS_ENCODER_PARITY, TRANSFORMERS_JOINT_PARITY),
     runs=RUNS,
     conversion_input=ENCODER_ORIGIN,
+    conversions=CONVERSIONS,
     build_order=(
         "fleurs-check",
         EXPORT_STEP_NAME,
+        CONVERT_STEP_NAME,
         "inspect",
         REFERENCE_STEP_NAME,
         TRANSFORMERS_STEP_NAME,

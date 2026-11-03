@@ -6,9 +6,11 @@ from functools import partial
 import pytest
 
 from mostt_model_builder.domain.onnx.graph_rules import (
+    EightBitBlocksOutput,
     GraphRuleError,
     GraphSource,
     ProductCounts,
+    count_eight_bit_block_products,
     count_products,
     is_constant_weight,
     is_plain,
@@ -73,6 +75,8 @@ ACCEPTED_INSPECTION = FileInspection(
     sparse_initializer_count=0,
 )
 WHERE = "the graph of encoder.onnx"
+DECLARED_BLOCK_PRODUCT_COUNT = 4
+EIGHT_BIT_OUTPUT = replace(ACCEPTED_INSPECTION, products=(COMPUTED_PRODUCT,), external_tensors=())
 NOT_PLAIN = "whose constant weight is not a plain 2-D initializer"
 
 
@@ -100,6 +104,11 @@ ACCEPTED_GRAPHS = {
         GraphSource.OTHER,
         EXTERNAL_DATA_FILE,
     ),
+    "the 8-bit conversion's output, every constant weight in its declared count of blocks": (
+        replace(ACCEPTED_INSPECTION, products=(COMPUTED_PRODUCT,), external_tensors=()),
+        EightBitBlocksOutput(DECLARED_BLOCK_PRODUCT_COUNT),
+        None,
+    ),
 }
 NON_PLAIN_PRODUCTS = {
     "a weight through a Transpose": TRANSPOSED_PRODUCT,
@@ -107,6 +116,11 @@ NON_PLAIN_PRODUCTS = {
     "a weight held by a Constant node": CONSTANT_NODE_PRODUCT,
     "a direct 3-D initializer": THREE_DIMENSIONAL_PRODUCT,
     "a Gemm whose weight is transposed": TRANSPOSED_GEMM,
+}
+CONSTANT_WEIGHT_PRODUCTS = {
+    "a plain MatMul": PLAIN_PRODUCT,
+    "a plain Gemm": PLAIN_GEMM,
+    **NON_PLAIN_PRODUCTS,
 }
 NON_PLAIN_REFUSALS = {
     "a weight through a Transpose": (
@@ -325,6 +339,70 @@ class TestTheGraphRules:
                 self, judge_act: Callable[[], object]
             ) -> None:
                 assert judge_act() is None
+
+        @pytest.mark.parametrize(
+            "product",
+            list(CONSTANT_WEIGHT_PRODUCTS.values()),
+            ids=list(CONSTANT_WEIGHT_PRODUCTS.keys()),
+        )
+        class TestWhenTheEightBitConversionsOutputKeepsAConstantWeight:
+            @pytest.fixture
+            def judge_act(self, product: MatrixProduct) -> Callable[[], object]:
+                return partial(
+                    judge_graph,
+                    replace(EIGHT_BIT_OUTPUT, products=(COMPUTED_PRODUCT, product)),
+                    EightBitBlocksOutput(DECLARED_BLOCK_PRODUCT_COUNT),
+                    None,
+                )
+
+            def test_should_refuse_it_since_the_quantization_left_it_in_float(
+                self, judge_act: Callable[[], object], product: MatrixProduct
+            ) -> None:
+                with pytest.raises(
+                    GraphRuleError,
+                    match=re.escape(
+                        f"{WHERE}, the 8-bit conversion's output, keeps a {product.operator} of a "
+                        "constant weight unquantized"
+                    ),
+                ):
+                    judge_act()
+
+        class TestWhenTheEightBitConversionsOutputHoldsAnotherCountOfBlocks:
+            @pytest.fixture
+            def judge_act(self) -> Callable[[], object]:
+                return partial(judge_graph, EIGHT_BIT_OUTPUT, EightBitBlocksOutput(265), None)
+
+            def test_should_refuse_it_since_a_partial_quantization_would_pass_otherwise(
+                self, judge_act: Callable[[], object]
+            ) -> None:
+                with pytest.raises(
+                    GraphRuleError,
+                    match=re.escape(
+                        f"{WHERE}, the 8-bit conversion's output, holds 4 MatMulNBits nodes, and "
+                        "its recipe declares 265"
+                    ),
+                ):
+                    judge_act()
+
+    class TestTheCountEightBitBlockProductsFunction:
+        class TestWhenTheGraphHoldsMatMulNBitsInSeveralScopesAndDomains:
+            @pytest.fixture
+            def product_count(self) -> int:
+                return count_eight_bit_block_products(
+                    replace(
+                        ACCEPTED_INSPECTION,
+                        nodes=(
+                            *ACCEPTED_INSPECTION.nodes,
+                            NodeCount(NodeScope.SUBGRAPH, "com.microsoft", "MatMulNBits", 2),
+                            NodeCount(NodeScope.GRAPH, LOCAL_DOMAIN, "MatMulNBits", 1),
+                        ),
+                    )
+                )
+
+            def test_should_count_onnx_runtimes_nodes_in_every_scope(
+                self, product_count: int
+            ) -> None:
+                assert product_count == 6
 
     class TestTheCountProductsFunction:
         class TestWhenTheGraphHoldsPlainNonPlainAndComputedProducts:

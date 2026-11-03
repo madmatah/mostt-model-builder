@@ -7,9 +7,11 @@ from mostt_model_builder.domain.onnx.inspection_report import (
     WeightSource,
 )
 
+ONNX_RUNTIME_DOMAIN = "com.microsoft"
 # ONNX's own operators, and ONNX Runtime's contrib operators, such as MatMulNBits.
-ALLOWED_DOMAINS = frozenset({"", "com.microsoft"})
+ALLOWED_DOMAINS = frozenset({"", ONNX_RUNTIME_DOMAIN})
 PLAIN_WEIGHT_RANK = 2
+EIGHT_BIT_BLOCKS_OPERATOR = "MatMulNBits"
 
 
 class GraphRuleError(ValueError):
@@ -19,6 +21,11 @@ class GraphRuleError(ValueError):
 class GraphSource(Enum):
     CONVERSION_INPUT = auto()
     OTHER = auto()
+
+
+@dataclass(frozen=True, slots=True)
+class EightBitBlocksOutput:
+    declared_product_count: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,8 +54,18 @@ def count_products(inspection: FileInspection) -> ProductCounts:
     )
 
 
+def count_eight_bit_block_products(inspection: FileInspection) -> int:
+    return sum(
+        node.count
+        for node in inspection.nodes
+        if node.domain == ONNX_RUNTIME_DOMAIN and node.operator == EIGHT_BIT_BLOCKS_OPERATOR
+    )
+
+
 def judge_graph(
-    inspection: FileInspection, source: GraphSource, external_data_file: str | None
+    inspection: FileInspection,
+    source: GraphSource | EightBitBlocksOutput,
+    external_data_file: str | None,
 ) -> None:
     where = f"the graph of {inspection.name}"
     refuse_foreign_domains(inspection, where)
@@ -70,6 +87,8 @@ def judge_graph(
     refuse_foreign_external_data(inspection, external_data_file, where)
     if source is GraphSource.CONVERSION_INPUT:
         refuse_products_that_are_not_plain(inspection, where)
+    elif isinstance(source, EightBitBlocksOutput):
+        refuse_unquantized_products(inspection, source.declared_product_count, where)
 
 
 def refuse_foreign_domains(inspection: FileInspection, where: str) -> None:
@@ -104,6 +123,23 @@ def refuse_products_that_are_not_plain(inspection: FileInspection, where: str) -
                 f"{where}, the conversions' input, has a {product.operator} whose constant weight "
                 f"is not a plain 2-D initializer: it reads {describe_weight(product)}"
             )
+
+
+def refuse_unquantized_products(
+    inspection: FileInspection, declared_product_count: int, where: str
+) -> None:
+    for product in inspection.products:
+        if is_constant_weight(product):
+            raise GraphRuleError(
+                f"{where}, the 8-bit conversion's output, keeps a {product.operator} of a "
+                f"constant weight unquantized: it reads {describe_weight(product)}"
+            )
+    product_count = count_eight_bit_block_products(inspection)
+    if product_count != declared_product_count:
+        raise GraphRuleError(
+            f"{where}, the 8-bit conversion's output, holds {product_count} "
+            f"{EIGHT_BIT_BLOCKS_OPERATOR} nodes, and its recipe declares {declared_product_count}"
+        )
 
 
 def describe_weight(product: MatrixProduct) -> str:
