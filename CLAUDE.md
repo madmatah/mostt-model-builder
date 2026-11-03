@@ -12,13 +12,13 @@ mostt-model-builder is the tooling of reproducible, confined builds of speech re
 
 ## Project management
 
-Project-management material lives in a separate, private Git repository, never in this repository (`.claude/rules/repository.md`). This project shares it with mostt: it is the `.pm/` of the mostt project's main checkout, a sibling of this repository's main checkout, at `../mostt/.pm` from here, and from a linked worktree at `$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")/../mostt/.pm`. This repository has no `.pm/` of its own. Its `README.md` describes its layout. In it, this project's plans live in `plans/model-builder/`, its handoff notes in `handoffs/` with `model-builder` in their file name, and its record of the bootstrap kit in `model-builder-bootstrap-kit.md`. At the start of a session, read its `roadmap.md`, the latest handoff note whose name holds `model-builder`, its `decisions.md`, and the plan of the branch you work on. The decisions there are binding: do not reopen them.
+Project-management material lives in `.pm/`, a separate, private Git repository, never in this repository (`.claude/rules/repository.md`). Its location is set up on each machine, as one of the session's working directories. `.pm/README.md` describes its layout, including where this project's plans and handoff notes go. At the start of a session, read its `roadmap.md`, its latest handoff note for this project, its `decisions.md`, and the plan of the branch you work on. The decisions there are binding: do not reopen them.
 
 When a decision changes the project, log it in the `decisions.md` of `.pm/`, then commit and push it in that repository. When sessions run in parallel, hand it to the coordinating session instead ([Workflow](#workflow)). A missing decision never blocks the work: take the most reversible option, log it as proposed by Claude, and go on.
 
-The plan of a branch is `plans/model-builder/<branch>.md` in `.pm/`, at the path above even from a worktree. Commit and push it there each time the `plan-critic` agent finds a version of it ready. When sessions run in parallel, each writes the plan of its own branch and names it in its final report, and the coordinating session commits it.
+The plan of a branch lives in `.pm/`, where its `README.md` says. Commit and push it there each time the `plan-critic` agent finds a version of it ready. When sessions run in parallel, each writes the plan of its own branch and names it in its final report, and the coordinating session commits it.
 
-At the end of a session, add a handoff note to `handoffs/`, with `model-builder` in its name: what was done, how to verify it, the decisions taken alone, the open issues, and the next steps.
+At the end of a session, add a handoff note to `.pm/`, as its `README.md` says: what was done, how to verify it, the decisions taken alone, the open issues, and the next steps.
 
 Never run `git clean` with `-ff` at the repository root: a double `-f` deletes nested repositories, such as a `.pm/` checked out there.
 

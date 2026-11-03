@@ -183,7 +183,7 @@ Agents work from four kinds of documents, each with one job, so that a statement
 - **This document holds the design and its reasons,** and states no rule, so that a rule changes in one place.
 - **An expert reviewer reads at least the rules files of its domain,** one hop away, so that it never chases a rule across documents. It starts without the session's `CLAUDE.md` files, which would cost it tokens on every turn and could steer it: the rules that apply are the checkout's.
 - **Each agent runs on the model and at the effort its task needs,** because every turn of every run pays for both, and a review multiplies the runs: Opus where a miss costs most or where code is written, at `xhigh` only for plans ([Plans](#plans)), Sonnet where written rules guide the check, Haiku for search. A low effort saves Haiku and Sonnet little and costs them much quality, so they never run at it.
-- **The history of a decision lives in `.pm/`,** a private repository that this project shares with mostt, since the files it builds are made for mostt and the decisions of the two projects depend on each other. The documents here describe only the present, with its reasons.
+- **The history of a decision lives in `.pm/`,** a private repository, so the documents here describe only the present, with its reasons.
 
 ## Testing
 
