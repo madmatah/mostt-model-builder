@@ -10,9 +10,9 @@ These constraints drive the choices in this document:
 
 | Constraint | Consequence |
 |---|---|
-| The code of the models, and their pickles, are untrusted | The libraries of the models and the files that run code when they load are loaded only in containers without network, privilege or any of the host's files but those a step names (planned). The host's side runs on the standard library, and treats what a container writes as hostile input. |
-| Nothing is installed on the host | The host's side runs on the host's Python 3.12; the development tools live in the project's own `.venv/`, and every library of a build in a container image (planned). uv builds no package on the host. |
-| The outputs are reproducible and verified before publication | Sources are pinned by revision, size and hash; images by digest and packages by hash (planned); an export is compared with its reference framework and measured on FLEURS before it becomes a candidate (planned). |
+| The code of the models, and their pickles, are untrusted | The libraries of the models and the files that run code when they load are loaded only in containers without network, privilege or any of the host's files but those a step names. The host's side runs on the standard library, and treats what a container writes as hostile input. |
+| Nothing is installed on the host | The host's side runs on the host's Python 3.12; the development tools live in the project's own `.venv/`, and every library of a build in a container image. uv builds no package on the host. |
+| The outputs are reproducible and verified before publication | Sources are pinned by revision, size and hash; images by digest and packages by hash; an export is compared with its reference framework and measured on FLEURS before it becomes a candidate (planned). |
 | Publication is the maintainer's | The build ends at a candidate directory laid out for Hugging Face (planned); no command of the repository publishes on its own, and no agent publishes. |
 | mostt pins the published files by hash, not this code | The contract with mostt is the published files: their layout, their names and their formats. This repository shares no code with mostt and can change freely while that contract holds. The rules on the published names are adapted from mostt's model store, so that every published file passes it, and this repository holds them as its own. |
 
@@ -21,13 +21,14 @@ These constraints drive the choices in this document:
 | Tool | Version | Role |
 |---|---|---|
 | Python | 3.12 | The language of the host's side and of the steps, pinned by `.python-version` and `requires-python` |
-| uv | 0.13.7 | Package manager and runner: installs the environment from `uv.lock`, and runs each tool of the gate |
+| uv | 0.13.7 in CI; the latest release on the host | Package manager and runner: installs the host's environment from `uv.lock`, and runs each tool of the gate |
+| uv, in the images | 0.13.7 | Resolves the images' lock in its container, and installs each image's libraries from it |
 | ruff | 0.17.3 | Formatter and linter |
 | mypy | 2.4.1 | Type checker, in strict mode |
 | pytest | 9.2.0 | Test runner |
 | import-linter | 2.15 | Checks the imports between the layers (`lint-imports`) |
 | curl | — | Downloads the pinned sources on the host, over HTTPS alone |
-| Docker | — | Runs each step of a build in a confined container, and builds their images (planned) |
+| Docker | — | Runs each step of a build in a confined container, and builds their images with BuildKit |
 | GitHub CLI (`gh`) | — | Opens and updates the pull requests |
 
 Notes:
@@ -35,13 +36,15 @@ Notes:
 - **CI runs on GitHub Actions** (`.github/workflows/check.yml`):
   - `scripts/check.sh` runs on every pull request and every push to `main`;
   - actions are pinned to full commit SHAs, and the job may only read the repository;
-  - `setup-uv` installs uv 0.13.7, the one pin of uv, and uv installs the Python that `.python-version` names;
+  - `setup-uv` installs uv 0.13.7, the gate's pin, while the host's uv follows the latest release, and uv installs the Python that `.python-version` names;
   - no cache is saved or restored: the install takes seconds, and a restored cache would run in the gate unchecked.
 - **`CLAUDE.md` and `.claude/` are the agent guidance** ([Agent guidance](#agent-guidance)).
 - **The project has no build backend** (`package = false`): it is a tool run from its clone, never installed as a package, so each tool is given the path of its packages, `mypy_path` for mypy, `pythonpath` for pytest and `PYTHONPATH` for `lint-imports`, and the bootstrap appends them itself, run by path from the launcher, `model-build.sh`, and from every step.
 - **No package is built on the host** (`no-build = true`): every development tool publishes wheels, and a package built from its source would run its build code with the user's rights.
 - **`ruff format` checks the Python blocks of the Markdown documents too,** such as the example of `.claude/rules/tests.md`, so that an example reads as the code it shows.
-- **Python 3.12** is the version of the base image of the planned build images, so that the host's side and the steps run the same language.
+- **Python 3.12** is the version of the base image of the build's images, so that the host's side and the steps run the same language.
+- **Two environments hold the dependencies, one per place where code runs:** the host's, `pyproject.toml` and `uv.lock`, holds the development tools and builds nothing; the images', `images/pyproject.toml` and `images/uv.lock`, holds the libraries of every image, one extra per image, so that one lock pins one version of each library across a build. The images' environment allows a build (`no-build = false`), since a package that NeMo needs, antlr4-python3-runtime, is published as an sdist alone, and uv refuses it under `no-build = true` even with its metadata declared; that package is built in a build stage of the export image, without network (planned). A build allowed on the host would run that code with the user's rights, which is why `.claude/rules/container-security.md` > The host keeps uv out of `images/` on the host: only `./model-build.sh lock` resolves its lock, in a container, and only an image's build installs from it, with `--frozen --no-build`. Its uv, 0.13.7, is pinned by its image's digest and by `required-version`, which makes every other version of uv refuse the project and keeps the lock's layout tied to the images' uv, so that it changes only through a change that names a new uv.
+- **The gate reads the images' lock as text:** it checks both locks, every package from PyPI by hash with a wheel that installs here, and checks that the images' lock records what its manifest declares, which stands in for the `uv lock --check` that no host command may run there.
 - **Direct dependencies are pinned exactly,** since a new exporter or a new framework can change the graph a build writes: a new version comes only through a change that names it, and the build that follows checks it.
 
 ## Architecture
@@ -56,17 +59,17 @@ The project follows Clean Architecture: the rules live in a pure domain at the c
 - **What is stored or shared is plain data,** so it saves, travels and replays as it is.
 - **SOLID applies to modules, functions and types,** so a new case is added beside the others, without rewriting them.
 - **A model family is a recipe** (planned): what a family needs, its sources, its export, its variants and its transcriber, lives in its recipe, and the core judges what a recipe declares. A new family then adds a recipe without changing the core, and a recipe cannot widen the confinement that the core imposes.
-- **The host trusts no container** (planned): the host's side never imports a library of the models, and reads what a container writes only through its own strict parsers, since that code is the part of a build that no one has reviewed.
+- **The host trusts no container:** the host's side never imports a library of the models, and reads what a container writes only through its own strict parsers, since that code is the part of a build that no one has reviewed.
 
 ### Layers and modules
 
 | Layer | Module | Responsibility | Depends on |
 |---|---|---|---|
 | Composition roots | `core` | The project's package, `mostt_model_builder`; its command line on the host, `host_main.py`, which reads the terminal's input and wires the adapters, and the recipes (planned); and its bootstrap, `bootstrap.py`, which puts the packages on the path and runs an entry module, on the host and in every step | every layer, and each recipe's `recipe.py` and domain |
-| Composition roots | `steps` (planned) | The entry module of each of the core's container steps, which runs in its container on the libraries of its image | `domain` |
-| Adapters | `adapters` | curl and the files of the work directory; Docker and git (planned) | `application`, `domain` |
-| Application | `application` | Opens the work directory and fetches the sources; runs a step, cleans its outputs, assembles the candidate and verifies it (planned) | `domain` |
-| Domain | `domain` | The rules: the pins of the sources, the work directory and the refused suffixes of a file name; the step table, the recipe contract, the formats, the parsers of what containers write, the FLEURS bench and its acceptance (planned) | — |
+| Composition roots | `steps` | The entry module of each of the core's container steps, which runs in its container on the libraries of its image: the FLEURS check, the cleaning of a step's outputs and the resolution of the images' lock, on the standard library, with the reader of FLEURS's audio, the output modes and the control group's peaks that every step shares | `domain` |
+| Adapters | `adapters` | curl, Docker, git and the files of the work directory | `application`, `domain` |
+| Application | `application` | Opens the work directory and fetches the sources; builds the images, runs a step, checks the FLEURS bench, cleans a step's outputs and resolves the images' lock; assembles the candidate and verifies it (planned) | `domain` |
+| Domain | `domain` | The rules: the pins of the sources, the work directory and its layout, and the file names; the step table and its images, the judgment of the mounts and of the files that containers write, the parsers of what they write and the bound on the nesting of a JSON document they read, the label of an image, the container user's accounts and the locks' check; the index and the recordings of the FLEURS bench; the recipe contract, the formats, the bench's measures and its acceptance (planned) | — |
 | Domain, composition roots | `parakeet-tdt` (planned) | The recipe of the Parakeet TDT family, which builds Parakeet Ultra in ONNX: its sources, its export with NeMo, its check against Transformers, its variants and its transcription with onnx-asr | `domain`, `steps` |
 
 ## Repository layout
@@ -82,6 +85,10 @@ mostt-model-builder/
 ├── docs/
 │   ├── foundations.md           # This document
 │   └── model-build.md           # The build, part by part, and the published layout
+├── images/
+│   ├── pyproject.toml           # The images' environment: their libraries, one extra per image
+│   ├── uv.lock                  # Its lockfile, which only ./model-build.sh lock writes
+│   └── <image>/                 # The Containerfile of each of the core's images, and its dockerignore
 ├── scripts/
 │   ├── check.sh                 # The gate
 │   └── check-commit.sh          # The check of the last commit
@@ -94,12 +101,12 @@ mostt-model-builder/
 ├── LICENSE                      # MIT
 ├── README.md
 ├── model-build.sh               # The launcher: runs the bootstrap on the host's Python, isolated
-├── pyproject.toml               # The manifest: dependencies, and the configuration of the tools
+├── pyproject.toml               # The host's environment: the development tools, and their configuration
 ├── sources.toml                 # The core's pinned sources: the FLEURS test sets
-└── uv.lock                      # The lockfile
+└── uv.lock                      # The host's lockfile
 ```
 
-Planned: `images/`, the Containerfiles of the core's images, and `recipes/`, one directory per model family.
+Planned: `recipes/`, one directory per model family.
 
 ### Module anatomy
 
@@ -112,7 +119,7 @@ src/mostt_model_builder/
 ├── domain/                      # The pure rules, a directory per concern, one concept per file
 ├── application/                 # The use cases and their ports
 ├── adapters/                    # One file or directory per technology
-├── steps/                       # (planned) the entry modules of the core's container steps
+├── steps/                       # The entry modules of the core's container steps
 └── host_main.py                 # The command line on the host
 recipes/<family>/                # (planned) a recipe
 ├── images/                      # its Containerfiles
@@ -125,7 +132,7 @@ recipes/<family>/                # (planned) a recipe
 
 The domain groups its files in a directory per concern, such as `domain/sources/` for the pins and their URLs or `domain/containers/` for the work directory, since it holds the rules of every part of the build. These directories are not modules: the domain keeps its one row, and its files still import one another without a cycle.
 
-A recipe keeps its own package, apart from the core's, so that the import contracts can tell the two apart and keep the core from importing a recipe, and one recipe from importing another. All of them share one manifest and one lock, so that a build pins one version of each library.
+A recipe keeps its own package, apart from the core's, so that the import contracts can tell the two apart and keep the core from importing a recipe, and one recipe from importing another. The core's code and the recipes' share the host's environment for their tools, and the libraries of every image share the images' environment, one manifest and one lock, so that a build pins one version of each library.
 
 ### Enforcement
 
@@ -143,7 +150,14 @@ Each row names a rule, the rules file that states it, and what enforces it.
 | A source is fetched over HTTPS alone, and kept only once it matches its pin (`.claude/rules/container-security.md` > The host) | `tests/domain/sources/test_source_pins.py`, the refusals of the pins; `tests/application/test_fetch_sources.py`, which keeps a download only once it matches; `tests/adapters/test_curl_downloader.py`, curl's options |
 | A source's name never marks code, a pickle or an archive (`.claude/rules/container-security.md` > The host) | `tests/domain/sources/test_source_pins.py`, on each refused suffix |
 | The work directory is the user's own, outside the home directory and the clone (`.claude/rules/container-security.md` > The host) | `tests/domain/containers/test_work_directory.py` and `tests/application/test_open_work_directory.py`, on each refusal |
-| uv never builds a package on the host (`.claude/rules/container-security.md` > The host) | `no-build = true` in `[tool.uv]`, which `tests/test_project_manifests.py` holds, with the host's empty dependencies and its exact pins |
+| uv never builds a package on the host (`.claude/rules/container-security.md` > The host) | `no-build = true` in the host's `[tool.uv]`, which `tests/test_project_manifests.py` holds, with the host's empty dependencies and its exact pins; the locks' check of `tests/test_lockfiles.py`, which refuses a package without a wheel that installs here |
+| uv never runs on the images' environment on the host (`.claude/rules/container-security.md` > The host) | review, against a uv of the images' version; `required-version` in `images/pyproject.toml`, held by `tests/test_project_manifests.py` to the uv of the `uv` image, with the manifest's fixed shape, keeps every other version out and keeps the lock's layout tied to the images' uv |
+| Both locks pass the locks' check (`.claude/rules/configuration.md` > Dependencies) | `tests/test_lockfiles.py`, on `uv.lock` and `images/uv.lock`, and the freshness of `images/uv.lock` against its manifest; `lock` runs both checks on the lock it resolves |
+| A container step's Python runs under `-I -B` (`.claude/rules/container-security.md` > The host) | `tests/domain/containers/test_container_steps.py` and `tests/adapters/test_docker_engine.py`, on every row of the step table |
+| A container that loads that code has no network, no privilege and none of the host's secrets (`.claude/rules/container-security.md` > Confinement) | `tests/domain/containers/test_container_steps.py`, which judges every row against its bounds, and `tests/adapters/test_docker_engine.py`, every option of every row |
+| What a container prints or writes is data, never an instruction (`.claude/rules/container-security.md` > The host) | `tests/domain/containers/test_container_files.py`, the refusals of the files written by containers and of the mounts; the refusal tests of each parser; `tests/domain/containers/test_printable_output.py`, the filter over every byte |
+| An image is built from a commit, and runs only at that commit (`.claude/rules/container-security.md` > Images and outputs) | `tests/domain/containers/test_provenance.py` and `tests/application/test_build_images.py`; `tests/test_recipe_listing.py`, which holds every Containerfile to its table of accepted forms |
+| The host never imports a container step, and the libraries of the models load only in the steps that need them (`.claude/rules/container-security.md` > The host) | `lint-imports`, from the contracts of `steps` and of the libraries of the models; `tests/test_mostt_model_builder.py`, which imports each step of the standard library under `-I -S -B` |
 | Markers are strict and warnings are errors (`.claude/rules/tests.md` > pytest) | `--strict-markers`, `--strict-config` and `filterwarnings = ["error"]` in `pyproject.toml` |
 | A commit footer holds only what tools read (`CLAUDE.md` > Workflow) | `attribution` in `.claude/settings.json`, which keeps Claude Code's own commit trailers and pull request line out |
 | Every rule no tool can check: architecture, tests as specification… | `/expert-review` ([Code review](#code-review)), before every pull request |

@@ -1,0 +1,145 @@
+import json
+import re
+from collections.abc import Callable
+from dataclasses import dataclass, replace
+from functools import partial
+from pathlib import PurePosixPath
+
+import pytest
+from run_step_fakes import (
+    GROUP_ID,
+    USER_ID,
+    FakeContainerEngine,
+    FakeStepFiles,
+    build_file_facts,
+    build_step_output,
+)
+
+from mostt_model_builder.application.check_fleurs import (
+    FleursCheckOutcome,
+    FleursCheckRun,
+    check_fleurs_bench,
+)
+from mostt_model_builder.application.run_step import HostIdentity, ImageFacts
+from mostt_model_builder.domain.bench.fleurs_check_report import (
+    FleursCheckReport,
+    LanguageCheck,
+    RecordingDuration,
+    render_fleurs_check_report,
+)
+from mostt_model_builder.domain.containers.account_ranges import HostAccounts
+from mostt_model_builder.domain.containers.container_steps import (
+    FLEURS_CHECK_ROW,
+    PEAKS_FILE_NAME,
+    ContainerRun,
+)
+from mostt_model_builder.domain.containers.step_peaks import StepPeaks, render_step_peaks
+from mostt_model_builder.domain.containers.work_directory import WorkDirectoryError
+from mostt_model_builder.domain.sources.source_pins import RepositoryType, SourcePin
+
+WORK_ROOT = PurePosixPath("/data/builds/work")
+COMMIT = "e949fa3a2eb8bf218e96c2c03625bbd36e4342b1"
+HEAD_TREE = "3f1d1ffe79bc3336eb583331cfbf9b189fd45f01"
+REVISION = "70bb2e84b976b7e960aa89f1c648e09c59f894dd"
+IMAGE_ID = "sha256:" + "f" * 64
+BENCH_PATHS = (
+    "data/fr_fr/test.tsv",
+    "data/fr_fr/audio/test.tar.gz",
+    "data/en_us/test.tsv",
+    "data/en_us/audio/test.tar.gz",
+)
+PINS = tuple(
+    SourcePin(RepositoryType.DATASET, "google/fleurs", REVISION, path, 1, "0" * 64)
+    for path in BENCH_PATHS
+)
+SOURCES = PurePosixPath(f"sources/google/fleurs/{REVISION}")
+HOST = HostIdentity(USER_ID, GROUP_ID, 20, HostAccounts(False, (), ()))
+REPORT = FleursCheckReport(
+    (
+        LanguageCheck("fr_fr", (RecordingDuration("7105.wav", 150_720),)),
+        LanguageCheck("en_us", (RecordingDuration("1274.wav", 202_240),)),
+    )
+)
+PEAKS = StepPeaks(memory_peak_bytes=21 * 2**20, process_count_peak=6)
+RUN = FleursCheckRun(PINS, COMMIT, WORK_ROOT, HEAD_TREE, HOST)
+REQUEST_PATH = WORK_ROOT / f"runs/core/{COMMIT}/requests/fleurs-check/request.json"
+
+
+@dataclass(frozen=True)
+class CheckRecord:
+    outcome: FleursCheckOutcome
+    runs: list[ContainerRun]
+    files: FakeStepFiles
+
+
+def build_files() -> FakeStepFiles:
+    files = FakeStepFiles()
+    files.add_directory(WORK_ROOT)
+    for path in BENCH_PATHS:
+        files.add_file(WORK_ROOT / SOURCES / path, build_file_facts(1, 0o444), b"x")
+    return files
+
+
+def build_engine(files: FakeStepFiles) -> FakeContainerEngine:
+    return FakeContainerEngine(
+        files=files,
+        images={FLEURS_CHECK_ROW.image.tag: ImageFacts(IMAGE_ID, HEAD_TREE)},
+        step_outputs={
+            "fleurs-check.json": build_step_output(render_fleurs_check_report(REPORT)),
+            PEAKS_FILE_NAME: build_step_output(render_step_peaks(PEAKS)),
+        },
+    )
+
+
+class TestTheCheckFleurs:
+    class TestTheCheckFleursBenchFunction:
+        class TestWhenTheBenchIsFetched:
+            @pytest.fixture
+            def check_record(self) -> CheckRecord:
+                files = build_files()
+                engine = build_engine(files)
+                return CheckRecord(check_fleurs_bench(RUN, engine, files), engine.runs, files)
+
+            def test_should_ask_for_each_languages_index_and_audio_where_they_are_bound(
+                self, check_record: CheckRecord
+            ) -> None:
+                assert json.loads(check_record.files.contents[REQUEST_PATH]) == {
+                    "languages": [
+                        {
+                            "language": language,
+                            "index": f"/{SOURCES}/data/{language}/test.tsv",
+                            "archive": f"/{SOURCES}/data/{language}/audio/test.tar.gz",
+                        }
+                        for language in ("fr_fr", "en_us")
+                    ]
+                }
+
+            def test_should_bind_the_four_files_of_the_bench_each_by_itself(
+                self, check_record: CheckRecord
+            ) -> None:
+                assert [
+                    mount.host_path
+                    for run in check_record.runs
+                    for mount in run.mounts
+                    if mount.is_file
+                ] == [SOURCES / path for path in BENCH_PATHS]
+
+            def test_should_give_the_report_it_judged(self, check_record: CheckRecord) -> None:
+                assert check_record.outcome == FleursCheckOutcome(REPORT, PEAKS)
+
+        class TestWhenAPinOfTheBenchIsMissing:
+            @pytest.fixture
+            def check_act(self) -> Callable[[], FleursCheckOutcome]:
+                files = build_files()
+                return partial(
+                    check_fleurs_bench, replace(RUN, pins=PINS[:3]), build_engine(files), files
+                )
+
+            def test_should_refuse_the_step(
+                self, check_act: Callable[[], FleursCheckOutcome]
+            ) -> None:
+                with pytest.raises(
+                    WorkDirectoryError,
+                    match=re.escape("no pin gives data/en_us/audio/test.tar.gz of google/fleurs"),
+                ):
+                    check_act()

@@ -17,14 +17,27 @@ STANDARD_LIBRARY_DIRECTORIES = (
 ORIGINS_WITHOUT_A_FILE = ("built-in", "frozen")
 SCRIPT_MODULE_NAME = "__main__"
 PACKAGE_SEPARATOR = "."
-LOADED_MODULES_QUERY = f"""
+STANDARD_LIBRARY_STEPS = tuple(
+    f"{PACKAGE_NAME}.steps.{step}"
+    for step in (
+        "fleurs_audio",
+        "fleurs_check",
+        "clean_output",
+        "output_modes",
+        "control_group_peaks",
+        "lock_resolution",
+    )
+)
+ISOLATED_MODULES = (HOST_ENTRY_MODULE, *STANDARD_LIBRARY_STEPS)
+LOADED_MODULES_QUERY = """
+import importlib
 import json
 import sys
 
 sys.path.append(sys.argv[1])
-import {HOST_ENTRY_MODULE}
+importlib.import_module(sys.argv[2])
 
-origins = {{}}
+origins = {}
 for name, module in sys.modules.items():
     spec = getattr(module, "__spec__", None)
     origins[name] = None if spec is None else spec.origin
@@ -75,10 +88,11 @@ def list_foreign_modules(origins: dict[str, str | None]) -> dict[str, str | None
 
 class TestTheMosttModelBuilderPackage:
     class TestTheImport:
-        class TestWhenAPythonWithoutItsEnvironmentAndSitePackagesImportsItsCommandLine:
+        @pytest.mark.parametrize("module_name", ISOLATED_MODULES, scope="class")
+        class TestWhenAPythonWithoutItsEnvironmentAndSitePackagesImportsAModuleOfTheHostOrAStep:
             @pytest.fixture(scope="class")
             @classmethod
-            def module_origins(cls) -> dict[str, str | None]:
+            def module_origins(cls, module_name: str) -> dict[str, str | None]:
                 completed_import = subprocess.run(
                     [
                         sys.executable,
@@ -88,6 +102,7 @@ class TestTheMosttModelBuilderPackage:
                         "-c",
                         LOADED_MODULES_QUERY,
                         str(SOURCE_DIRECTORY),
+                        module_name,
                     ],
                     capture_output=True,
                     check=True,
@@ -96,10 +111,10 @@ class TestTheMosttModelBuilderPackage:
                 )
                 return parse_module_origins(completed_import.stdout)
 
-            def test_should_load_the_command_line(
-                self, module_origins: dict[str, str | None]
+            def test_should_load_the_module(
+                self, module_origins: dict[str, str | None], module_name: str
             ) -> None:
-                assert HOST_ENTRY_MODULE in module_origins
+                assert module_name in module_origins
 
             def test_should_load_only_the_standard_library_and_itself_so_no_third_party_code_runs(
                 self, module_origins: dict[str, str | None]

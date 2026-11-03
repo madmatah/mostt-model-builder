@@ -1,22 +1,33 @@
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from functools import partial
 from pathlib import PurePosixPath
 
 import pytest
 
+from mostt_model_builder.domain.containers.container_steps import (
+    SourceReference,
+    StepPlacement,
+)
 from mostt_model_builder.domain.containers.work_directory import (
     DirectoryFacts,
     EntryKind,
     WorkDirectory,
     WorkDirectoryError,
+    find_next_lock_number,
     judge_work_directory,
+    locate_image_build_log,
+    locate_referenced_sources,
     locate_source,
+    place_clean,
+    place_lock,
+    place_step,
     require_absolute_home,
 )
 from mostt_model_builder.domain.sources.source_pins import RepositoryType, SourcePin
 
 USER_ID = 1000
+COMMIT = "e949fa3a2eb8bf218e96c2c03625bbd36e4342b1"
 OTHER_USER_ID = 1001
 WORK_PATH = "/data/builds/work"
 HOME = "/home/user"
@@ -262,3 +273,111 @@ class TestTheWorkDirectory:
                 assert source_path == PurePosixPath(
                     f"sources/google/fleurs/{REVISION}/data/fr_fr/test.tsv"
                 )
+
+    class TestTheLocateReferencedSourcesFunction:
+        class TestWhenAPinGivesTheReferencedFile:
+            @pytest.fixture
+            def source_paths(self) -> Mapping[SourceReference, PurePosixPath]:
+                return locate_referenced_sources(
+                    [SourceReference("google/fleurs", "data/fr_fr/test.tsv")], [FLEURS_INDEX_PIN]
+                )
+
+            def test_should_place_it_where_the_fetch_put_it(
+                self, source_paths: Mapping[SourceReference, PurePosixPath]
+            ) -> None:
+                assert source_paths == {
+                    SourceReference("google/fleurs", "data/fr_fr/test.tsv"): PurePosixPath(
+                        f"sources/google/fleurs/{REVISION}/data/fr_fr/test.tsv"
+                    )
+                }
+
+        class TestWhenNoPinGivesTheReferencedFile:
+            @pytest.fixture
+            def locate_act(self) -> Callable[[], Mapping[SourceReference, PurePosixPath]]:
+                return partial(
+                    locate_referenced_sources,
+                    [SourceReference("google/fleurs", "data/en_us/test.tsv")],
+                    [FLEURS_INDEX_PIN],
+                )
+
+            def test_should_refuse_the_step(
+                self, locate_act: Callable[[], Mapping[SourceReference, PurePosixPath]]
+            ) -> None:
+                with pytest.raises(
+                    WorkDirectoryError,
+                    match=re.escape("no pin gives data/en_us/test.tsv of google/fleurs"),
+                ):
+                    locate_act()
+
+    class TestThePlaceStepFunction:
+        class TestWhenACoreStepRunsAtACommit:
+            @pytest.fixture
+            def placement(self) -> StepPlacement:
+                return place_step("core", COMMIT, "fleurs-check")
+
+            def test_should_keep_its_outputs_request_and_log_apart_under_the_commit(
+                self, placement: StepPlacement
+            ) -> None:
+                assert placement == StepPlacement(
+                    output_directory=PurePosixPath(f"runs/core/{COMMIT}/fleurs-check"),
+                    request_directory=PurePosixPath(f"runs/core/{COMMIT}/requests/fleurs-check"),
+                    log_path=PurePosixPath(f"runs/core/{COMMIT}/logs/fleurs-check.log"),
+                )
+
+    class TestThePlaceCleanFunction:
+        class TestWhenAStepIsCleaned:
+            @pytest.fixture
+            def placement(self) -> StepPlacement:
+                return place_clean("core", COMMIT, "fleurs-check")
+
+            def test_should_mount_the_steps_outputs_alone_and_log_apart(
+                self, placement: StepPlacement
+            ) -> None:
+                assert placement == StepPlacement(
+                    output_directory=PurePosixPath(f"runs/core/{COMMIT}/fleurs-check"),
+                    request_directory=None,
+                    log_path=PurePosixPath(f"runs/core/{COMMIT}/logs/clean-fleurs-check.log"),
+                )
+
+    class TestThePlaceLockFunction:
+        class TestWhenALockRuns:
+            @pytest.fixture
+            def placement(self) -> StepPlacement:
+                return place_lock(3)
+
+            def test_should_give_it_a_request_an_output_and_a_log_of_its_own(
+                self, placement: StepPlacement
+            ) -> None:
+                assert placement == StepPlacement(
+                    output_directory=PurePosixPath("lock/3/output"),
+                    request_directory=PurePosixPath("lock/3/request"),
+                    log_path=PurePosixPath("lock/3/logs/lock.log"),
+                )
+
+    class TestTheFindNextLockNumberFunction:
+        @pytest.mark.parametrize(
+            ("entry_names", "lock_number"),
+            [
+                pytest.param([], 1, id="no lock yet"),
+                pytest.param(["1", "2", "10"], 11, id="numbered locks"),
+                pytest.param(["2", "notes", "03", "-1"], 3, id="entries that are not numbers"),
+            ],
+        )
+        class TestWhenEarlierLocksExist:
+            @pytest.fixture
+            def next_number(self, entry_names: list[str]) -> int:
+                return find_next_lock_number(entry_names)
+
+            def test_should_number_the_new_one_after_the_last(
+                self, next_number: int, lock_number: int
+            ) -> None:
+                assert next_number == lock_number
+
+    class TestTheLocateImageBuildLogFunction:
+        class TestWhenAnImageIsBuilt:
+            @pytest.fixture
+            def log_path(self) -> PurePosixPath:
+                return locate_image_build_log("mostt-model-builder-core-bench")
+
+            def test_should_log_it_under_the_image_builds(self, log_path: PurePosixPath) -> None:
+                assert log_path == PurePosixPath("image-builds/mostt-model-builder-core-bench.log")

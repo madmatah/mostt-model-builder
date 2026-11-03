@@ -44,7 +44,7 @@ The names and the structure say what the code does, and the tests state the busi
 
 - **Formatted by `ruff format`, at 100 columns, and linted by `ruff check`** with the rule sets `E`, `W`, `F`, `I`, `B`, `UP`, `SIM`, `PT`, `ARG` and `RUF`, so that style and the common bugs never reach a review. Check: the gate.
 - **Typed strictly:** `mypy --strict` with `warn_unreachable`, on `src` and `tests`; every function is annotated; no `Any` without a reason, so that a value read from outside is checked before it gets a type; a `# type: ignore[<code>]` names its code and gives its why. Check: the gate (`mypy`) for the types, review for the reasons.
-- **Python 3.12 syntax,** the version of `.python-version` and of the planned images' base. Check: the gate (`ruff`'s `UP` rules, `target-version = "py312"`).
+- **Python 3.12 syntax,** the version of `.python-version` and of the images' base. Check: the gate (`ruff`'s `UP` rules, `target-version = "py312"`).
 - **A docstring says a why, never what the code does,** as any comment ([Comments](#comments)). Check: review.
 - **Python idioms that override the naming rules:** a name the platform imposes, such as `__init__`, a pytest fixture's parameter or `cls`.
 

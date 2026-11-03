@@ -1,0 +1,424 @@
+import re
+import subprocess
+from collections.abc import Callable
+from dataclasses import replace
+from functools import partial
+from pathlib import Path, PurePosixPath
+
+import pytest
+
+from mostt_model_builder.adapters.docker_engine import (
+    MOUNT_PATH_GRAMMAR,
+    ContainerEngineError,
+    DockerEngine,
+    build_image_arguments,
+    build_run_arguments,
+    parse_image_inspection,
+    run_logged,
+)
+from mostt_model_builder.application.run_step import ContainerExit, ImageFacts
+from mostt_model_builder.domain.containers.container_steps import (
+    BOOTSTRAP_IN_THE_IMAGE,
+    CORE_IMAGES,
+    FLEURS_CHECK_ROW,
+    LOCK_ROW,
+    LOCK_STEP_NAME,
+    BindMount,
+    ContainerRun,
+    StepPlacement,
+    StepRow,
+    build_clean_row,
+    plan_container_run,
+)
+
+IMAGE_ID = "sha256:" + "b" * 64
+TREE_HASH = "3f1d1ffe79bc3336eb583331cfbf9b189fd45f01"
+GROUP_ID = 1000
+WORK_ROOT = PurePosixPath("/data/builds/work")
+REVISION = "70bb2e84b976b7e960aa89f1c648e09c59f894dd"
+PLACEMENT = StepPlacement(
+    output_directory=PurePosixPath("runs/core/c0ffee/step"),
+    request_directory=PurePosixPath("runs/core/c0ffee/requests/step"),
+    log_path=PurePosixPath("runs/core/c0ffee/logs/step.log"),
+)
+EVERY_ROW = (FLEURS_CHECK_ROW, LOCK_ROW, *(build_clean_row(image) for image in CORE_IMAGES))
+ROW_IDS = [f"{row.name} in {row.image.tag}" for row in EVERY_ROW]
+CONFINEMENT_SEQUENCES = {
+    "removed once it exits": ["--rm"],
+    "never pulled, so only a built image runs": ["--pull", "never"],
+    "a read-only root": ["--read-only"],
+    "every capability dropped": ["--cap-drop", "ALL"],
+    "no new privileges": ["--security-opt", "no-new-privileges"],
+    "no shared memory with the host": ["--ipc", "none"],
+    "no log kept by docker, since the host keeps its own": ["--log-driver", "none"],
+    "no core dump": ["--ulimit", "core=0"],
+    "the container user in the user's group": ["--user", f"65531:{GROUP_ID}"],
+}
+FAKE_DOCKER_OUTPUT = b"line one\n\x1b[31mred\x07\x00\xff\n"
+FAKE_DOCKER_STATUS = 3
+NETWORK_BY_STEP_NAME = {LOCK_STEP_NAME: "bridge"}
+NO_NETWORK = "none"
+READ_ONLY_OPTION = {True: ",readonly", False: ""}
+
+PROXY_VARIABLE_NAMES = (
+    "HTTP_PROXY",
+    "http_proxy",
+    "HTTPS_PROXY",
+    "https_proxy",
+    "FTP_PROXY",
+    "ftp_proxy",
+    "NO_PROXY",
+    "no_proxy",
+    "ALL_PROXY",
+    "all_proxy",
+)
+
+
+def plan_row(row: StepRow) -> ContainerRun:
+    source_paths = {
+        reference: PurePosixPath("sources", reference.repository, REVISION, reference.path)
+        for reference in row.sources
+    }
+    return plan_container_run(row, IMAGE_ID, PLACEMENT, source_paths, WORK_ROOT, GROUP_ID)
+
+
+def find_sequence(arguments: list[str], sequence: list[str]) -> int | None:
+    for start in range(len(arguments) - len(sequence) + 1):
+        if arguments[start : start + len(sequence)] == sequence:
+            return start
+    return None
+
+
+def read_option_values(arguments: list[str], option: str) -> list[str]:
+    return [
+        arguments[position + 1]
+        for position, argument in enumerate(arguments[:-1])
+        if argument == option
+    ]
+
+
+def write_fake_docker(directory: Path, output: bytes, status: int) -> Path:
+    output_path = directory / "output.bin"
+    output_path.write_bytes(output)
+    fake_docker = directory / "docker"
+    fake_docker.write_text(f'#!/usr/bin/env bash\ncat "{output_path}"\nexit {status}\n')
+    fake_docker.chmod(0o755)
+    return fake_docker
+
+
+class TestTheDockerEngine:
+    class TestTheBuildRunArgumentsFunction:
+        @pytest.mark.parametrize("row", EVERY_ROW, ids=ROW_IDS)
+        @pytest.mark.parametrize(
+            "sequence",
+            list(CONFINEMENT_SEQUENCES.values()),
+            ids=list(CONFINEMENT_SEQUENCES.keys()),
+        )
+        class TestWhenARowRunsWithAConfinementOption:
+            @pytest.fixture
+            def run_arguments(self, row: StepRow) -> list[str]:
+                return build_run_arguments(plan_row(row))
+
+            def test_should_hold_it(self, run_arguments: list[str], sequence: list[str]) -> None:
+                assert find_sequence(run_arguments, sequence) is not None
+
+        @pytest.mark.parametrize("row", EVERY_ROW, ids=ROW_IDS)
+        class TestWhenARowRuns:
+            @pytest.fixture
+            def run_arguments(self, row: StepRow) -> list[str]:
+                return build_run_arguments(plan_row(row))
+
+            def test_should_end_with_the_images_python_isolated_on_the_bootstrap_and_the_entry(
+                self, run_arguments: list[str], row: StepRow
+            ) -> None:
+                assert run_arguments[-7:] == [
+                    "--entrypoint",
+                    str(row.image.python),
+                    IMAGE_ID,
+                    "-I",
+                    "-B",
+                    str(BOOTSTRAP_IN_THE_IMAGE),
+                    row.entry_module,
+                ]
+
+            def test_should_bound_the_swap_to_the_memory_so_no_step_swaps_beyond_it(
+                self, run_arguments: list[str], row: StepRow
+            ) -> None:
+                assert (
+                    read_option_values(run_arguments, "--memory"),
+                    read_option_values(run_arguments, "--memory-swap"),
+                ) == ([f"{row.limits.memory_mib}m"], [f"{row.limits.memory_mib}m"])
+
+            def test_should_bound_its_processes_and_cpus(
+                self, run_arguments: list[str], row: StepRow
+            ) -> None:
+                assert (
+                    read_option_values(run_arguments, "--pids-limit"),
+                    read_option_values(run_arguments, "--cpus"),
+                ) == ([str(row.limits.process_count)], [str(row.limits.cpu_count)])
+
+            def test_should_mount_tmp_as_a_bounded_temporary_filesystem_that_runs_nothing(
+                self, run_arguments: list[str], row: StepRow
+            ) -> None:
+                assert read_option_values(run_arguments, "--tmpfs") == [
+                    f"/tmp:rw,noexec,nosuid,nodev,size={row.limits.temporary_directory_mib}m"
+                ]
+
+            def test_should_give_the_network_to_the_lock_alone(
+                self, run_arguments: list[str], row: StepRow
+            ) -> None:
+                assert read_option_values(run_arguments, "--network") == [
+                    NETWORK_BY_STEP_NAME.get(row.name, NO_NETWORK)
+                ]
+
+            def test_should_set_every_proxy_variable_empty_so_that_dockers_own_never_reaches_it(
+                self, run_arguments: list[str]
+            ) -> None:
+                assert sorted(
+                    setting
+                    for setting in read_option_values(run_arguments, "--env")
+                    if setting.split("=", 1)[0] in PROXY_VARIABLE_NAMES
+                ) == sorted(f"{name}=" for name in PROXY_VARIABLE_NAMES)
+
+            def test_should_give_no_device(self, run_arguments: list[str]) -> None:
+                assert read_option_values(run_arguments, "--device") == []
+
+            def test_should_mount_only_the_rows_files_and_directories(
+                self, run_arguments: list[str], row: StepRow
+            ) -> None:
+                assert read_option_values(run_arguments, "--mount") == [
+                    f"type=bind,source={WORK_ROOT / mount.host_path},"
+                    f"target={mount.container_path}{READ_ONLY_OPTION[mount.is_read_only]}"
+                    for mount in plan_row(row).mounts
+                ]
+
+        class TestWhenARunUsesTheGpu:
+            @pytest.fixture
+            def run_arguments(self) -> list[str]:
+                return build_run_arguments(replace(plan_row(FLEURS_CHECK_ROW), uses_gpu=True))
+
+            def test_should_add_every_gpu_through_the_container_device_interface(
+                self, run_arguments: list[str]
+            ) -> None:
+                assert read_option_values(run_arguments, "--device") == ["nvidia.com/gpu=all"]
+
+        class TestWhenAMountPathHoldsAComma:
+            @pytest.fixture
+            def build_act(self) -> Callable[[], list[str]]:
+                run = plan_row(LOCK_ROW)
+                mount = BindMount(
+                    PurePosixPath("runs/a,readonly=false"), PurePosixPath("/x"), True, False
+                )
+                return partial(build_run_arguments, replace(run, mounts=(mount,)))
+
+            def test_should_refuse_it_since_docker_reads_a_comma_as_syntax(
+                self, build_act: Callable[[], list[str]]
+            ) -> None:
+                with pytest.raises(
+                    ContainerEngineError, match="a mount '/data/builds/work/runs/a,"
+                ):
+                    build_act()
+
+        @pytest.mark.parametrize(
+            "host_path",
+            ["runs/../../etc", "runs/.."],
+            ids=["a dot-dot segment inside", "a dot-dot segment last"],
+        )
+        class TestWhenAMountPathHoldsADotDotSegment:
+            @pytest.fixture
+            def build_act(self, host_path: str) -> Callable[[], list[str]]:
+                run = plan_row(LOCK_ROW)
+                mount = BindMount(PurePosixPath(host_path), PurePosixPath("/x"), True, False)
+                return partial(build_run_arguments, replace(run, mounts=(mount,)))
+
+            def test_should_refuse_it_since_docker_would_resolve_it_elsewhere(
+                self, build_act: Callable[[], list[str]], host_path: str
+            ) -> None:
+                with pytest.raises(
+                    ContainerEngineError,
+                    match=re.escape(f"a mount '/data/builds/work/{host_path}' does not match"),
+                ):
+                    build_act()
+
+        class TestWhenAMountPathHoldsANameThatStartsWithADot:
+            @pytest.fixture
+            def run_arguments(self) -> list[str]:
+                run = plan_row(LOCK_ROW)
+                mount = BindMount(PurePosixPath("runs/..step"), PurePosixPath("/x"), True, False)
+                return build_run_arguments(replace(run, mounts=(mount,)))
+
+            def test_should_bind_it(self, run_arguments: list[str]) -> None:
+                assert read_option_values(run_arguments, "--mount") == [
+                    "type=bind,source=/data/builds/work/runs/..step,target=/x,readonly"
+                ]
+
+    class TestTheMountPathGrammarConstant:
+        @pytest.mark.parametrize(
+            "path", ["/a/./b", "/a/../b", "/a/.", "/.."], ids=["dot", "dot dot", "dot last", "root"]
+        )
+        class TestWhenAPathHoldsADotSegment:
+            def test_should_refuse_it(self, path: str) -> None:
+                assert MOUNT_PATH_GRAMMAR.fullmatch(path) is None
+
+        @pytest.mark.parametrize(
+            "path", ["/a/..b", "/a/.hidden", "/a/b.c"], ids=["dot dot name", "dot name", "suffix"]
+        )
+        class TestWhenANameOnlyHoldsDots:
+            def test_should_accept_it(self, path: str) -> None:
+                assert MOUNT_PATH_GRAMMAR.fullmatch(path) is not None
+
+    class TestTheBuildImageArgumentsFunction:
+        class TestWhenTheBenchImageIsBuilt:
+            @pytest.fixture
+            def build_arguments(self) -> list[str]:
+                return build_image_arguments(
+                    PurePosixPath("/clone/images/bench/Containerfile"),
+                    PurePosixPath("/clone"),
+                    "mostt-model-builder-core-bench",
+                    TREE_HASH,
+                )
+
+            def test_should_build_its_containerfile_from_the_clone_under_its_tag_and_tree(
+                self, build_arguments: list[str]
+            ) -> None:
+                assert build_arguments == [
+                    "docker",
+                    "build",
+                    "--progress",
+                    "plain",
+                    "--file",
+                    "/clone/images/bench/Containerfile",
+                    "--tag",
+                    "mostt-model-builder-core-bench",
+                    "--build-arg",
+                    f"TREE_HASH={TREE_HASH}",
+                    *[
+                        argument
+                        for name in PROXY_VARIABLE_NAMES
+                        for argument in ("--build-arg", f"{name}=")
+                    ],
+                    "/clone",
+                ]
+
+            def test_should_set_every_proxy_variable_empty_so_that_dockers_own_never_reaches_it(
+                self, build_arguments: list[str]
+            ) -> None:
+                assert sorted(
+                    setting
+                    for setting in read_option_values(build_arguments, "--build-arg")
+                    if setting.split("=", 1)[0] in PROXY_VARIABLE_NAMES
+                ) == sorted(f"{name}=" for name in PROXY_VARIABLE_NAMES)
+
+            def test_should_pass_no_frontend_so_the_built_in_one_reads_the_containerfile(
+                self, build_arguments: list[str]
+            ) -> None:
+                assert [
+                    argument for argument in build_arguments if "BUILDKIT_SYNTAX" in argument
+                ] == []
+
+    class TestTheParseImageInspectionFunction:
+        class TestWhenTheImageCarriesItsTree:
+            @pytest.fixture
+            def image_facts(self) -> ImageFacts:
+                return parse_image_inspection(
+                    f'"{IMAGE_ID}" {{"mostt-model-builder.tree":"{TREE_HASH}"}}\n'.encode()
+                )
+
+            def test_should_read_its_id_and_its_tree(self, image_facts: ImageFacts) -> None:
+                assert image_facts == ImageFacts(IMAGE_ID, TREE_HASH)
+
+        class TestWhenTheImageCarriesNoLabel:
+            @pytest.fixture
+            def image_facts(self) -> ImageFacts:
+                return parse_image_inspection(f'"{IMAGE_ID}" null\n'.encode())
+
+            def test_should_find_no_tree(self, image_facts: ImageFacts) -> None:
+                assert image_facts.tree_label is None
+
+        class TestWhenTheLabelsNest3000Deep:
+            @pytest.fixture
+            def parse_act(self) -> Callable[[], ImageFacts]:
+                return partial(
+                    parse_image_inspection, f'"{IMAGE_ID}" '.encode() + b"[" * 3000 + b"\n"
+                )
+
+            def test_should_refuse_them_before_json_decodes_them(
+                self, parse_act: Callable[[], ImageFacts]
+            ) -> None:
+                with pytest.raises(
+                    ContainerEngineError, match="the document nests deeper than 32 levels"
+                ):
+                    parse_act()
+
+        class TestWhenTheIdIsMalformed:
+            @pytest.fixture
+            def parse_act(self) -> Callable[[], ImageFacts]:
+                return partial(parse_image_inspection, b'"sha256:abc" null\n')
+
+            def test_should_refuse_it(self, parse_act: Callable[[], ImageFacts]) -> None:
+                with pytest.raises(
+                    ContainerEngineError, match="docker gave the image id 'sha256:abc'"
+                ):
+                    parse_act()
+
+    class TestTheInspectImageMethod:
+        class TestWhenDockerGivesNoAnswerInTime:
+            @pytest.fixture
+            def inspect_act(
+                self, monkeypatch: pytest.MonkeyPatch
+            ) -> Callable[[], ImageFacts | None]:
+                def run_until_the_timeout(
+                    arguments: list[str], *, timeout: float, **_options: object
+                ) -> subprocess.CompletedProcess[bytes]:
+                    raise subprocess.TimeoutExpired(arguments, timeout)
+
+                monkeypatch.setattr(subprocess, "run", run_until_the_timeout)
+                return partial(
+                    DockerEngine(PurePosixPath("/clone")).inspect_image,
+                    "mostt-model-builder-core-bench",
+                )
+
+            def test_should_refuse_it_and_name_the_command_and_its_timeout(
+                self, inspect_act: Callable[[], ImageFacts | None]
+            ) -> None:
+                with pytest.raises(
+                    ContainerEngineError,
+                    match=r"^docker image inspect gave no answer within 60 s$",
+                ):
+                    inspect_act()
+
+    class TestTheRunLoggedFunction:
+        class TestWhenTheProgramPrintsBytesATerminalWouldRead:
+            @pytest.fixture
+            def logged_run(self, tmp_path: Path) -> tuple[ContainerExit, bytes]:
+                fake_docker = write_fake_docker(tmp_path, FAKE_DOCKER_OUTPUT, FAKE_DOCKER_STATUS)
+                log_path = tmp_path / "step.log"
+                container_exit = run_logged([str(fake_docker)], PurePosixPath(log_path))
+                return container_exit, log_path.read_bytes()
+
+            def test_should_log_them_through_the_printable_filter(
+                self, logged_run: tuple[ContainerExit, bytes]
+            ) -> None:
+                assert logged_run[1] == b"line one\n?[31mred???\n"
+
+            def test_should_keep_the_same_filtered_tail(
+                self, logged_run: tuple[ContainerExit, bytes]
+            ) -> None:
+                assert logged_run[0].log_tail == b"line one\n?[31mred???\n"
+
+            def test_should_report_its_status(
+                self, logged_run: tuple[ContainerExit, bytes]
+            ) -> None:
+                assert logged_run[0].status == FAKE_DOCKER_STATUS
+
+        class TestWhenTheLogIsALink:
+            @pytest.fixture
+            def run_act(self, tmp_path: Path) -> Callable[[], ContainerExit]:
+                fake_docker = write_fake_docker(tmp_path, FAKE_DOCKER_OUTPUT, 0)
+                (tmp_path / "elsewhere.log").write_bytes(b"")
+                (tmp_path / "step.log").symlink_to(tmp_path / "elsewhere.log")
+                return partial(run_logged, [str(fake_docker)], PurePosixPath(tmp_path / "step.log"))
+
+            def test_should_refuse_to_follow_it(self, run_act: Callable[[], ContainerExit]) -> None:
+                with pytest.raises(OSError, match=re.escape("Too many levels of symbolic links")):
+                    run_act()

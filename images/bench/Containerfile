@@ -1,0 +1,5 @@
+FROM docker.io/library/python:3.12-slim-bookworm@sha256:6a0e06f5ba0b373d051aabd3fffb9b873f27f9a2a3a14bcbe37dee6f0e3bbc70
+# The bench's steps run on the base's Python and its standard library alone, without a venv.
+COPY src/mostt_model_builder /opt/model-builder/src/mostt_model_builder
+ARG TREE_HASH
+LABEL mostt-model-builder.tree=${TREE_HASH}

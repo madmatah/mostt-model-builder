@@ -1,14 +1,29 @@
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum, auto
 from pathlib import PurePosixPath
 
+from mostt_model_builder.domain.containers.container_steps import (
+    CLEAN_STEP_NAME,
+    LOCK_STEP_NAME,
+    SourceReference,
+    StepPlacement,
+)
 from mostt_model_builder.domain.sources.source_pins import SourcePin
 
 WORK_DIRECTORY_GRAMMAR = re.compile(r"/[A-Za-z0-9._/-]+")
 WORK_DIRECTORY_MODE = 0o700
 SOURCES_DIRECTORY_NAME = "sources"
+RUNS_DIRECTORY_NAME = "runs"
+REQUESTS_DIRECTORY_NAME = "requests"
+LOGS_DIRECTORY_NAME = "logs"
+LOCK_DIRECTORY_NAME = "lock"
+LOCK_REQUEST_DIRECTORY_NAME = "request"
+LOCK_OUTPUT_DIRECTORY_NAME = "output"
+IMAGE_BUILDS_DIRECTORY_NAME = "image-builds"
+LOG_SUFFIX = ".log"
+LOCK_NUMBER_GRAMMAR = re.compile(r"[1-9][0-9]{0,8}")
 
 
 class WorkDirectoryError(ValueError):
@@ -116,3 +131,57 @@ def refuse_clone_overlap(work_directory: PurePosixPath, clone_root: PurePosixPat
 
 def locate_source(pin: SourcePin) -> PurePosixPath:
     return PurePosixPath(SOURCES_DIRECTORY_NAME, *pin.layout_segments)
+
+
+def locate_referenced_sources(
+    references: Sequence[SourceReference], pins: Sequence[SourcePin]
+) -> Mapping[SourceReference, PurePosixPath]:
+    pins_by_reference = {SourceReference(pin.repository, pin.path): pin for pin in pins}
+    if len(pins_by_reference) != len(pins):
+        raise WorkDirectoryError("two pins give the same file of a repository at two revisions")
+    missing = [reference for reference in references if reference not in pins_by_reference]
+    if missing:
+        raise WorkDirectoryError(
+            f"no pin gives {missing[0].path} of {missing[0].repository}, which a step reads"
+        )
+    return {reference: locate_source(pins_by_reference[reference]) for reference in references}
+
+
+def locate_run(owner: str, commit: str) -> PurePosixPath:
+    return PurePosixPath(RUNS_DIRECTORY_NAME, owner, commit)
+
+
+def place_step(owner: str, commit: str, step_name: str) -> StepPlacement:
+    run = locate_run(owner, commit)
+    return StepPlacement(
+        output_directory=run / step_name,
+        request_directory=run / REQUESTS_DIRECTORY_NAME / step_name,
+        log_path=run / LOGS_DIRECTORY_NAME / f"{step_name}{LOG_SUFFIX}",
+    )
+
+
+def place_clean(owner: str, commit: str, step_name: str) -> StepPlacement:
+    run = locate_run(owner, commit)
+    return StepPlacement(
+        output_directory=run / step_name,
+        request_directory=None,
+        log_path=run / LOGS_DIRECTORY_NAME / f"{CLEAN_STEP_NAME}-{step_name}{LOG_SUFFIX}",
+    )
+
+
+def find_next_lock_number(entry_names: Sequence[str]) -> int:
+    numbers = [int(name) for name in entry_names if LOCK_NUMBER_GRAMMAR.fullmatch(name)]
+    return max(numbers, default=0) + 1
+
+
+def place_lock(lock_number: int) -> StepPlacement:
+    lock_run = PurePosixPath(LOCK_DIRECTORY_NAME, str(lock_number))
+    return StepPlacement(
+        output_directory=lock_run / LOCK_OUTPUT_DIRECTORY_NAME,
+        request_directory=lock_run / LOCK_REQUEST_DIRECTORY_NAME,
+        log_path=lock_run / LOGS_DIRECTORY_NAME / f"{LOCK_STEP_NAME}{LOG_SUFFIX}",
+    )
+
+
+def locate_image_build_log(image_tag: str) -> PurePosixPath:
+    return PurePosixPath(IMAGE_BUILDS_DIRECTORY_NAME, f"{image_tag}{LOG_SUFFIX}")
