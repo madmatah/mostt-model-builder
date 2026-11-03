@@ -40,6 +40,13 @@ REQUIREMENTS_BY_EXTRA: dict[str, dict[str, tuple[str, ...]]] = {
     EXPORT_EXTRA: EXPORT_REQUIREMENTS,
     TRANSCRIBE_CPU_EXTRA: {"numpy": (), "onnx-asr": (), "onnxruntime": ()},
     TRANSCRIBE_GPU_EXTRA: {"numpy": (), "onnx-asr": (), "onnxruntime-gpu": ("cuda", "cudnn")},
+    "parakeet-tdt-transformers-reference": {
+        "librosa": (),
+        "numpy": (),
+        "safetensors": (),
+        "torch": (),
+        "transformers": (),
+    },
 }
 # onnxruntime-gpu and onnxruntime install the same package, onnxruntime, so the extra of the GPU
 # image conflicts with every other extra that installs onnxruntime.

@@ -35,3 +35,29 @@ path = "parakeet-tdt-0.6b-v3.nemo"
 size_bytes = 2509332480
 sha256 = "3cbdc85877e668ca7b82d0d56770eb1fac76691f55d6b97545e8d61ca588d10d"
 runs_code_when_loaded = true
+
+# Transformers reads Moondream's weights with the processor of v3, whose feature extractor and
+# tokenizer Ultra keeps, and which Moondream does not publish.
+[[sources]]
+repository_type = "model"
+repository = "nvidia/parakeet-tdt-0.6b-v3"
+revision = "541d1f99c6b0c3cd0b11a95167540bb8edefd82b"
+path = "processor_config.json"
+size_bytes = 392
+sha256 = "8346a93a3b987fa1dec57a78f045cd0817d21786589a5a096b41a57a446fd1d7"
+
+[[sources]]
+repository_type = "model"
+repository = "nvidia/parakeet-tdt-0.6b-v3"
+revision = "541d1f99c6b0c3cd0b11a95167540bb8edefd82b"
+path = "tokenizer_config.json"
+size_bytes = 290
+sha256 = "0b2fe0037599ee335f0b972fa682bf0ece74e4ccfec755cb7daa3405d3d3e874"
+
+[[sources]]
+repository_type = "model"
+repository = "nvidia/parakeet-tdt-0.6b-v3"
+revision = "541d1f99c6b0c3cd0b11a95167540bb8edefd82b"
+path = "generation_config.json"
+size_bytes = 289
+sha256 = "b141de6ec6d7f982ece13f98f604e3fe1807ea9c0e839185d0ab7064604209d0"
