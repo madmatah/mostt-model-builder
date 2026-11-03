@@ -3,7 +3,7 @@ set -euo pipefail
 
 readonly REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly STEPS=(format lint types imports tests)
-readonly UV_INSTALL="curl --proto '=https' --tlsv1.2 -LsSf https://astral.sh/uv/0.13.6/install.sh | sh"
+readonly UV_INSTALL="curl --proto '=https' --tlsv1.2 -LsSf https://astral.sh/uv/0.13.7/install.sh | sh"
 
 fail() {
     printf 'check: %s\n' "$1" >&2
