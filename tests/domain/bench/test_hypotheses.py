@@ -11,6 +11,8 @@ from mostt_model_builder.domain.bench.hypotheses import (
     MAX_LINE_COUNT,
     MAX_LINE_SIZE_BYTES,
     MAX_TEXT_LENGTH,
+    MAX_TOKEN_COUNT,
+    MAX_TOKEN_ID,
     RUN_LINES_MAX_SIZE_BYTES,
     Hypothesis,
     HypothesisError,
@@ -21,8 +23,12 @@ from mostt_model_builder.domain.bench.hypotheses import (
 )
 
 LANGUAGES = ("fr_fr", "en_us")
-FRENCH_HYPOTHESIS = Hypothesis("fr_fr", "7105.wav", "le chat dort ici", 0, 812.5)
-ENGLISH_HYPOTHESIS = Hypothesis("en_us", "1274.wav", "the cat sleeps here", 2, 640.0)
+FRENCH_HYPOTHESIS = Hypothesis(
+    "fr_fr", "7105.wav", (12, 7, 30, 4), "le chat dort ici", "le chat dort ici", 0, 812.5
+)
+ENGLISH_HYPOTHESIS = Hypothesis(
+    "en_us", "1274.wav", (0, 9, 0, 3, 5), "<unk>the<unk> cat sleeps", "the cat sleeps", 2, 640.0
+)
 FRENCH_UTTERANCE_IN_ENGLISH = replace(ENGLISH_HYPOTHESIS, utterance_id="7105.wav")
 TWO_LINES = b'{"utterance_id": "7105.wav", "tokens": [12, 7]}\n{"utterance_id": "1274.wav"}\n'
 LINE_PREFIX = '{"text": "'
@@ -89,11 +95,22 @@ REFUSED_LINES = {
 }
 
 ACCEPTED_HYPOTHESES = {
-    "an empty text, the hypothesis of a silence": replace(FRENCH_HYPOTHESIS, text=""),
-    "a text of exactly its length bound": replace(FRENCH_HYPOTHESIS, text="a" * MAX_TEXT_LENGTH),
-    "a text with accents, punctuation and a no-break space": replace(
-        FRENCH_HYPOTHESIS, text="l\u2019été\u00a0? déjà !"
+    "an empty text, the hypothesis of a silence": replace(
+        FRENCH_HYPOTHESIS, token_ids=(), text="", text_without_unknown_tokens=""
     ),
+    "a text of exactly its length bound": replace(
+        FRENCH_HYPOTHESIS,
+        text="a" * MAX_TEXT_LENGTH,
+        text_without_unknown_tokens="a" * MAX_TEXT_LENGTH,
+    ),
+    "a text with accents, punctuation and a no-break space": replace(
+        FRENCH_HYPOTHESIS,
+        text="l\u2019été\u00a0? déjà !",
+        text_without_unknown_tokens="l\u2019été\u00a0? déjà !",
+    ),
+    "unknown tokens that the text without them leaves out": ENGLISH_HYPOTHESIS,
+    "exactly the bound of tokens": replace(FRENCH_HYPOTHESIS, token_ids=(7,) * MAX_TOKEN_COUNT),
+    "the highest token id": replace(FRENCH_HYPOTHESIS, token_ids=(MAX_TOKEN_ID,)),
     "a decoding time of zero": replace(FRENCH_HYPOTHESIS, decoding_time_ms=0.0),
     "a decoding time at its bound": replace(
         FRENCH_HYPOTHESIS, decoding_time_ms=MAX_DECODING_TIME_MS
@@ -158,6 +175,47 @@ REFUSED_HYPOTHESES = {
     "a lone surrogate": (
         replace(FRENCH_HYPOTHESIS, text="le chat\ud800"),
         f"{WHERE} holds a character a reader cannot see",
+    ),
+    "token ids in a list rather than a tuple": (
+        replace(FRENCH_HYPOTHESIS, token_ids=cast(tuple[int, ...], [12, 7])),
+        f"{WHERE}: its token ids are not a tuple",
+    ),
+    "more tokens than its bound": (
+        replace(FRENCH_HYPOTHESIS, token_ids=(7,) * (MAX_TOKEN_COUNT + 1)),
+        f"{WHERE} holds more than {MAX_TOKEN_COUNT} tokens",
+    ),
+    "a negative token id": (
+        replace(FRENCH_HYPOTHESIS, token_ids=(12, -1)),
+        f"{WHERE} holds the token id -1, not a whole number from 0 to {MAX_TOKEN_ID}",
+    ),
+    "a token id beyond its bound": (
+        replace(FRENCH_HYPOTHESIS, token_ids=(MAX_TOKEN_ID + 1,)),
+        f"{WHERE} holds the token id {MAX_TOKEN_ID + 1}, not a whole number",
+    ),
+    "a boolean token id": (
+        replace(FRENCH_HYPOTHESIS, token_ids=(True,)),
+        f"{WHERE} holds the token id True, not a whole number",
+    ),
+    "a token id written as a string": (
+        replace(FRENCH_HYPOTHESIS, token_ids=cast(tuple[int, ...], ("12",))),
+        f"{WHERE} holds the token id '12', not a whole number",
+    ),
+    "a text without its unknown tokens beyond the length bound": (
+        replace(ENGLISH_HYPOTHESIS, text_without_unknown_tokens="a" * (MAX_TEXT_LENGTH + 1)),
+        "the hypothesis of '1274.wav', without its unknown tokens, holds more than "
+        f"{MAX_TEXT_LENGTH} characters",
+    ),
+    "a text without its unknown tokens that holds a zero-width space": (
+        replace(ENGLISH_HYPOTHESIS, text_without_unknown_tokens="the\u200bcat"),
+        "without its unknown tokens, holds a character a reader cannot see",
+    ),
+    "more unknown tokens than tokens": (
+        replace(ENGLISH_HYPOTHESIS, unknown_token_count=6),
+        "the hypothesis of '1274.wav' counts 6 unknown tokens among 5 tokens",
+    ),
+    "two texts that differ without an unknown token": (
+        replace(FRENCH_HYPOTHESIS, text_without_unknown_tokens="le chat dort"),
+        f"{WHERE} counts no unknown token, and its two texts differ",
     ),
     "a negative count of unknown tokens": (
         replace(FRENCH_HYPOTHESIS, unknown_token_count=-1),
@@ -280,7 +338,7 @@ class TestTheHypotheses:
                     [
                         FRENCH_HYPOTHESIS,
                         ENGLISH_HYPOTHESIS,
-                        replace(FRENCH_HYPOTHESIS, text="le chat dort"),
+                        replace(FRENCH_HYPOTHESIS, decoding_time_ms=640.0),
                     ],
                     LANGUAGES,
                 )

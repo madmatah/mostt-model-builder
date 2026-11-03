@@ -214,8 +214,8 @@ ENGLISH_LINES = (
     b'{"language": "en_us", "utterance": "1001.wav", "token": 1, "decoding_time_ms": 12.5}\n'
 )
 FRENCH_HYPOTHESES = (
-    Hypothesis("fr_fr", "1001.wav", "bon", 0, 12.5),
-    Hypothesis("fr_fr", "1002.wav", "jour", 0, 9.0),
+    Hypothesis("fr_fr", "1001.wav", (1,), "bon", "bon", 0, 12.5),
+    Hypothesis("fr_fr", "1002.wav", (2,), "jour", "jour", 0, 9.0),
 )
 GPU_PLACEMENT = PlacementSummary(
     (
@@ -236,7 +236,9 @@ def read_tokens_through_the_vocabulary(
         Hypothesis(
             language=str(line["language"]),
             utterance_id=str(line["utterance"]),
+            token_ids=(int(str(line["token"])),),
             text=vocabulary[int(str(line["token"]))],
+            text_without_unknown_tokens=vocabulary[int(str(line["token"]))],
             unknown_token_count=0,
             decoding_time_ms=float(str(line["decoding_time_ms"])),
         )

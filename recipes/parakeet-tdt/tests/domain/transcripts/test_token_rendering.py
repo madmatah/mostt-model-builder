@@ -10,6 +10,7 @@ from mostt_recipe_parakeet_tdt.domain.transcripts.token_rendering import (
     count_unknown_tokens,
     map_pieces_to_ids,
     render_text,
+    render_text_without_unknown_tokens,
 )
 from mostt_recipe_parakeet_tdt.domain.transcripts.vocabulary import Vocabulary
 
@@ -84,6 +85,43 @@ class TestTheTokenRendering:
             @pytest.fixture
             def render_act(self, token_ids: Sequence[object]) -> Callable[[], str]:
                 return partial(render_text, cast("Sequence[int]", token_ids), VOCABULARY)
+
+            def test_should_refuse_it_and_say_why(
+                self, render_act: Callable[[], str], reason: str
+            ) -> None:
+                with pytest.raises(TokenRenderingError, match=re.escape(reason)):
+                    render_act()
+
+    class TestTheRenderTextWithoutUnknownTokensFunction:
+        class TestWhenTheIdsHoldTheUnknownId:
+            @pytest.fixture
+            def text(self) -> str:
+                return render_text_without_unknown_tokens(SENTENCE_WITH_UNKNOWN_IDS, VOCABULARY)
+
+            def test_should_render_the_other_pieces_alone(self, text: str) -> None:
+                assert text == "the cat"
+
+        class TestWhenTheIdsHoldTheUnknownIdAlone:
+            @pytest.fixture
+            def text(self) -> str:
+                return render_text_without_unknown_tokens((UNKNOWN_ID,), VOCABULARY)
+
+            def test_should_render_an_empty_text(self, text: str) -> None:
+                assert text == ""
+
+        @pytest.mark.parametrize(
+            ("token_ids", "reason"),
+            list(REFUSED_TOKEN_IDS.values()),
+            ids=list(REFUSED_TOKEN_IDS.keys()),
+        )
+        class TestWhenAnIdIsNoTokenTheModelEmits:
+            @pytest.fixture
+            def render_act(self, token_ids: Sequence[object]) -> Callable[[], str]:
+                return partial(
+                    render_text_without_unknown_tokens,
+                    cast("Sequence[int]", token_ids),
+                    VOCABULARY,
+                )
 
             def test_should_refuse_it_and_say_why(
                 self, render_act: Callable[[], str], reason: str

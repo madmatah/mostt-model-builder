@@ -13,6 +13,7 @@ from mostt_recipe_parakeet_tdt.domain.transcripts.token_rendering import (
     count_unknown_tokens,
     map_pieces_to_ids,
     render_text,
+    render_text_without_unknown_tokens,
 )
 from mostt_recipe_parakeet_tdt.domain.transcripts.vocabulary import (
     VOCABULARY_SHA256,
@@ -104,10 +105,19 @@ def read_hypothesis(
     try:
         token_ids = read_token_ids(line, where)
         text = render_text(token_ids, vocabulary)
+        text_without_unknown_tokens = render_text_without_unknown_tokens(token_ids, vocabulary)
         unknown_token_count = count_unknown_tokens(token_ids, vocabulary)
     except TokenRenderingError as error:
         raise RunLineError(f"{where}: {error}") from error
-    return Hypothesis(language, utterance_id, text, unknown_token_count, decoding_time_ms)
+    return Hypothesis(
+        language=language,
+        utterance_id=utterance_id,
+        token_ids=token_ids,
+        text=text,
+        text_without_unknown_tokens=text_without_unknown_tokens,
+        unknown_token_count=unknown_token_count,
+        decoding_time_ms=decoding_time_ms,
+    )
 
 
 def read_listed_token_ids(line: RunLine, where: str) -> tuple[int, ...]:

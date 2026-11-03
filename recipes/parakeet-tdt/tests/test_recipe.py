@@ -19,6 +19,7 @@ from mostt_recipe_parakeet_tdt.domain.transcripts.run_readers import (
     read_token_id_lines,
 )
 from mostt_recipe_parakeet_tdt.domain.transcripts.vocabulary import VOCABULARY_SHA256
+from mostt_recipe_parakeet_tdt.domain.variants.comparisons import COMPARISONS
 from mostt_recipe_parakeet_tdt.recipe import (
     DESCRIBE_STEP,
     EXPORT_IMAGE_NAME,
@@ -386,6 +387,11 @@ class TestTheParakeetTdtRecipe:
             assert [
                 derived_row.row.name for derived_row in judged_recipe.derived_rows
             ] == DERIVED_ROW_NAMES
+
+        def test_should_keep_every_comparison_of_its_runs(
+            self, judged_recipe: JudgedRecipe
+        ) -> None:
+            assert judged_recipe.comparisons == COMPARISONS
 
         def test_should_build_from_the_bench_to_the_transcriptions(
             self, judged_recipe: JudgedRecipe

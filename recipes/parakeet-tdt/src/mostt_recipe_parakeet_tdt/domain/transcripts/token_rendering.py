@@ -19,6 +19,17 @@ def render_text(token_ids: Sequence[int], vocabulary: Vocabulary) -> str:
     ).strip(SPACE)
 
 
+def render_text_without_unknown_tokens(token_ids: Sequence[int], vocabulary: Vocabulary) -> str:
+    return render_text(
+        [
+            token_id
+            for token_id in token_ids
+            if judge_token_id(token_id, vocabulary) != vocabulary.unknown_id
+        ],
+        vocabulary,
+    )
+
+
 def count_unknown_tokens(token_ids: Sequence[int], vocabulary: Vocabulary) -> int:
     return sum(
         1 for token_id in token_ids if judge_token_id(token_id, vocabulary) == vocabulary.unknown_id
