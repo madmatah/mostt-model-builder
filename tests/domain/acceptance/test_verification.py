@@ -15,6 +15,7 @@ from mostt_model_builder.domain.acceptance.acceptance import (
 )
 from mostt_model_builder.domain.acceptance.parity_reports import ParityReport
 from mostt_model_builder.domain.acceptance.verification import (
+    CandidateDigest,
     ParityMeasure,
     ReferenceWords,
     RunMeasure,
@@ -31,6 +32,7 @@ from mostt_model_builder.domain.acceptance.verification import (
 )
 from mostt_model_builder.domain.bench.hypotheses import Hypothesis
 from mostt_model_builder.domain.bench.run_coverage import RunCoverageError
+from mostt_model_builder.domain.formats.file_formats import FileFormat
 
 TRANSCRIPTIONS = {
     "fr_fr": {
@@ -66,6 +68,10 @@ FLOAT32 = RunTranscripts(
 )
 TRANSFORMERS = RunTranscripts("transformers", ("fr_fr",), NEMO.hypotheses[:2])
 ENCODER_PARITY = measure_parity(ParityReport("encoder-onnx-against-nemo", 4.18e-6, 20), 5e-5)
+CANDIDATE = (
+    CandidateDigest("encoder-model.onnx", FileFormat.ONNX, ("float32",), 4096, "a" * 64),
+    CandidateDigest("vocab.txt", FileFormat.TEXT, ("float32", "float16"), 21, "b" * 64),
+)
 COMPARISONS = (
     Comparison("float32-cpu", "nemo", NonInferiority(max_upper_bound_points=100.0)),
     Comparison("transformers", "nemo", REPORTED_ONLY),
@@ -74,7 +80,7 @@ COMPARISONS = (
 
 def verify_runs(comparisons: tuple[Comparison, ...] = COMPARISONS) -> Verification:
     return verify_transcripts(
-        (NEMO, FLOAT32, TRANSFORMERS), REFERENCES, comparisons, (ENCODER_PARITY,)
+        (NEMO, FLOAT32, TRANSFORMERS), REFERENCES, comparisons, (ENCODER_PARITY,), CANDIDATE
     )
 
 
@@ -176,6 +182,11 @@ class TestTheVerification:
             ) -> None:
                 assert verification.parities == (ENCODER_PARITY,)
 
+            def test_should_keep_the_digest_of_each_candidate_file_in_its_order(
+                self, verification: Verification
+            ) -> None:
+                assert verification.candidate == CANDIDATE
+
             def test_should_find_no_failure(self, verification: Verification) -> None:
                 assert list_failures(verification) == ()
 
@@ -206,6 +217,7 @@ class TestTheVerification:
                     REFERENCES,
                     (),
                     (),
+                    (),
                 )
 
             def test_should_refuse_the_run(self, verify_act: Callable[[], Verification]) -> None:
@@ -225,6 +237,7 @@ class TestTheVerification:
                     (NEMO,),
                     REFERENCES,
                     (Comparison("float32-cpu", "nemo", REPORTED_ONLY),),
+                    (),
                     (),
                 )
 
@@ -260,6 +273,7 @@ class TestTheVerification:
                                 ParityReport("encoder-onnx-against-nemo", 6e-5, 20), 5e-5
                             ),
                         ),
+                        (),
                     )
                 )
 
@@ -326,6 +340,26 @@ class TestTheVerification:
                         "absolute_difference_tolerance": 5e-5,
                         "failure": None,
                     }
+                ]
+
+            def test_should_give_each_candidate_file_its_format_variants_size_and_sha256(
+                self, report: dict[str, object]
+            ) -> None:
+                assert report["candidate"] == [
+                    {
+                        "name": "encoder-model.onnx",
+                        "format": "onnx",
+                        "variants": ["float32"],
+                        "size_bytes": 4096,
+                        "sha256": "a" * 64,
+                    },
+                    {
+                        "name": "vocab.txt",
+                        "format": "text",
+                        "variants": ["float32", "float16"],
+                        "size_bytes": 21,
+                        "sha256": "b" * 64,
+                    },
                 ]
 
         class TestWhenAComparisonFails:

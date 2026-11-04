@@ -654,6 +654,11 @@ def verify(recipe: JudgedRecipe, work_directory: WorkDirectory, files: WorkFiles
     )
     for line in describe_verification(verified.verification):
         print(line, flush=True)
+    for digest in verified.verification.candidate:
+        print(
+            f"verified {digest.name}, {digest.size_bytes} bytes, sha256 {digest.sha256}",
+            flush=True,
+        )
     print(f"wrote {verified.report_path}", flush=True)
     refuse_rejected_build(verified)
 

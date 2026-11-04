@@ -9,6 +9,7 @@ from pathlib import Path, PurePosixPath
 import pytest
 
 from mostt_model_builder.adapters.work_files import COPY_CHUNK_BYTES, WorkFiles
+from mostt_model_builder.application.assemble_candidate import HashedFile
 from mostt_model_builder.application.fetch_sources import FileDigest, SourceFileError
 from mostt_model_builder.application.run_step import WrittenFile, WrittenOutputs
 from mostt_model_builder.domain.containers.container_files import (
@@ -570,3 +571,104 @@ class TestTheWorkFiles:
                 self, host_file: WrittenFile
             ) -> None:
                 assert (host_file.facts.kind, host_file.content) == (FileKind.MISSING, None)
+
+    class TestTheDigestHostFileMethod:
+        class TestWhenTheFileIsRegularAndWithinItsBound:
+            @pytest.fixture
+            def hashed_file(self, tmp_path: Path) -> HashedFile:
+                (tmp_path / "encoder-model.onnx.data").write_bytes(COPIED_CONTENT)
+                (tmp_path / "encoder-model.onnx.data").chmod(0o444)
+                return WorkFiles().digest_host_file(
+                    PurePosixPath(tmp_path), "encoder-model.onnx.data", len(COPIED_CONTENT)
+                )
+
+            def test_should_give_the_facts_of_its_descriptor_and_the_sha256_of_its_bytes(
+                self, hashed_file: HashedFile
+            ) -> None:
+                assert hashed_file == HashedFile(
+                    FileFacts(FileKind.REGULAR, os.getuid(), 0o444, len(COPIED_CONTENT), 1),
+                    hashlib.sha256(COPIED_CONTENT).hexdigest(),
+                )
+
+        class TestWhenTheFileIsALink:
+            @pytest.fixture
+            def hashed_file(self, tmp_path: Path) -> HashedFile:
+                (tmp_path / "vocab.txt").symlink_to("/etc/passwd")
+                return WorkFiles().digest_host_file(
+                    PurePosixPath(tmp_path), "vocab.txt", MAX_SIZE_BYTES
+                )
+
+            def test_should_hash_nothing_since_it_follows_no_link(
+                self, hashed_file: HashedFile
+            ) -> None:
+                assert (hashed_file.facts.kind, hashed_file.sha256) == (FileKind.LINK, None)
+
+        class TestWhenTheFileIsAFifo:
+            @pytest.fixture
+            def hashed_file(self, tmp_path: Path) -> HashedFile:
+                os.mkfifo(tmp_path / "vocab.txt")
+                return WorkFiles().digest_host_file(
+                    PurePosixPath(tmp_path), "vocab.txt", MAX_SIZE_BYTES
+                )
+
+            def test_should_hash_nothing_since_reading_it_could_block(
+                self, hashed_file: HashedFile
+            ) -> None:
+                assert (hashed_file.facts.kind, hashed_file.sha256) == (FileKind.FIFO, None)
+
+        class TestWhenTheFileCannotBeRead:
+            @pytest.fixture
+            def hashed_file(self, tmp_path: Path) -> HashedFile:
+                (tmp_path / "vocab.txt").write_bytes(FILE_CONTENT)
+                (tmp_path / "vocab.txt").chmod(0o000)
+                return WorkFiles().digest_host_file(
+                    PurePosixPath(tmp_path), "vocab.txt", MAX_SIZE_BYTES
+                )
+
+            def test_should_say_it_cannot_be_read_and_hash_nothing(
+                self, hashed_file: HashedFile
+            ) -> None:
+                assert (hashed_file.facts.kind, hashed_file.sha256) == (FileKind.UNREADABLE, None)
+
+        class TestWhenTheFileExceedsItsBound:
+            @pytest.fixture
+            def hashed_file(self, tmp_path: Path) -> HashedFile:
+                (tmp_path / "vocab.txt").write_bytes(FILE_CONTENT)
+                return WorkFiles().digest_host_file(
+                    PurePosixPath(tmp_path), "vocab.txt", len(FILE_CONTENT) - 1
+                )
+
+            def test_should_give_its_size_and_hash_none_of_it(
+                self, hashed_file: HashedFile
+            ) -> None:
+                assert (hashed_file.facts.size_bytes, hashed_file.sha256) == (
+                    len(FILE_CONTENT),
+                    None,
+                )
+
+        class TestWhenTheFileIsMissing:
+            @pytest.fixture
+            def hashed_file(self, tmp_path: Path) -> HashedFile:
+                return WorkFiles().digest_host_file(
+                    PurePosixPath(tmp_path), "vocab.txt", MAX_SIZE_BYTES
+                )
+
+            def test_should_say_it_is_missing(self, hashed_file: HashedFile) -> None:
+                assert (hashed_file.facts.kind, hashed_file.sha256) == (FileKind.MISSING, None)
+
+        class TestWhenTheDirectoryIsALink:
+            @pytest.fixture
+            def digest_act(self, tmp_path: Path) -> Callable[[], HashedFile]:
+                (tmp_path / "candidate").mkdir()
+                (tmp_path / "candidate" / "vocab.txt").write_bytes(FILE_CONTENT)
+                (tmp_path / "linked-candidate").symlink_to(tmp_path / "candidate")
+                return partial(
+                    WorkFiles().digest_host_file,
+                    PurePosixPath(tmp_path / "linked-candidate"),
+                    "vocab.txt",
+                    MAX_SIZE_BYTES,
+                )
+
+            def test_should_refuse_to_open_it(self, digest_act: Callable[[], HashedFile]) -> None:
+                with pytest.raises(NotADirectoryError):
+                    digest_act()

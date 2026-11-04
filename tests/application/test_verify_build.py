@@ -30,7 +30,10 @@ from mostt_model_builder.domain.acceptance.parity_reports import (
     ParityReport,
     render_parity_report,
 )
-from mostt_model_builder.domain.acceptance.verification import VerificationError
+from mostt_model_builder.domain.acceptance.verification import (
+    CandidateDigest,
+    VerificationError,
+)
 from mostt_model_builder.domain.bench.hypotheses import (
     RUN_LINES_FILE_NAME,
     RUN_LINES_MAX_SIZE_BYTES,
@@ -39,7 +42,11 @@ from mostt_model_builder.domain.bench.hypotheses import (
 )
 from mostt_model_builder.domain.containers.account_ranges import HostAccounts
 from mostt_model_builder.domain.containers.base_images import ENVIRONMENT_PYTHON
-from mostt_model_builder.domain.containers.container_files import ContainerFileError
+from mostt_model_builder.domain.containers.container_files import (
+    ContainerFileError,
+    FileFacts,
+    FileKind,
+)
 from mostt_model_builder.domain.containers.container_steps import (
     INSPECT_STEP_NAME,
     PEAKS_FILE_NAME,
@@ -320,6 +327,19 @@ class CompletedVerification:
     files: FakeStepFiles
 
 
+@dataclass(frozen=True)
+class RefusedVerification:
+    verify: Callable[[], VerifiedBuild]
+    message: str
+
+
+CANDIDATE_DIRECTORY = WORK_ROOT / RUN_DIRECTORY / "candidate"
+NOT_THE_HOSTS_COPY = (
+    f"the candidate file {ENCODER_NAME} is not the host's own copy: a regular file of the user's, "
+    "in mode 0444, with a single link, of at most 4096 bytes"
+)
+
+
 class TestTheBuildVerification:
     class TestTheVerifyBuildFunction:
         class TestWhenEveryRunAndParityIsInPlace:
@@ -361,6 +381,43 @@ class TestTheBuildVerification:
                 self, verification: CompletedVerification
             ) -> None:
                 assert verification.verified.report_path == REPORT_PATH
+
+            def test_should_record_the_size_and_sha256_of_each_candidate_file_it_accepts(
+                self, verification: CompletedVerification
+            ) -> None:
+                assert verification.verified.verification.candidate == (
+                    CandidateDigest(
+                        ENCODER_NAME,
+                        FileFormat.ONNX,
+                        ("float32",),
+                        len(ENCODER),
+                        hashlib.sha256(ENCODER).hexdigest(),
+                    ),
+                    CandidateDigest(
+                        "vocab.txt",
+                        FileFormat.TEXT,
+                        ("float32",),
+                        len(VOCABULARY),
+                        hashlib.sha256(VOCABULARY).hexdigest(),
+                    ),
+                )
+
+            def test_should_hash_each_file_through_the_candidate_directory_it_judged(
+                self, verification: CompletedVerification
+            ) -> None:
+                assert verification.files.digested_paths == [
+                    CANDIDATE_DIRECTORY / ENCODER_NAME,
+                    CANDIDATE_DIRECTORY / "vocab.txt",
+                ]
+
+            def test_should_write_the_hashes_into_its_report(
+                self, verification: CompletedVerification
+            ) -> None:
+                report = json.loads(verification.files.contents[WORK_ROOT / REPORT_PATH])
+                assert [(digest["name"], digest["sha256"]) for digest in report["candidate"]] == [
+                    (ENCODER_NAME, hashlib.sha256(ENCODER).hexdigest()),
+                    ("vocab.txt", hashlib.sha256(VOCABULARY).hexdigest()),
+                ]
 
             def test_should_record_in_its_report_that_the_build_is_accepted(
                 self, verification: CompletedVerification
@@ -435,6 +492,44 @@ class TestTheBuildVerification:
                     ),
                 ):
                     verify_act()
+
+        class TestWhenACandidateFileIsSwappedBeforeItIsHashed:
+            @pytest.fixture(
+                params=[
+                    pytest.param(
+                        (FileFacts(FileKind.LINK, USER_ID, 0o777, 12, 1), NOT_THE_HOSTS_COPY),
+                        id="a link",
+                    ),
+                    pytest.param(
+                        (build_file_facts(len(ENCODER), 0o444, owner_id=0), NOT_THE_HOSTS_COPY),
+                        id="a file of another user",
+                    ),
+                    pytest.param(
+                        (build_file_facts(len(ENCODER), 0o644), NOT_THE_HOSTS_COPY),
+                        id="a file in another mode than the copies",
+                    ),
+                    pytest.param(
+                        (
+                            FileFacts(FileKind.REGULAR, USER_ID, 0o444, len(ENCODER), 2),
+                            NOT_THE_HOSTS_COPY,
+                        ),
+                        id="a file with a second link",
+                    ),
+                ]
+            )
+            def refused_verification(self, request: pytest.FixtureRequest) -> RefusedVerification:
+                hashing_facts, message = request.param
+                files = build_files()
+                files.hashing_facts[CANDIDATE_DIRECTORY / ENCODER_NAME] = hashing_facts
+                return RefusedVerification(partial(verify_build, build_request(), files), message)
+
+            def test_should_refuse_it_by_the_facts_of_the_descriptor_it_hashes(
+                self, refused_verification: RefusedVerification
+            ) -> None:
+                with pytest.raises(
+                    ContainerFileError, match=re.escape(refused_verification.message)
+                ):
+                    refused_verification.verify()
 
         class TestWhenAComparisonBreaksItsRule:
             @pytest.fixture

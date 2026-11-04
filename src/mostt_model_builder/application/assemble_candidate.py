@@ -15,6 +15,7 @@ from mostt_model_builder.application.run_step import (
     read_outputs,
     run_step,
 )
+from mostt_model_builder.domain.acceptance.verification import CandidateDigest
 from mostt_model_builder.domain.containers.container_files import (
     CANDIDATE_FILE_MODE,
     FileFacts,
@@ -84,6 +85,18 @@ class CandidateFiles(StepFiles, Protocol):
     def read_host_file(
         self, directory: PurePosixPath, name: str, max_size_bytes: int
     ) -> WrittenFile: ...
+
+
+@dataclass(frozen=True, slots=True)
+class HashedFile:
+    facts: FileFacts
+    sha256: str | None
+
+
+class DigestFiles(StepFiles, Protocol):
+    def digest_host_file(
+        self, directory: PurePosixPath, name: str, max_size_bytes: int
+    ) -> HashedFile: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -349,6 +362,31 @@ def read_candidate_texts(request: CandidateRequest, files: CandidateFiles) -> Ma
             raise StepError(f"the candidate file {candidate_file.name} was not read")
         texts[candidate_file.name] = written.content
     return texts
+
+
+def digest_candidate(request: CandidateRequest, files: DigestFiles) -> tuple[CandidateDigest, ...]:
+    candidate_directory = locate_candidate_directory(request, files)
+    digests = []
+    for candidate_file in request.candidate:
+        max_size_bytes = find_candidate_file_max_size_bytes(candidate_file.origin, request.rows)
+        hashed = files.digest_host_file(
+            request.work_root / candidate_directory, candidate_file.name, max_size_bytes
+        )
+        judge_candidate_file(
+            candidate_file.name, hashed.facts, max_size_bytes, request.host.user_id
+        )
+        if hashed.sha256 is None:
+            raise StepError(f"the candidate file {candidate_file.name} was not hashed")
+        digests.append(
+            CandidateDigest(
+                name=candidate_file.name,
+                file_format=candidate_file.file_format,
+                variants=candidate_file.variants,
+                size_bytes=hashed.facts.size_bytes,
+                sha256=hashed.sha256,
+            )
+        )
+    return tuple(digests)
 
 
 def locate_candidate_directory(request: CandidateRequest, files: StepFiles) -> PurePosixPath:
