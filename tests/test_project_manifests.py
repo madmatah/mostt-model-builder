@@ -53,6 +53,7 @@ REQUIREMENTS_BY_EXTRA: dict[str, dict[str, tuple[str, ...]]] = {
         "onnxruntime": (),
     },
     "core-onnx-inspect": {"onnx": ()},
+    "core-hub": {"huggingface-hub": ()},
     EXPORT_EXTRA: EXPORT_REQUIREMENTS,
     TRANSCRIBE_CPU_EXTRA: {"numpy": (), "onnx-asr": (), "onnxruntime": ()},
     TRANSCRIBE_GPU_EXTRA: {"numpy": (), "onnx-asr": (), "onnxruntime-gpu": ("cuda", "cudnn")},

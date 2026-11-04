@@ -75,6 +75,7 @@ Every other step runs in a confined container, from an image that `images` build
 | `mostt-model-builder-core-uv` | 261 MB | The same, with uv, for the lock of the images' libraries |
 | `mostt-model-builder-core-onnx-inspect` | 401 MB | onnx, for the inspection of the candidate's graphs |
 | `mostt-model-builder-core-onnx-convert` | 605 MB | onnx, onnxconverter-common, ml_dtypes and ONNX Runtime, for the conversions of the exported encoder |
+| `mostt-model-builder-core-hub` | 292 MB | huggingface_hub, for the publication of the candidate and its card on Hugging Face |
 | `mostt-model-builder-parakeet-tdt-export` | 10.7 GB | NeMo, torch and the ONNX exporters, with the core's and the recipe's code, for the steps that read NVIDIA's archive |
 | `mostt-model-builder-parakeet-tdt-transformers-reference` | 9.83 GB | Transformers, torch and librosa, with the core's and the recipe's code, for the check of Moondream's weights against NeMo's reference |
 | `mostt-model-builder-parakeet-tdt-transcribe-gpu` | 4.39 GB | onnx-asr on ONNX Runtime's CUDA provider, with CUDA and cuDNN, for the transcriptions on the GPU |
@@ -98,6 +99,7 @@ The images take some room in Docker's storage. Remove them by name, never with a
 ```sh
 docker image rm mostt-model-builder-core-bench mostt-model-builder-core-uv \
     mostt-model-builder-core-onnx-inspect mostt-model-builder-core-onnx-convert \
+    mostt-model-builder-core-hub \
     mostt-model-builder-parakeet-tdt-export \
     mostt-model-builder-parakeet-tdt-transformers-reference \
     mostt-model-builder-parakeet-tdt-transcribe-gpu mostt-model-builder-parakeet-tdt-transcribe-cpu

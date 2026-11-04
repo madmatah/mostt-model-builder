@@ -104,6 +104,7 @@ Each image has a Containerfile, the core's in `images/<image>/` and a recipe's i
 | `uv` | The Python base, the uv binary of the pinned uv image, and the core's sources: the lock's resolution |
 | `onnx-inspect` | The extra `core-onnx-inspect`, onnx alone, and the core's sources: the inspection of the candidate's graphs, in an image that produced none of them |
 | `onnx-convert` | The extra `core-onnx-convert`, onnx, onnx-ir, onnxconverter-common, ml_dtypes, numpy and ONNX Runtime, and the core's sources: the conversions of a recipe's exported graph |
+| `hub` | The extra `core-hub`, huggingface_hub with hf-xet, and the core's sources: the client of Hugging Face's upload protocol, for the publication of a candidate and its card; it runs no code of a model |
 
 An image of a recipe also copies the recipe's sources, at the repository's layout, and installs its libraries from its extra of the images' environment ([Recipes](#recipes) lists them).
 
