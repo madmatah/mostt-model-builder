@@ -18,7 +18,7 @@ The code of the models and of their frameworks is treated as untrusted: every st
 
 - Python 3.12 on the host, as `python3`, which runs the command line on its standard library alone;
 - curl, which downloads the sources;
-- git, and the GitHub CLI (`gh`), which the pull requests use;
+- git, with which `images` reads the commit and its tree, and the GitHub CLI (`gh`), which the pull requests use;
 - [uv](https://docs.astral.sh/uv/) 0.13.7, the version CI runs, which finds or downloads Python 3.12, the version `.python-version` names;
 - Docker, with BuildKit, its default builder, for the containers of the build and their images;
 - the NVIDIA Container Toolkit 1.17.8 or later, with its Container Device Interface (CDI) set up, `nvidia.com/gpu=all`, for the steps on the GPU;
@@ -49,7 +49,7 @@ mkdir -m 0700 /data/model-build
 
 `fetch` downloads the pinned sources, about 640 MB of FLEURS audio and indexes and 3.8 GB of model files, Moondream's weights of Parakeet Ultra and NVIDIA's archive of Parakeet TDT 0.6B v3, into `sources/` in the work directory, over HTTPS from huggingface.co and the storage it redirects to. It checks each file against the size and the SHA-256 that `sources.toml` and the recipe's `sources.toml` pin, and keeps only a file that matches. Run it again after an interruption: it resumes a partial download, and checks again the files it already fetched.
 
-Every other step runs in a confined container, from an image that `images` builds, with the network to pull its pinned bases from Docker Hub and the GitHub container registry, and the locked packages from PyPI, by their hashes, from a commit: commit or stash every change first, untracked files included, and build the images again after each commit, since a step refuses an image built from another tree.
+Every other step runs in a confined container, from an image that `images` builds, with the network to pull its pinned bases from Docker Hub and the GitHub container registry, and the locked packages from PyPI, by their hashes, from a commit, so that the image holds the files of the tree alone, never one that git ignores: commit or stash every change first, untracked files included, and build the images again after each commit, since a step refuses an image built from another tree.
 
 ```sh
 ./model-build.sh --work /data/model-build --recipe parakeet-tdt images

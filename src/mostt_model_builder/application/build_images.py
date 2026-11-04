@@ -1,7 +1,7 @@
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import PurePosixPath
-from typing import Protocol
+from typing import NewType, Protocol
 
 from mostt_model_builder.application.run_step import ContainerExit, ImageFacts, StepFiles
 from mostt_model_builder.domain.containers.container_steps import ContainerImage
@@ -12,6 +12,8 @@ from mostt_model_builder.domain.containers.provenance import (
 )
 from mostt_model_builder.domain.containers.work_directory import locate_image_build_log
 
+TarArchive = NewType("TarArchive", bytes)
+
 
 class ImageBuildError(Exception):
     pass
@@ -19,7 +21,11 @@ class ImageBuildError(Exception):
 
 class ImageBuilder(Protocol):
     def build_image(
-        self, image: ContainerImage, tree_hash: str, log_path: PurePosixPath
+        self,
+        image: ContainerImage,
+        tree_hash: str,
+        context_archive: TarArchive,
+        log_path: PurePosixPath,
     ) -> ContainerExit: ...
 
     def inspect_image(self, tag: str) -> ImageFacts | None: ...
@@ -29,6 +35,8 @@ class CloneState(Protocol):
     def find_head_tree(self) -> str: ...
 
     def list_changes(self) -> tuple[str, ...]: ...
+
+    def archive_tree(self, tree_hash: str) -> TarArchive: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,19 +54,24 @@ def build_images(
 ) -> tuple[BuiltImage, ...]:
     refuse_unclean_clone(clone.list_changes())
     tree_hash = clone.find_head_tree()
-    return tuple(build_image(image, tree_hash, work_root, builder, files) for image in images)
+    context_archive = clone.archive_tree(tree_hash)
+    return tuple(
+        build_image(image, tree_hash, context_archive, work_root, builder, files)
+        for image in images
+    )
 
 
 def build_image(
     image: ContainerImage,
     tree_hash: str,
+    context_archive: TarArchive,
     work_root: PurePosixPath,
     builder: ImageBuilder,
     files: StepFiles,
 ) -> BuiltImage:
     log_path = locate_image_build_log(image.tag)
     files.make_directories(work_root, log_path.parent)
-    build_exit = builder.build_image(image, tree_hash, work_root / log_path)
+    build_exit = builder.build_image(image, tree_hash, context_archive, work_root / log_path)
     if build_exit.status != 0:
         raise ImageBuildError(
             f"the build of {image.tag} exited with the status {build_exit.status}; "

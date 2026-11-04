@@ -1,6 +1,0 @@
-*
-!images/pyproject.toml
-!images/uv.lock
-!src/mostt_model_builder
-**/__pycache__
-**/*.pyc

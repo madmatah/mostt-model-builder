@@ -21,8 +21,8 @@ def refuse_unclean_clone(changed_paths: Sequence[str]) -> None:
     if changed_paths:
         raise ProvenanceError(
             f"the clone holds {len(changed_paths)} uncommitted changes or untracked files, "
-            f"such as {changed_paths[0]!a}: an image is built only from a commit, so that its "
-            "label names what it holds"
+            f"such as {changed_paths[0]!a}: the host's side of the build runs from the clone, "
+            "and must run the code that its images hold"
         )
 
 

@@ -1,8 +1,9 @@
 import os
 import subprocess
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import PurePosixPath
 
+from mostt_model_builder.application.build_images import TarArchive
 from mostt_model_builder.domain.containers.printable_output import show_printable
 from mostt_model_builder.domain.containers.provenance import require_object_name
 
@@ -15,6 +16,16 @@ STATUS_SEPARATOR = b"\0"
 STATUS_PREFIX_SIZE_BYTES = 3
 STATUSES_WITH_AN_ORIGINAL_PATH = frozenset(b"RC")
 GIT_TIMEOUT_S = 60
+# A replace ref would make git read another object in place of the one the label names.
+NO_REPLACE_OBJECTS_OPTION = "--no-replace-objects"
+# The user's git settings would otherwise reshape the archive: its line endings, a global
+# attributes file with `ident`, `export-ignore` or a filter, and the modes of its files.
+ARCHIVE_SETTINGS = (
+    "core.autocrlf=false",
+    "core.eol=lf",
+    "core.attributesFile=/dev/null",
+    "tar.umask=0022",
+)
 
 
 class GitError(Exception):
@@ -43,10 +54,18 @@ class GitTree:
     def __init__(self, clone_root: PurePosixPath) -> None:
         self.clone_root = clone_root
 
-    def run_git(self, arguments: list[str]) -> bytes:
+    def run_git(self, arguments: list[str], settings: Sequence[str] = ()) -> bytes:
+        setting_options = [option for setting in settings for option in ("-c", setting)]
         try:
             completed = subprocess.run(
-                [GIT_PROGRAM, "-C", str(self.clone_root), *arguments],
+                [
+                    GIT_PROGRAM,
+                    "-C",
+                    str(self.clone_root),
+                    NO_REPLACE_OBJECTS_OPTION,
+                    *setting_options,
+                    *arguments,
+                ],
                 capture_output=True,
                 check=False,
                 stdin=subprocess.DEVNULL,
@@ -76,3 +95,7 @@ class GitTree:
     def list_changes(self) -> tuple[str, ...]:
         output = self.run_git(["status", "--porcelain=v1", "-z", "--untracked-files=all"])
         return parse_status(output)
+
+    def archive_tree(self, tree_hash: str) -> TarArchive:
+        tree = require_object_name(tree_hash, "the tree to archive")
+        return TarArchive(self.run_git(["archive", "--format=tar", tree], ARCHIVE_SETTINGS))

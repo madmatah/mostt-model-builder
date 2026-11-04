@@ -95,7 +95,7 @@ Every step ends through the core's shared step modules: it writes its control gr
 
 ## The images
 
-Each image has a Containerfile, the core's in `images/<image>/` and a recipe's in `recipes/<family>/images/<image>/`, built with the repository's root as its context and an allow-list dockerignore beside it, `Containerfile.dockerignore`, which excludes everything but what the image copies. The core's images:
+Each image has a Containerfile, the core's in `images/<image>/` and a recipe's in `recipes/<family>/images/<image>/`, built from the archive of HEAD's tree, which `git archive` writes and `docker build` reads on its standard input, so that a build sees the files of the tree alone, at the repository's layout, never a file that git ignores, such as a `.env`. The core's images:
 
 | Image | Holds |
 |---|---|
@@ -106,7 +106,7 @@ Each image has a Containerfile, the core's in `images/<image>/` and a recipe's i
 
 An image of a recipe also copies the recipe's sources, at the repository's layout, and installs its libraries from its extra of the images' environment ([Recipes](#recipes) lists them).
 
-`./model-build.sh --work <dir> --recipe <name> images` builds the core's images and the recipe's, from a clone with no change and no untracked file, under the tags `mostt-model-builder-<owner>-<image>`, such as `mostt-model-builder-core-bench`, so that they never clash with other images. Each carries the git tree of HEAD as its `mostt-model-builder.tree` label, set by the last lines of its Containerfile, after the heavy layers, which a change of code then reuses: a step runs an image by its ID only while its label is the tree of HEAD, so that a step never runs code that no commit names. The bases are pinned by digest in `domain/containers/base_images.py`.
+`./model-build.sh --work <dir> --recipe <name> images` builds the core's images and the recipe's, from a clone with no change and no untracked file, since the host's side runs from the clone and must run the code its images hold, under the tags `mostt-model-builder-<owner>-<image>`, such as `mostt-model-builder-core-bench`, so that they never clash with other images. Each carries the git tree of HEAD as its `mostt-model-builder.tree` label, set by the last lines of its Containerfile, after the heavy layers, which a change of code then reuses: a step runs an image by its ID only while its label is the tree of HEAD, so that a step never runs code that no commit names. The bases are pinned by digest in `domain/containers/base_images.py`.
 
 ## The images' environment and its lock
 

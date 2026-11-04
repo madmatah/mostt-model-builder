@@ -8,18 +8,22 @@ from pathlib import PurePosixPath
 import pytest
 from run_step_fakes import FakeStepFiles
 
+from mostt_model_builder.adapters.git_tree import GitError
 from mostt_model_builder.application.build_images import (
     BuiltImage,
     ImageBuildError,
+    TarArchive,
     build_images,
 )
 from mostt_model_builder.application.run_step import ContainerExit, ImageFacts
 from mostt_model_builder.domain.containers.container_steps import CORE_IMAGES, ContainerImage
-from mostt_model_builder.domain.containers.provenance import ProvenanceError
+from mostt_model_builder.domain.containers.provenance import ProvenanceError, require_object_name
 
 WORK_ROOT = PurePosixPath("/data/builds/work")
 HEAD_TREE = "3f1d1ffe79bc3336eb583331cfbf9b189fd45f01"
 OTHER_TREE = "e949fa3a2eb8bf218e96c2c03625bbd36e4342b1"
+ARCHIVE = TarArchive(b"the archive of the tree")
+ARCHIVE_FAILURE = "git archive failed: fatal: not a tree object"
 
 
 def build_image_id(tag: str) -> str:
@@ -29,6 +33,8 @@ def build_image_id(tag: str) -> str:
 @dataclass
 class FakeClone:
     changes: tuple[str, ...] = ()
+    archived_trees: list[str] = field(default_factory=list)
+    can_archive: bool = True
 
     def find_head_tree(self) -> str:
         return HEAD_TREE
@@ -36,18 +42,28 @@ class FakeClone:
     def list_changes(self) -> tuple[str, ...]:
         return self.changes
 
+    def archive_tree(self, tree_hash: str) -> TarArchive:
+        self.archived_trees.append(require_object_name(tree_hash, "the tree to archive"))
+        if not self.can_archive:
+            raise GitError(ARCHIVE_FAILURE)
+        return ARCHIVE
+
 
 @dataclass
 class FakeImageBuilder:
     status: int = 0
     labeled_tree: str = HEAD_TREE
-    builds: list[tuple[str, str, PurePosixPath]] = field(default_factory=list)
+    builds: list[tuple[str, str, TarArchive, PurePosixPath]] = field(default_factory=list)
     images: dict[str, ImageFacts] = field(default_factory=dict)
 
     def build_image(
-        self, image: ContainerImage, tree_hash: str, log_path: PurePosixPath
+        self,
+        image: ContainerImage,
+        tree_hash: str,
+        context_archive: TarArchive,
+        log_path: PurePosixPath,
     ) -> ContainerExit:
-        self.builds.append((image.tag, tree_hash, log_path))
+        self.builds.append((image.tag, tree_hash, context_archive, log_path))
         if self.status == 0:
             self.images[image.tag] = ImageFacts(build_image_id(image.tag), self.labeled_tree)
         return ContainerExit(self.status, b"ERROR: failed\n\x1b[0m")
@@ -59,12 +75,14 @@ class FakeImageBuilder:
 @dataclass(frozen=True)
 class BuildRecord:
     built_images: tuple[BuiltImage, ...]
-    builds: list[tuple[str, str, PurePosixPath]]
+    builds: list[tuple[str, str, TarArchive, PurePosixPath]]
+    archived_trees: list[str]
 
 
 @dataclass(frozen=True)
 class RefusedBuild:
     build_act: Callable[[], tuple[BuiltImage, ...]]
+    clone: FakeClone
     builder: FakeImageBuilder
 
 
@@ -79,23 +97,28 @@ class TestTheBuildImages:
         class TestWhenTheCloneIsClean:
             @pytest.fixture
             def build_record(self) -> BuildRecord:
+                clone = FakeClone()
                 builder = FakeImageBuilder()
-                built_images = build_images(
-                    CORE_IMAGES, WORK_ROOT, FakeClone(), builder, build_files()
-                )
-                return BuildRecord(built_images, builder.builds)
+                built_images = build_images(CORE_IMAGES, WORK_ROOT, clone, builder, build_files())
+                return BuildRecord(built_images, builder.builds, clone.archived_trees)
 
-            def test_should_build_each_image_with_the_tree_of_head_and_a_log_of_its_own(
+            def test_should_build_each_image_from_the_archive_of_its_labeled_tree_with_its_own_log(
                 self, build_record: BuildRecord
             ) -> None:
                 assert build_record.builds == [
                     (
                         image.tag,
                         HEAD_TREE,
+                        ARCHIVE,
                         WORK_ROOT / "image-builds" / f"{image.tag}.log",
                     )
                     for image in CORE_IMAGES
                 ]
+
+            def test_should_archive_the_tree_of_head_once_for_every_image(
+                self, build_record: BuildRecord
+            ) -> None:
+                assert build_record.archived_trees == [HEAD_TREE]
 
             def test_should_give_each_images_id(self, build_record: BuildRecord) -> None:
                 assert build_record.built_images == tuple(
@@ -105,16 +128,11 @@ class TestTheBuildImages:
         class TestWhenTheCloneHoldsAnUntrackedFile:
             @pytest.fixture
             def refused_build(self) -> RefusedBuild:
+                clone = FakeClone(("notes.txt",))
                 builder = FakeImageBuilder()
                 return RefusedBuild(
-                    partial(
-                        build_images,
-                        CORE_IMAGES,
-                        WORK_ROOT,
-                        FakeClone(("notes.txt",)),
-                        builder,
-                        build_files(),
-                    ),
+                    partial(build_images, CORE_IMAGES, WORK_ROOT, clone, builder, build_files()),
+                    clone,
                     builder,
                 )
 
@@ -128,6 +146,29 @@ class TestTheBuildImages:
                         "such as 'notes.txt'"
                     ),
                 ):
+                    refused_build.build_act()
+                assert refused_build.builder.builds == []
+
+            def test_should_archive_nothing(self, refused_build: RefusedBuild) -> None:
+                with pytest.raises(ProvenanceError, match="the clone holds"):
+                    refused_build.build_act()
+                assert refused_build.clone.archived_trees == []
+
+        class TestWhenTheTreeCannotBeArchived:
+            @pytest.fixture
+            def refused_build(self) -> RefusedBuild:
+                clone = FakeClone(can_archive=False)
+                builder = FakeImageBuilder()
+                return RefusedBuild(
+                    partial(build_images, CORE_IMAGES, WORK_ROOT, clone, builder, build_files()),
+                    clone,
+                    builder,
+                )
+
+            def test_should_build_no_image_since_no_context_holds_the_tree(
+                self, refused_build: RefusedBuild
+            ) -> None:
+                with pytest.raises(GitError, match=f"^{re.escape(ARCHIVE_FAILURE)}$"):
                     refused_build.build_act()
                 assert refused_build.builder.builds == []
 

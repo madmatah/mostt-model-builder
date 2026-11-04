@@ -127,12 +127,9 @@ STAGE_COPY = re.compile(rf"COPY --from=(?P<stage>{STAGE}) ")
 SDIST_ADDITION = re.compile(r"ADD --checksum=(?P<hash>sha256:[0-9a-f]{64}) (?P<url>\S+) ")
 MAIN_INSTALL = re.compile(rf"RUN uv sync .* --extra (?P<extra>{NAME})(?P<excluded>.*)")
 EXCLUDED_PACKAGE = re.compile(rf"--no-install-package (?P<package>{NAME})")
-COPIED_SOURCES = re.compile(r"COPY (?!--from=)(?P<sources>.+) \S+")
 BUILT_WHEEL_INSTALL = re.compile(rf"RUN sha256sum -c .* /opt/wheels/(?P<wheel>{FILE}\.whl) ")
 BUILT_WHEEL_HASH_COPY = re.compile(r"COPY \S+/built-wheels\.sha256 /opt/wheels/")
 BUILT_WHEELS_FILE_NAME = "built-wheels.sha256"
-DOCKERIGNORE_SUFFIX = ".dockerignore"
-DOCKERIGNORE_EXCLUSIONS = ["**/__pycache__", "**/*.pyc"]
 CONTAINERFILE_WITH_A_DIRECTIVE = f"# syntax=docker/dockerfile:1\nFROM {PYTHON_BASE_IMAGE}\n"
 CONTAINERFILE_WITH_A_LATE_DIRECTIVE = f"FROM {PYTHON_BASE_IMAGE}\n# check=skip=all\n"
 CONTAINERFILE_WITH_A_DOWNLOAD = f"FROM {PYTHON_BASE_IMAGE}\nRUN curl -o /x https://example.org/x\n"
@@ -534,30 +531,6 @@ class TestTheRecipeListing:
                 for image in contract.images
                 if image.extra is not None and image.extra not in installed_extras
             ] == []
-
-    @pytest.mark.parametrize("containerfile", CONTAINERFILES, ids=CONTAINERFILE_IDS)
-    class TestWhenItsDockerignoreIsRead:
-        @pytest.fixture
-        def entries(self, containerfile: Path) -> list[str]:
-            dockerignore = containerfile.with_name(containerfile.name + DOCKERIGNORE_SUFFIX)
-            return read_instruction_lines(dockerignore.read_text(encoding="utf-8"))
-
-        def test_should_exclude_everything_first(self, entries: list[str]) -> None:
-            assert entries[0] == "*"
-
-        def test_should_include_again_exactly_what_its_image_copies(
-            self, containerfile: Path, entries: list[str]
-        ) -> None:
-            copied_sources = {
-                f"!{source}"
-                for line in list_instructions(containerfile.read_text(encoding="utf-8"))
-                if (match := COPIED_SOURCES.fullmatch(line))
-                for source in match["sources"].split()
-            }
-            assert {entry for entry in entries if entry.startswith("!")} == copied_sources
-
-        def test_should_leave_out_bytecode_last(self, entries: list[str]) -> None:
-            assert entries[-2:] == DOCKERIGNORE_EXCLUSIONS
 
     @pytest.mark.parametrize(
         ("text", "refused_line"),

@@ -69,13 +69,15 @@ class TestTheProvenance:
             def refuse_act(self) -> Callable[[], object]:
                 return partial(refuse_unclean_clone, (UNTRACKED_FILE,))
 
-            def test_should_refuse_the_build_since_the_label_would_not_name_its_content(
+            def test_should_refuse_the_build_since_the_host_would_run_other_code_than_its_images(
                 self, refuse_act: Callable[[], object]
             ) -> None:
                 with pytest.raises(
                     ProvenanceError,
                     match=re.escape(
-                        f"1 uncommitted changes or untracked files, such as '{UNTRACKED_FILE}'"
+                        f"1 uncommitted changes or untracked files, such as '{UNTRACKED_FILE}': "
+                        "the host's side of the build runs from the clone, and must run the code "
+                        "that its images hold"
                     ),
                 ):
                     refuse_act()

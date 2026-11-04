@@ -2,9 +2,12 @@ import json
 import os
 import re
 import subprocess
+import tempfile
 from collections.abc import Sequence
 from pathlib import PurePosixPath
+from typing import IO
 
+from mostt_model_builder.application.build_images import TarArchive
 from mostt_model_builder.application.run_step import ContainerExit, ImageFacts
 from mostt_model_builder.domain.containers.container_steps import (
     PROXY_VARIABLE_NAMES,
@@ -109,9 +112,7 @@ def build_run_arguments(run: ContainerRun) -> list[str]:
     return [*arguments, "--entrypoint", str(run.python), image_id, *run.python_arguments]
 
 
-def build_image_arguments(
-    containerfile: PurePosixPath, context: PurePosixPath, tag: str, tree_hash: str
-) -> list[str]:
+def build_image_arguments(containerfile: PurePosixPath, tag: str, tree_hash: str) -> list[str]:
     return [
         DOCKER_PROGRAM,
         "build",
@@ -124,7 +125,7 @@ def build_image_arguments(
         "--build-arg",
         f"{TREE_HASH_BUILD_ARGUMENT}={tree_hash}",
         *[argument for name in PROXY_VARIABLE_NAMES for argument in ("--build-arg", f"{name}=")],
-        str(context),
+        "-",
     ]
 
 
@@ -147,7 +148,11 @@ def parse_image_inspection(output: bytes) -> ImageFacts:
     return ImageFacts(image_id, tree_label)
 
 
-def run_logged(arguments: Sequence[str], log_path: PurePosixPath) -> ContainerExit:
+def run_logged(
+    arguments: Sequence[str],
+    log_path: PurePosixPath,
+    standard_input: IO[bytes] | None = None,
+) -> ContainerExit:
     log_descriptor = os.open(
         log_path,
         os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW | os.O_CLOEXEC,
@@ -158,7 +163,7 @@ def run_logged(arguments: Sequence[str], log_path: PurePosixPath) -> ContainerEx
     try:
         with subprocess.Popen(
             list(arguments),
-            stdin=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL if standard_input is None else standard_input,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
         ) as process:
@@ -179,9 +184,6 @@ def run_logged(arguments: Sequence[str], log_path: PurePosixPath) -> ContainerEx
 
 
 class DockerEngine:
-    def __init__(self, clone_root: PurePosixPath) -> None:
-        self.clone_root = clone_root
-
     def inspect_image(self, tag: str) -> ImageFacts | None:
         arguments = [
             DOCKER_PROGRAM,
@@ -217,10 +219,17 @@ class DockerEngine:
     def run_container(self, run: ContainerRun, log_path: PurePosixPath) -> ContainerExit:
         return run_logged(build_run_arguments(run), log_path)
 
+    # The archive waits in an unnamed file, rather than a pipe, so that docker reads it at its
+    # own pace while the host drains its output.
     def build_image(
-        self, image: ContainerImage, tree_hash: str, log_path: PurePosixPath
+        self,
+        image: ContainerImage,
+        tree_hash: str,
+        context_archive: TarArchive,
+        log_path: PurePosixPath,
     ) -> ContainerExit:
-        arguments = build_image_arguments(
-            self.clone_root / image.containerfile, self.clone_root, image.tag, tree_hash
-        )
-        return run_logged(arguments, log_path)
+        arguments = build_image_arguments(image.containerfile, image.tag, tree_hash)
+        with tempfile.TemporaryFile(dir=log_path.parent) as context_file:
+            context_file.write(context_archive)
+            context_file.seek(0)
+            return run_logged(arguments, log_path, context_file)
