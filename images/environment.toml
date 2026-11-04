@@ -12,6 +12,7 @@ requires-python = "==3.12.*"
 dependencies = []
 
 [project.optional-dependencies]
+core-hub = ["huggingface-hub==2.4.0"]
 core-onnx-convert = [
     "ml-dtypes==0.6.0",
     "numpy==2.5.4",

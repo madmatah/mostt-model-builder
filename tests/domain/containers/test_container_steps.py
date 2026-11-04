@@ -357,6 +357,7 @@ class TestTheContainerSteps:
                 "mostt-model-builder-core-uv",
                 "mostt-model-builder-core-onnx-inspect",
                 "mostt-model-builder-core-onnx-convert",
+                "mostt-model-builder-core-hub",
             ]
 
         def test_should_run_the_bench_and_the_uv_images_on_the_bases_python_without_a_venv(
