@@ -9,3 +9,7 @@ def build_source_url(pin: SourcePin) -> str:
     return (
         f"{HUGGING_FACE_URL}{repository_prefix}/{pin.repository}/resolve/{pin.revision}/{pin.path}"
     )
+
+
+def build_tree_url(repository: str, revision: str) -> str:
+    return f"{HUGGING_FACE_URL}/api/models/{repository}/tree/{revision}"

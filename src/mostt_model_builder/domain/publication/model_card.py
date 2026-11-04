@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from string import Template
 
 from mostt_model_builder.domain.acceptance.verification import Verification
+from mostt_model_builder.domain.containers.container_files import FileFacts, FileKind
 from mostt_model_builder.domain.containers.container_steps import Device
 from mostt_model_builder.domain.contract.model_description import ModelDescription
 from mostt_model_builder.domain.contract.recipe_contract import (
@@ -27,6 +28,7 @@ from mostt_model_builder.domain.sources.source_pins import RepositoryType, Sourc
 
 CARD_ENCODING = "utf-8"
 MODEL_CARD_MAX_SIZE_BYTES = 2**20
+MODEL_CARD_FILE_MODE = 0o444
 HUB_URL = "https://huggingface.co/"
 BYTES_PER_GIGABYTE = 10**9
 
@@ -76,6 +78,16 @@ def render_model_card(inputs: CardInputs) -> bytes:
     if unfilled:
         raise CardError(f"the template holds the placeholder {unfilled[0]}, which nothing fills")
     return template.substitute(fills).encode(CARD_ENCODING)
+
+
+def is_written_card(facts: FileFacts, user_id: int) -> bool:
+    return (
+        facts.kind is FileKind.REGULAR
+        and facts.owner_id == user_id
+        and facts.permission_bits == MODEL_CARD_FILE_MODE
+        and facts.link_count == 1
+        and facts.size_bytes <= MODEL_CARD_MAX_SIZE_BYTES
+    )
 
 
 def refuse_card_of_changed_clone(changed_paths: Sequence[str]) -> None:

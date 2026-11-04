@@ -18,13 +18,13 @@ from mostt_model_builder.domain.contract.recipe_contract import VariantConversio
 from mostt_model_builder.domain.lock.declared_requirements import DeclaredRequirement
 from mostt_model_builder.domain.publication.measuring_libraries import select_measuring_libraries
 from mostt_model_builder.domain.publication.model_card import (
+    MODEL_CARD_FILE_MODE,
     MODEL_CARD_MAX_SIZE_BYTES,
     CardInputs,
     refuse_card_of_changed_clone,
     render_model_card,
 )
 
-MODEL_CARD_FILE_MODE = 0o444
 CLEAN_COMMAND = "./model-build.sh --work <dir> --recipe <name> clean"
 CARD_COMMAND_LINE = "./model-build.sh --work <dir> --recipe <name> card"
 

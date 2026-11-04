@@ -21,6 +21,11 @@ from mostt_model_builder.application.assemble_candidate import (
 )
 from mostt_model_builder.application.build_images import ImageBuildError, build_images
 from mostt_model_builder.application.check_fleurs import FleursCheckRun, check_fleurs_bench
+from mostt_model_builder.application.check_published import (
+    PublishedCheckError,
+    PublishedCheckRequest,
+    check_published,
+)
 from mostt_model_builder.application.clean_run import (
     CleanOutcome,
     CleanRequest,
@@ -171,6 +176,7 @@ STEP_COMMAND = "step"
 BUILD_COMMAND = "build"
 VERIFY_COMMAND = "verify"
 CARD_COMMAND = "card"
+CHECK_PUBLISHED_COMMAND = "check-published"
 CPU_PROVIDER = "CPUExecutionProvider"
 CUDA_PROVIDER = "CUDAExecutionProvider"
 RECIPES = {contract.name: contract for contract in (PARAKEET_TDT_RECIPE,)}
@@ -223,6 +229,7 @@ COMMAND_ERRORS = (
     WordErrorRateError,
     BuildRejectedError,
     PublicationError,
+    PublishedCheckError,
     ValueError,
     OSError,
 )
@@ -290,6 +297,24 @@ def build_argument_parser() -> argparse.ArgumentParser:
         add_help=False,
         help="verify the build again from a clean clone, render its model card, the README.md of "
         "its Hugging Face repository, and write it beside verification.json for review",
+    )
+    check_parser = commands.add_parser(
+        CHECK_PUBLISHED_COMMAND,
+        add_help=False,
+        help="download each file of a published revision, without a token, check it against "
+        "the build's own bytes and its card, and print the revision that mostt pins",
+    )
+    check_parser.add_argument(
+        "--repository",
+        required=True,
+        metavar="<namespace>/<name>",
+        help="the Hugging Face repository the files were published in",
+    )
+    check_parser.add_argument(
+        "--revision",
+        required=True,
+        metavar="<commit>",
+        help="the published commit, in its 40 hexadecimal digits",
     )
     clean_parser = commands.add_parser(
         CLEAN_STEP_NAME,
@@ -726,6 +751,36 @@ def write_card(recipe: JudgedRecipe, work_directory: WorkDirectory, files: WorkF
     )
 
 
+def check_published_revision(
+    recipe: JudgedRecipe,
+    repository: str,
+    revision: str,
+    work_directory: WorkDirectory,
+    files: WorkFiles,
+) -> None:
+    context = read_build_context(work_directory)
+    downloader = CurlDownloader()
+    checked_files = check_published(
+        PublishedCheckRequest(
+            repository=repository,
+            revision=revision,
+            candidate=build_candidate_request(recipe, context),
+            model=recipe.model,
+        ),
+        downloader,
+        downloader,
+        files,
+        files,
+    )
+    for checked_file in checked_files:
+        print(
+            f"published {checked_file.name}, {checked_file.size_bytes} bytes, sha256 "
+            f"{checked_file.sha256}, the build's own bytes",
+            flush=True,
+        )
+    print(f"pin {repository} at the revision {revision}", flush=True)
+
+
 def describe_verification(verification: Verification) -> list[str]:
     return [
         *(describe_parity_measure(measure) for measure in verification.parities),
@@ -840,6 +895,10 @@ def run_command(arguments: argparse.Namespace) -> None:
         build(recipe, work_directory, files)
     elif arguments.command == CARD_COMMAND:
         write_card(recipe, work_directory, files)
+    elif arguments.command == CHECK_PUBLISHED_COMMAND:
+        check_published_revision(
+            recipe, arguments.repository, arguments.revision, work_directory, files
+        )
 
 
 def main(arguments: Sequence[str]) -> None:

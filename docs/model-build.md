@@ -4,7 +4,7 @@ This document describes the build part by part: what each command does, and the 
 
 ## The core
 
-The core holds what every model family shares. Built: the work directory, the sources, the confined containers and their boundary with the host, the images and their lock, the check of the FLEURS bench, the recipe contract and its runs, the formats with their checks, the conversions of an ONNX graph, the candidate and its inspection, the parity reports, the verification of a build against FLEURS, with the bytes it accepted, and the model card with its writing for review, which the sections below describe.
+The core holds what every model family shares. Built: the work directory, the sources, the confined containers and their boundary with the host, the images and their lock, the check of the FLEURS bench, the recipe contract and its runs, the formats with their checks, the conversions of an ONNX graph, the candidate and its inspection, the parity reports, the verification of a build against FLEURS, with the bytes it accepted, the model card with its writing for review, and the check of a published revision, which the sections below describe.
 
 Every command runs as `./model-build.sh --work <dir> --recipe <name> <command>`, on the host's Python and its standard library, isolated from the environment and the site packages. `--recipe` names the model family to build, [Recipes](#recipes) lists them, and every command needs it but `lock`, which resolves the libraries of every recipe's images at once.
 
@@ -18,7 +18,7 @@ Its layout:
 
 | Path | Holds |
 |---|---|
-| `sources/<namespace>/<name>/<revision>/<path>` | Each pinned source, read-only, at the place its pin gives it, shared by every recipe |
+| `sources/<namespace>/<name>/<revision>/<path>` | Each pinned source, and each published file that `check-published` downloads, read-only, at its revision, shared by every recipe |
 | `runs/<recipe>/<commit>/<step>[-<run>-<shard>]/` | The outputs of a step of the recipe's build at a commit, or of one shard of a run, the core's steps included, in mode 2770, which its container writes |
 | `runs/<recipe>/<commit>/requests/<step>/` | The request the host writes for that step, in mode 0750 |
 | `runs/<recipe>/<commit>/logs/<step>.log` | What its container printed, through the printable filter, and the log of its cleaning, `clean-<step>.log` |
@@ -281,6 +281,21 @@ CC BY 4.0 asks a work that adapts licensed material to credit its creator, keep 
 4. it renders the recipe's template from that verification, with the versions of the libraries the recipe names, as the images of its variants' runs pin them, so that the card's "accepted" and "passed its comparisons" hold.
 
 It then writes `runs/<recipe>/<commit>/README.md`, in mode 0444, for the user and the reviewers to read before anything leaves the machine. A card already there that equals the new render is kept, and `card` says it is unchanged; one that differs is refused, naming `clean`, so that the card on disk is always the render of the records beside it. `clean` removes the card, whatever step it cleans, as it removes `verification.json`. `card` publishes nothing.
+
+### Checking the published files
+
+`./model-build.sh --work <dir> --recipe <name> check-published --repository <namespace>/<name> --revision <commit>` checks that a published revision holds exactly the build's files and its card, `application/check_published.py`, without a token:
+
+1. it holds the repository and the revision, 40 hexadecimal digits, to their grammars before any request;
+2. it refuses a recipe that describes no model, and a missing card, naming `card`;
+3. it collects the files to compare against: each file of the candidate, judged again with the inspection's report and hashed as `verify` hashes it, and the card, `runs/<recipe>/<commit>/README.md`, judged as the host's own read-only file and hashed;
+4. it reads the listing of the revision, `https://huggingface.co/api/models/<repository>/tree/<revision>`, with curl and `fetch`'s options but its retries, in a single attempt, within the time and the size that `.claude/rules/container-security.md` > The host bounds it to;
+5. it parses the listing strictly, `domain/publication/published_tree.py`, reading only the `type`, the `path` and the `size` of each entry, since the Hub adds fields of its own, such as `oid`, `lfs` and `xetHash`;
+6. it refuses a directory, a missing file, a file of another size, and any file but the Hub's `.gitattributes` and the build's own;
+7. it downloads each file as `fetch` downloads a source, through a pin of the published repository at the revision, with the build's size and SHA-256, into `sources/<namespace>/<name>/<revision>/`, where a file that does not match is removed and fails the check;
+8. it prints each file with its SHA-256, then the repository and the revision, which mostt pins.
+
+The downloads take as much room as the candidate, 5.9 GB for Parakeet TDT.
 
 ## Recipes
 

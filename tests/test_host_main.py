@@ -15,7 +15,17 @@ BOOTSTRAP_PATH = (
 HOST_ENTRY_MODULE = "mostt_model_builder.host_main"
 USAGE_START = "usage: model-build.sh"
 UNKNOWN_COMMAND = "unknown-command"
-COMMANDS = ("fetch", "lock", "images", "step", "verify", "build", "card", "clean")
+COMMANDS = (
+    "fetch",
+    "lock",
+    "images",
+    "step",
+    "verify",
+    "build",
+    "card",
+    "check-published",
+    "clean",
+)
 RECIPE_NAME = "parakeet-tdt"
 RECIPE_STEPS = (
     "fleurs-check",
