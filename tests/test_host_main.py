@@ -23,6 +23,7 @@ COMMANDS = (
     "verify",
     "build",
     "card",
+    "publish",
     "check-published",
     "clean",
 )
@@ -56,6 +57,7 @@ def run_command_line(arguments: list[str]) -> subprocess.CompletedProcess[str]:
         [sys.executable, "-I", "-S", "-B", str(BOOTSTRAP_PATH), HOST_ENTRY_MODULE, *arguments],
         capture_output=True,
         check=False,
+        stdin=subprocess.DEVNULL,
         text=True,
         timeout=COMMAND_LINE_TIMEOUT_S,
     )
@@ -155,6 +157,51 @@ class TestTheHostMain:
 
             def test_should_fail(self, fetch_run: subprocess.CompletedProcess[str]) -> None:
                 assert fetch_run.returncode == COMMAND_FAILURE_EXIT_STATUS
+
+        class TestWhenThePublicationIsGivenNoTerminal:
+            @pytest.fixture(scope="class")
+            @classmethod
+            def publish_run(
+                cls, tmp_path_factory: pytest.TempPathFactory
+            ) -> subprocess.CompletedProcess[str]:
+                missing_work_directory = tmp_path_factory.mktemp("parent") / "missing-work"
+                return run_command_line(
+                    [
+                        "--work",
+                        str(missing_work_directory),
+                        "--recipe",
+                        RECIPE_NAME,
+                        "publish",
+                        "--repository",
+                        "example-user/parakeet-ultra-onnx",
+                    ]
+                )
+
+            def test_should_refuse_it_before_it_opens_the_work_directory(
+                self, publish_run: subprocess.CompletedProcess[str]
+            ) -> None:
+                assert (
+                    "publish reads the token at a terminal" in publish_run.stderr,
+                    "work directory" in publish_run.stderr,
+                ) == (True, False)
+
+            def test_should_fail_as_an_argument_error(
+                self, publish_run: subprocess.CompletedProcess[str]
+            ) -> None:
+                assert publish_run.returncode == ARGUMENT_ERROR_EXIT_STATUS
+
+        class TestWhenThePublicationIsGivenNoRepository:
+            @pytest.fixture(scope="class")
+            @classmethod
+            def publish_run(cls) -> subprocess.CompletedProcess[str]:
+                return run_command_line(
+                    ["--work", "/data/work", "--recipe", RECIPE_NAME, "publish"]
+                )
+
+            def test_should_say_that_it_needs_the_repository(
+                self, publish_run: subprocess.CompletedProcess[str]
+            ) -> None:
+                assert "--repository" in publish_run.stderr
 
         class TestWhenACommandOtherThanTheLockIsGivenNoRecipe:
             @pytest.fixture(scope="class")

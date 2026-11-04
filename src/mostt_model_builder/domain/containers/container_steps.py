@@ -68,6 +68,12 @@ CONTAINER_ENVIRONMENT = (
     *((name, "") for name in PROXY_VARIABLE_NAMES),
 )
 SCRATCH_ENVIRONMENT = (("TMPDIR", str(SCRATCH_IN_THE_CONTAINER)),)
+# The publication's container reaches the Hub, the one thing it is for, and prints no progress
+# bars, which would fill its log.
+PUBLICATION_REPORT_FILE_NAME = "publication.json"
+PUBLICATION_REPORT_MAX_SIZE_BYTES = 64 * 1024
+PUBLICATION_ENVIRONMENT = (("HF_HUB_OFFLINE", "0"), ("HF_HUB_DISABLE_PROGRESS_BARS", "1"))
+
 PEAKS_FILE_NAME = "peaks.json"
 PEAKS_MAX_SIZE_BYTES = 4096
 FLEURS_CHECK_STEP_NAME = "fleurs-check"
@@ -259,6 +265,26 @@ INSPECT_ROW = StepRow(
     limits=StepLimits(memory_mib=3072, process_count=32, cpu_count=2, temporary_directory_mib=64),
     binds_candidate=True,
 )
+# These limits are sized for the upload of the 2.48 GB external data, with hf-xet's chunks in
+# /tmp.
+PUBLISH_ROW = StepRow(
+    name=PUBLISH_STEP_NAME,
+    image=HUB_IMAGE,
+    entry_module=f"{CORE_STEPS_PACKAGE}.hub_publication",
+    sources=(),
+    has_request=True,
+    outputs=(
+        DeclaredOutput(PUBLICATION_REPORT_FILE_NAME, PUBLICATION_REPORT_MAX_SIZE_BYTES),
+        PEAKS_OUTPUT,
+    ),
+    limits=StepLimits(
+        memory_mib=8192, process_count=512, cpu_count=4, temporary_directory_mib=2048
+    ),
+    has_network=True,
+    binds_candidate=True,
+    takes_token=True,
+)
+# Neither step nor clean reaches the publication, whose runs are numbered and kept.
 RUNNABLE_CORE_ROWS = (FLEURS_CHECK_ROW, INSPECT_ROW)
 CLEAN_LIMITS = StepLimits(memory_mib=256, process_count=32, cpu_count=1, temporary_directory_mib=16)
 # The conversions of the encoder, its 2.4 GB of weights loaded whole for each variant, peaked at
@@ -319,11 +345,20 @@ def judge_row(row: StepRow, host_cpu_count: int) -> None:
         raise StepTableError(
             f"{where} uses the GPU in the {row.image.device} image {row.image.tag}"
         )
-    if row.has_network and not (row.image.owner == CORE_OWNER and row.name == LOCK_STEP_NAME):
-        raise StepTableError(f"{where} asks for the network, which only the core's lock has")
+    if row.has_network and not (
+        row.image.owner == CORE_OWNER and row.name in (LOCK_STEP_NAME, PUBLISH_STEP_NAME)
+    ):
+        raise StepTableError(
+            f"{where} asks for the network, which only the core's lock and publish have"
+        )
     if row.takes_token and not (row.image.owner == CORE_OWNER and row.name == PUBLISH_STEP_NAME):
         raise StepTableError(
             f"{where} takes the maintainer's token, which only the core's {PUBLISH_STEP_NAME} does"
+        )
+    if row.takes_token and (row.sources or row.earlier_outputs or row.uses_gpu):
+        raise StepTableError(
+            f"{where} binds a source or an earlier output, or the GPU, beside the maintainer's "
+            "token, which the publication never needs"
         )
 
 
@@ -402,6 +437,14 @@ def judge_outputs(row: StepRow, where: str) -> None:
         raise StepTableError(f"{where}: its outputs lack {PEAKS_FILE_NAME}")
 
 
+def build_environment(row: StepRow) -> list[tuple[str, str]]:
+    if not (row.image.owner == CORE_OWNER and row.name == PUBLISH_STEP_NAME):
+        return list(CONTAINER_ENVIRONMENT)
+    overrides = dict(PUBLICATION_ENVIRONMENT)
+    environment = [(name, overrides.pop(name, setting)) for name, setting in CONTAINER_ENVIRONMENT]
+    return environment + list(overrides.items())
+
+
 def plan_container_run(
     row: StepRow,
     image_id: str,
@@ -452,7 +495,7 @@ def plan_container_run(
             TEMPORARY_DIRECTORY_IN_THE_CONTAINER, row.limits.temporary_directory_mib
         )
     ]
-    environment = list(CONTAINER_ENVIRONMENT)
+    environment = build_environment(row)
     if row.limits.scratch_mib is not None:
         temporary_filesystems.append(
             TemporaryFilesystem(SCRATCH_IN_THE_CONTAINER, row.limits.scratch_mib)

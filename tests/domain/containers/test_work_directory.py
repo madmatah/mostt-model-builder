@@ -14,13 +14,14 @@ from mostt_model_builder.domain.containers.work_directory import (
     EntryKind,
     WorkDirectory,
     WorkDirectoryError,
-    find_next_lock_number,
+    find_next_run_number,
     judge_work_directory,
     locate_image_build_log,
     locate_referenced_sources,
     locate_source,
     place_clean,
     place_lock,
+    place_publication,
     place_step,
     require_absolute_home,
 )
@@ -355,24 +356,46 @@ class TestTheWorkDirectory:
                     log_path=PurePosixPath("lock/3/logs/lock.log"),
                 )
 
-    class TestTheFindNextLockNumberFunction:
+    class TestThePlacePublicationFunction:
+        class TestWhenAPublicationRuns:
+            @pytest.fixture
+            def placement(self) -> StepPlacement:
+                return place_publication("parakeet-tdt", COMMIT, 2)
+
+            def test_should_number_it_under_the_run_and_bind_the_runs_candidate(
+                self, placement: StepPlacement
+            ) -> None:
+                assert placement == StepPlacement(
+                    output_directory=PurePosixPath(
+                        f"runs/parakeet-tdt/{COMMIT}/publications/2/output"
+                    ),
+                    request_directory=PurePosixPath(
+                        f"runs/parakeet-tdt/{COMMIT}/publications/2/request"
+                    ),
+                    log_path=PurePosixPath(
+                        f"runs/parakeet-tdt/{COMMIT}/publications/2/logs/publish.log"
+                    ),
+                    candidate_directory=PurePosixPath(f"runs/parakeet-tdt/{COMMIT}/candidate"),
+                )
+
+    class TestTheFindNextRunNumberFunction:
         @pytest.mark.parametrize(
-            ("entry_names", "lock_number"),
+            ("entry_names", "expected_number"),
             [
-                pytest.param([], 1, id="no lock yet"),
-                pytest.param(["1", "2", "10"], 11, id="numbered locks"),
+                pytest.param([], 1, id="no run yet"),
+                pytest.param(["1", "2", "10"], 11, id="numbered runs"),
                 pytest.param(["2", "notes", "03", "-1"], 3, id="entries that are not numbers"),
             ],
         )
-        class TestWhenEarlierLocksExist:
+        class TestWhenEarlierRunsExist:
             @pytest.fixture
             def next_number(self, entry_names: list[str]) -> int:
-                return find_next_lock_number(entry_names)
+                return find_next_run_number(entry_names)
 
             def test_should_number_the_new_one_after_the_last(
-                self, next_number: int, lock_number: int
+                self, next_number: int, expected_number: int
             ) -> None:
-                assert next_number == lock_number
+                assert next_number == expected_number
 
     class TestTheLocateImageBuildLogFunction:
         class TestWhenAnImageIsBuilt:

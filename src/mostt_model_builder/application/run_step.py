@@ -122,7 +122,12 @@ class StepOutputs:
     sizes_bytes: Mapping[str, int]
 
 
-def run_step(request: StepRunRequest, engine: ContainerEngine, files: StepFiles) -> StepOutputs:
+def run_step(
+    request: StepRunRequest,
+    engine: ContainerEngine,
+    files: StepFiles,
+    token: HubToken | None = None,
+) -> StepOutputs:
     row = request.row
     parsed_names = find_parsed_names(row, request.parsed_output_names)
     image_id = prepare_container(row, request.head_tree, request.host, engine)
@@ -138,7 +143,9 @@ def run_step(request: StepRunRequest, engine: ContainerEngine, files: StepFiles)
         request.earlier_output_directories,
     )
     judge_earlier_outputs(request, files)
-    run_judged_container(run, request.placement.log_path, row.name, request.host, engine, files)
+    run_judged_container(
+        run, request.placement.log_path, row.name, request.host, engine, files, token
+    )
     return read_outputs(request, parsed_names, files)
 
 
@@ -187,10 +194,11 @@ def run_judged_container(
     host: HostIdentity,
     engine: ContainerEngine,
     files: StepFiles,
+    token: HubToken | None = None,
 ) -> None:
     files.make_directories(run.work_root, log_path.parent)
     judge_mounts(run, host.user_id, files)
-    container_exit = engine.run_container(run, run.work_root / log_path)
+    container_exit = engine.run_container(run, run.work_root / log_path, token)
     if container_exit.status != 0:
         raise StepError(
             f"the step {step_name} exited with the status {container_exit.status}; "

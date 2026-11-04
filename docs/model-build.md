@@ -4,7 +4,7 @@ This document describes the build part by part: what each command does, and the 
 
 ## The core
 
-The core holds what every model family shares. Built: the work directory, the sources, the confined containers and their boundary with the host, the images and their lock, the check of the FLEURS bench, the recipe contract and its runs, the formats with their checks, the conversions of an ONNX graph, the candidate and its inspection, the parity reports, the verification of a build against FLEURS, with the bytes it accepted, the model card with its writing for review, and the check of a published revision, which the sections below describe.
+The core holds what every model family shares. Built: the work directory, the sources, the confined containers and their boundary with the host, the images and their lock, the check of the FLEURS bench, the recipe contract and its runs, the formats with their checks, the conversions of an ONNX graph, the candidate and its inspection, the parity reports, the verification of a build against FLEURS, with the bytes it accepted, the model card with its writing for review, the publication, and the check of a published revision, which the sections below describe.
 
 Every command runs as `./model-build.sh --work <dir> --recipe <name> <command>`, on the host's Python and its standard library, isolated from the environment and the site packages. `--recipe` names the model family to build, [Recipes](#recipes) lists them, and every command needs it but `lock`, which resolves the libraries of every recipe's images at once.
 
@@ -24,6 +24,7 @@ Its layout:
 | `runs/<recipe>/<commit>/logs/<step>.log` | What its container printed, through the printable filter, and the log of its cleaning, `clean-<step>.log` |
 | `runs/<recipe>/<commit>/candidate/` | The candidate, the host's own copies of the files its recipe names, in mode 0444 |
 | `runs/<recipe>/<commit>/README.md` | The model card that `card` writes for review, in mode 0444 |
+| `runs/<recipe>/<commit>/publications/<n>/` | A run of `publish`: its `request/`, the request and the card it sends, its `output/`, the report of the commit and its peaks, and its `logs/`, a new number each time, never cleaned |
 | `lock/<n>/` | A run of `lock`: its `request/`, the copies of the images' manifest and lock, its `output/`, the new lock and its peaks, and its `logs/`, a new number each time |
 | `image-builds/<image>.log` | The output of the last build of each image, through the printable filter |
 
@@ -66,7 +67,8 @@ A row of the step table gives:
 | request | Whether the host writes a request for it, bound read-only at `/request` |
 | outputs | The files it leaves at the top of `/output`, each with its size bound; `peaks.json` among them, except for `clean` |
 | limits | Its memory in MiB, with the swap at the same value, its processes, its CPUs, and the size of its `/tmp`, and of its `/scratch` where it asks for one |
-| GPU, network | Whether it reaches the GPU, which only a row of a GPU image may, and the network, which only `lock` has |
+| GPU, network | Whether it reaches the GPU, which only a row of a GPU image may, and the network, which only `lock` and `publish` have |
+| token | Whether it reads the maintainer's token on its standard input, which only `publish` does |
 
 A row's limits leave about a quarter above the peaks that a full build reads from its `peaks.json`, its memory rounded up to a whole GiB and its processes to a power of two, so that a step that grows beyond them fails with its log rather than take the machine's memory. A row that no full build runs keeps the limits of the run that measured it.
 
@@ -79,6 +81,7 @@ The core's rows:
 | `lock` | `uv` | 4 096 | 256 | 8 | 3 072 | limits that a resolution of every image's libraries stays well within, uv's cache in `/tmp` included |
 | `inspect` | `onnx-inspect` | 3 072 | 32 | 2 | 64 | the inspection of the graphs, without their weights, peaked at 2.4 GiB and 20 processes |
 | `convert` | `onnx-convert` | 13 312 | 64 | 4 | 256 | the conversions of the encoder, its weights loaded whole for each variant, peaked at 9.7 GiB and 41 processes |
+| `publish` | `hub` | 8 192 | 512 | 4 | 2 048 | (hypothesis: these hold the upload of the 2.48 GB external data with hf-xet's chunks in `/tmp`; the trial publication's peaks settle it) |
 
 A run of a step:
 
@@ -249,6 +252,8 @@ The published files are the contract with mostt, which pins them by hash: their 
 | `decoder_joint-model.onnx`, `decoder_joint-model.fp16.onnx`, `decoder_joint-model.bf16.onnx`, `decoder_joint-model.int8.onnx` | `onnx`, the FP32 decoder and joint, the same file under each name, since onnx-asr picks one file per quantization |
 | `vocab.txt` | `text`, the vocabulary of Parakeet TDT 0.6B v3, at the SHA-256 `d58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d` |
 | `config.json` | `text`: `{"model_type": "nemo-conformer-tdt", "features_size": 128, "subsampling_factor": 8, "max_tokens_per_step": 10}`, which onnx-asr reads, since its defaults would choose the wrong preprocessor |
+| `README.md` | The model card ([The model card](#the-model-card)), which `publish` adds to the candidate |
+| `.gitattributes` | The Hub's own, which it writes into every repository it creates |
 
 ## The publication
 
@@ -282,6 +287,23 @@ CC BY 4.0 asks a work that adapts licensed material to credit its creator, keep 
 4. it renders the recipe's template from that verification, with the versions of the libraries the recipe names, as the images of its variants' runs pin them, so that the card's "accepted" and "passed its comparisons" hold.
 
 It then writes `runs/<recipe>/<commit>/README.md`, in mode 0444, for the user and the reviewers to read before anything leaves the machine. A card already there that equals the new render is kept, and `card` says it is unchanged; one that differs is refused, naming `clean`, so that the card on disk is always the render of the records beside it. `clean` removes the card, whatever step it cleans, as it removes `verification.json`. `card` publishes nothing.
+
+### Publishing
+
+`./model-build.sh --work <dir> --recipe <name> publish --repository <namespace>/<name>` publishes the candidate and its card into a Hugging Face repository that the maintainer created, `application/publish_candidate.py`. The maintainer runs it, at a terminal, and its check of the terminal and the token typed there are its guard; `.claude/settings.json` denies it to agents as a defense in depth, which matches only the literal command.
+
+1. It refuses to go on unless its standard input is a terminal, right after its arguments are read and before it opens the work directory.
+2. It refuses a repository outside the grammar of `<namespace>/<name>`.
+3. It prepares the publication as `card` does ([The card for review](#the-card-for-review)), and refuses a card that differs from `runs/<recipe>/<commit>/README.md`, or a missing one, naming `card`: the card it sends is the one that was reviewed, and with it every figure it gives.
+4. It shows the repository and each file, the card included, with its size and its SHA-256, and asks the maintainer to type the repository again; a difference stops it.
+5. It reads the token at the terminal with echo off, as `getpass` does, bounded to 512 bytes, the terminal's settings restored on the way out, an interruption included, and holds it to the grammar that `.claude/rules/container-security.md` > The host gives a token, `domain/publication/hub_token.py`.
+6. It writes its request into `runs/<recipe>/<commit>/publications/<n>/request/`, numbered as `lock` numbers its runs: `publication-request.json`, the repository, a commit message from the card's title, and each file with its size and its SHA-256, and `README.md`, the card.
+7. It judges the inspected copies again, as every row that binds the candidate does, then runs the `publish` row in the `hub` image, with the token on the container's standard input alone, and prints where its log is while the upload runs.
+8. The step, `steps/hub_publication.py`, reads the token, takes the repository's head as the parent of its commit, refuses a repository that holds any file but the Hub's `.gitattributes` and the build's own, reads each file as huggingface_hub's `CommitOperationAdd` reads it, refuses before it commits when one reads as another size or SHA-256 than the request gives, `domain/publication/requested_files.py`, then commits every file in one commit on that parent, which the Hub applies whole or not at all; it never creates the repository.
+9. The host parses `publication.json`, the repository, whether it is private, the parent revision and the new one, and each file with the size and the SHA-256 the container read, `domain/publication/publication_report.py`, and refuses another repository, a missing or an extra file, or a size or a SHA-256 that differs from the verification's or the card's.
+10. It prints the revision, whether the repository is private, and the `check-published` command, which shows what the Hub stored ([Checking the published files](#checking-the-published-files)).
+
+A commit carries the identity of the token's account: huggingface_hub's `create_commit` takes no author.
 
 ### Checking the published files
 

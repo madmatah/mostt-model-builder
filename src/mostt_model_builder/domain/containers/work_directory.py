@@ -25,8 +25,12 @@ LOCK_DIRECTORY_NAME = "lock"
 LOCK_REQUEST_DIRECTORY_NAME = "request"
 LOCK_OUTPUT_DIRECTORY_NAME = "output"
 IMAGE_BUILDS_DIRECTORY_NAME = "image-builds"
+PUBLICATIONS_DIRECTORY_NAME = "publications"
+PUBLICATION_REQUEST_DIRECTORY_NAME = "request"
+PUBLICATION_OUTPUT_DIRECTORY_NAME = "output"
+PUBLISH_LOG_NAME = "publish.log"
 LOG_SUFFIX = ".log"
-LOCK_NUMBER_GRAMMAR = re.compile(r"[1-9][0-9]{0,8}")
+RUN_NUMBER_GRAMMAR = re.compile(r"[1-9][0-9]{0,8}")
 
 
 class WorkDirectoryError(ValueError):
@@ -177,8 +181,8 @@ def place_clean(owner: str, commit: str, step_name: str) -> StepPlacement:
     )
 
 
-def find_next_lock_number(entry_names: Sequence[str]) -> int:
-    numbers = [int(name) for name in entry_names if LOCK_NUMBER_GRAMMAR.fullmatch(name)]
+def find_next_run_number(entry_names: Sequence[str]) -> int:
+    numbers = [int(name) for name in entry_names if RUN_NUMBER_GRAMMAR.fullmatch(name)]
     return max(numbers, default=0) + 1
 
 
@@ -188,6 +192,20 @@ def place_lock(lock_number: int) -> StepPlacement:
         output_directory=lock_run / LOCK_OUTPUT_DIRECTORY_NAME,
         request_directory=lock_run / LOCK_REQUEST_DIRECTORY_NAME,
         log_path=lock_run / LOGS_DIRECTORY_NAME / f"{LOCK_STEP_NAME}{LOG_SUFFIX}",
+    )
+
+
+def locate_publications(owner: str, commit: str) -> PurePosixPath:
+    return locate_run(owner, commit) / PUBLICATIONS_DIRECTORY_NAME
+
+
+def place_publication(owner: str, commit: str, publication_number: int) -> StepPlacement:
+    publication = locate_publications(owner, commit) / str(publication_number)
+    return StepPlacement(
+        output_directory=publication / PUBLICATION_OUTPUT_DIRECTORY_NAME,
+        request_directory=publication / PUBLICATION_REQUEST_DIRECTORY_NAME,
+        log_path=publication / LOGS_DIRECTORY_NAME / PUBLISH_LOG_NAME,
+        candidate_directory=locate_run(owner, commit) / CANDIDATE_DIRECTORY_NAME,
     )
 
 

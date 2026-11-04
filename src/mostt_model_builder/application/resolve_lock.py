@@ -15,7 +15,7 @@ from mostt_model_builder.domain.containers.printable_output import show_printabl
 from mostt_model_builder.domain.containers.step_peaks import StepPeaks
 from mostt_model_builder.domain.containers.work_directory import (
     LOCK_DIRECTORY_NAME,
-    find_next_lock_number,
+    find_next_run_number,
     place_lock,
 )
 from mostt_model_builder.domain.lock.lock_changes import compare_locks, describe_lock_changes
@@ -65,7 +65,7 @@ def resolve_lock(
 ) -> LockResolution:
     lock_directory = PurePosixPath(LOCK_DIRECTORY_NAME)
     files.make_directories(request.work_root, lock_directory)
-    lock_number = find_next_lock_number(files.list_entry_names(request.work_root / lock_directory))
+    lock_number = find_next_run_number(files.list_entry_names(request.work_root / lock_directory))
     placement = place_lock(lock_number)
     request_files = {MANIFEST_FILE_NAME: request.manifest_text.encode(TEXT_ENCODING)}
     if request.committed_lock_text is not None:

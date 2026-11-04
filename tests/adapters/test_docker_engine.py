@@ -28,6 +28,8 @@ from mostt_model_builder.domain.containers.container_steps import (
     INSPECT_ROW,
     LOCK_ROW,
     LOCK_STEP_NAME,
+    PUBLISH_ROW,
+    PUBLISH_STEP_NAME,
     BindMount,
     ContainerRun,
     StepPlacement,
@@ -80,7 +82,7 @@ def judge_every_recipe() -> tuple[JudgedRecipe, ...]:
 
 
 JUDGED_RECIPES = judge_every_recipe()
-EVERY_ROW = (
+BUILD_ROWS = (
     FLEURS_CHECK_ROW,
     INSPECT_ROW,
     LOCK_ROW,
@@ -88,6 +90,8 @@ EVERY_ROW = (
     *(row for recipe in JUDGED_RECIPES for row in recipe.rows),
     *(build_clean_row(image) for recipe in JUDGED_RECIPES for image in recipe.images),
 )
+BUILD_ROW_IDS = [f"{row.name} in {row.image.tag}" for row in BUILD_ROWS]
+EVERY_ROW = (*BUILD_ROWS, PUBLISH_ROW)
 ROW_IDS = [f"{row.name} in {row.image.tag}" for row in EVERY_ROW]
 CONFINEMENT_SEQUENCES = {
     "removed once it exits": ["--rm"],
@@ -103,7 +107,7 @@ CONFINEMENT_SEQUENCES = {
 FAKE_DOCKER_OUTPUT = b"line one\n\x1b[31mred\x07\x00\xff\n"
 FAKE_DOCKER_STATUS = 3
 CONTEXT_ARCHIVE = TarArchive(b"the archive of the tree\0\xff")
-NETWORK_BY_STEP_NAME = {LOCK_STEP_NAME: "bridge"}
+NETWORK_BY_STEP_NAME = {LOCK_STEP_NAME: "bridge", PUBLISH_STEP_NAME: "bridge"}
 NO_NETWORK = "none"
 READ_ONLY_OPTION = {True: ",readonly", False: ""}
 
@@ -261,7 +265,7 @@ class TestTheDockerEngine:
                     ),
                 ]
 
-            def test_should_give_the_network_to_the_lock_alone(
+            def test_should_give_the_network_to_the_lock_and_the_publication_alone(
                 self, run_arguments: list[str], row: StepRow
             ) -> None:
                 assert read_option_values(run_arguments, "--network") == [
@@ -352,6 +356,44 @@ class TestTheDockerEngine:
                 assert read_option_values(run_arguments, "--mount") == [
                     "type=bind,source=/data/builds/work/runs/..step,target=/x,readonly"
                 ]
+
+        class TestWhenTheRowTakesTheToken:
+            @pytest.fixture
+            def run_arguments(self) -> list[str]:
+                return build_run_arguments(plan_row(TOKEN_ROW))
+
+            def test_should_keep_the_standard_input_open_and_name_no_token(
+                self, run_arguments: list[str]
+            ) -> None:
+                assert (
+                    "--interactive" in run_arguments,
+                    any("hf_" in argument for argument in run_arguments),
+                ) == (True, False)
+
+        @pytest.mark.parametrize("row", BUILD_ROWS, ids=BUILD_ROW_IDS)
+        class TestWhenARowOfTheBuildRuns:
+            @pytest.fixture
+            def run_arguments(self, row: StepRow) -> list[str]:
+                return build_run_arguments(plan_row(row))
+
+            def test_should_give_it_no_standard_input(self, run_arguments: list[str]) -> None:
+                assert "--interactive" not in run_arguments
+
+        class TestWhenThePublicationRuns:
+            @pytest.fixture
+            def run_arguments(self) -> list[str]:
+                return build_run_arguments(plan_row(PUBLISH_ROW))
+
+            def test_should_give_it_the_bridge_and_its_standard_input(
+                self, run_arguments: list[str]
+            ) -> None:
+                assert (
+                    read_option_values(run_arguments, "--network"),
+                    "--interactive" in run_arguments,
+                ) == (
+                    ["bridge"],
+                    True,
+                )
 
     class TestTheMountPathGrammarConstant:
         @pytest.mark.parametrize(
@@ -612,26 +654,3 @@ class TestTheDockerEngine:
                 self, give_act: Callable[[], object]
             ) -> None:
                 assert give_act() is None
-
-    class TestTheStandardInputOfARun:
-        class TestWhenTheRowTakesTheToken:
-            @pytest.fixture
-            def run_arguments(self) -> list[str]:
-                return build_run_arguments(plan_row(TOKEN_ROW))
-
-            def test_should_keep_the_standard_input_open_and_name_no_token(
-                self, run_arguments: list[str]
-            ) -> None:
-                assert (
-                    "--interactive" in run_arguments,
-                    any("hf_" in argument for argument in run_arguments),
-                ) == (True, False)
-
-        @pytest.mark.parametrize("row", EVERY_ROW, ids=ROW_IDS)
-        class TestWhenARowOfTheBuildRuns:
-            @pytest.fixture
-            def run_arguments(self, row: StepRow) -> list[str]:
-                return build_run_arguments(plan_row(row))
-
-            def test_should_give_it_no_standard_input(self, run_arguments: list[str]) -> None:
-                assert "--interactive" not in run_arguments

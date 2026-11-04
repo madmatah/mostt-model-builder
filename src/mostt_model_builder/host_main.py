@@ -12,6 +12,7 @@ from pathlib import Path, PurePosixPath
 from mostt_model_builder.adapters.curl_downloader import CurlDownloader
 from mostt_model_builder.adapters.docker_engine import ContainerEngineError, DockerEngine
 from mostt_model_builder.adapters.git_tree import GitError, GitTree
+from mostt_model_builder.adapters.terminal_prompt import TerminalError, TerminalPrompt
 from mostt_model_builder.adapters.work_files import WorkFiles
 from mostt_model_builder.application.assemble_candidate import (
     CandidateError,
@@ -56,6 +57,10 @@ from mostt_model_builder.application.prepare_publication import (
     PublicationError,
     prepare_publication,
     write_model_card,
+)
+from mostt_model_builder.application.publish_candidate import (
+    CandidatePublication,
+    publish_candidate,
 )
 from mostt_model_builder.application.resolve_lock import (
     LockRequest,
@@ -153,6 +158,9 @@ from mostt_model_builder.domain.onnx.graph_rules import (
 )
 from mostt_model_builder.domain.onnx.inspection_report import InspectionReportError
 from mostt_model_builder.domain.onnx.node_placement import NodePlacementError, PlacementSummary
+from mostt_model_builder.domain.publication.hub_token import HubTokenError
+from mostt_model_builder.domain.publication.publication_report import PublicationReportError
+from mostt_model_builder.domain.publication.repository_files import RepositoryFilesError
 from mostt_model_builder.domain.sources.source_pins import (
     SourcePin,
     SourcePinError,
@@ -177,6 +185,8 @@ BUILD_COMMAND = "build"
 VERIFY_COMMAND = "verify"
 CARD_COMMAND = "card"
 CHECK_PUBLISHED_COMMAND = "check-published"
+PUBLISH_COMMAND = "publish"
+STANDARD_INPUT_DESCRIPTOR = 0
 CPU_PROVIDER = "CPUExecutionProvider"
 CUDA_PROVIDER = "CUDAExecutionProvider"
 RECIPES = {contract.name: contract for contract in (PARAKEET_TDT_RECIPE,)}
@@ -230,6 +240,10 @@ COMMAND_ERRORS = (
     BuildRejectedError,
     PublicationError,
     PublishedCheckError,
+    TerminalError,
+    HubTokenError,
+    PublicationReportError,
+    RepositoryFilesError,
     ValueError,
     OSError,
 )
@@ -297,6 +311,19 @@ def build_argument_parser() -> argparse.ArgumentParser:
         add_help=False,
         help="verify the build again from a clean clone, render its model card, the README.md of "
         "its Hugging Face repository, and write it beside verification.json for review",
+    )
+    publish_parser = commands.add_parser(
+        PUBLISH_COMMAND,
+        add_help=False,
+        help="publish the verified candidate and its reviewed card into a Hugging Face "
+        "repository you created, with a token you type at the terminal; the maintainer's "
+        "alone",
+    )
+    publish_parser.add_argument(
+        "--repository",
+        required=True,
+        metavar="<namespace>/<name>",
+        help="the Hugging Face repository to publish into, which must exist",
     )
     check_parser = commands.add_parser(
         CHECK_PUBLISHED_COMMAND,
@@ -751,6 +778,32 @@ def write_card(recipe: JudgedRecipe, work_directory: WorkDirectory, files: WorkF
     )
 
 
+def publish(
+    recipe: JudgedRecipe, repository: str, work_directory: WorkDirectory, files: WorkFiles
+) -> None:
+    context = read_build_context(work_directory)
+    published = publish_candidate(
+        CandidatePublication(build_card_request(recipe, context), repository),
+        GitTree(PurePosixPath(CLONE_ROOT)),
+        TerminalPrompt(STANDARD_INPUT_DESCRIPTOR, sys.stdout),
+        DockerEngine(),
+        files,
+    )
+    report = published.report
+    visibility = "private" if report.is_private else "public"
+    print(
+        f"published {report.repository} at the revision {report.revision}, on "
+        f"{report.parent_revision}; the repository is {visibility}",
+        flush=True,
+    )
+    print(
+        "check it once read on the site: ./model-build.sh --work <dir> --recipe "
+        f"{recipe.name} {CHECK_PUBLISHED_COMMAND} --repository {report.repository} "
+        f"--revision {report.revision}",
+        flush=True,
+    )
+
+
 def check_published_revision(
     recipe: JudgedRecipe,
     repository: str,
@@ -895,6 +948,8 @@ def run_command(arguments: argparse.Namespace) -> None:
         build(recipe, work_directory, files)
     elif arguments.command == CARD_COMMAND:
         write_card(recipe, work_directory, files)
+    elif arguments.command == PUBLISH_COMMAND:
+        publish(recipe, arguments.repository, work_directory, files)
     elif arguments.command == CHECK_PUBLISHED_COMMAND:
         check_published_revision(
             recipe, arguments.repository, arguments.revision, work_directory, files
@@ -906,6 +961,11 @@ def main(arguments: Sequence[str]) -> None:
     parsed_arguments = parser.parse_args(arguments)
     if parsed_arguments.recipe is None and parsed_arguments.command != LOCK_STEP_NAME:
         parser.error(f"the command {parsed_arguments.command} needs --recipe <name>")
+    if parsed_arguments.command == PUBLISH_COMMAND and not os.isatty(STANDARD_INPUT_DESCRIPTOR):
+        parser.error(
+            f"{PUBLISH_COMMAND} reads the token at a terminal, and the standard input is none: "
+            "run it yourself, in a terminal"
+        )
     try:
         run_command(parsed_arguments)
     except COMMAND_ERRORS as error:
