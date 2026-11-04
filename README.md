@@ -117,14 +117,25 @@ Once the build passes, `card` verifies it again, from a clean clone, and writes 
 ./model-build.sh --work /data/model-build --recipe parakeet-tdt card
 ```
 
+`docs/model-build.md` describes each step and the reasons behind its method.
+
+## Publishing the models
+
+Publication is yours: run these commands yourself, at a terminal, from the commit whose build passed, once that commit is on GitHub's `main`, since the card links the code at that commit. First write the card with `card` and read it. Create the Hugging Face repository yourself, private, and a fine-grained token with read and write access to that repository alone. Publish first into a throwaway private repository, as a trial, then into the real one:
+
+```sh
+./model-build.sh --work /data/model-build --recipe parakeet-tdt publish \
+    --repository <user>/parakeet-ultra-onnx
+```
+
+`publish` verifies the build again, checks that the card is the one you read, shows each file with its SHA-256, asks you to type the repository again and then the token, which it does not show, and commits every file at once. It prints the new revision. Read the card and the files on the site, make the repository public, run `check-published`, and revoke the token.
+
 Once the files are published, `check-published` downloads each file of the published revision, without a token, into `sources/` in the work directory, and checks it against the build's own bytes and its card; it then prints the revision for mostt to pin:
 
 ```sh
 ./model-build.sh --work /data/model-build --recipe parakeet-tdt check-published \
     --repository <user>/parakeet-ultra-onnx --revision <commit>
 ```
-
-`docs/model-build.md` describes each step and the reasons behind its method.
 
 ## Commands
 
@@ -144,6 +155,7 @@ Once the files are published, `check-published` downloads each file of the publi
 | `./model-build.sh --work <dir> --recipe <name> verify` | Measures every run on FLEURS, holds the parities, the runs and their comparisons to the recipe's rules, and writes `verification.json`. |
 | `./model-build.sh --work <dir> --recipe <name> build` | Runs every step of the recipe's build, in its order, then `verify`. |
 | `./model-build.sh --work <dir> --recipe <name> card` | Verifies the build again from a clean clone, renders its model card and writes it to `runs/<recipe>/<commit>/README.md` for review. |
+| `./model-build.sh --work <dir> --recipe <name> publish --repository <namespace>/<name>` | Publishes the verified candidate and its reviewed card into a Hugging Face repository you created, with a token you type; yours to run, at a terminal. |
 | `./model-build.sh --work <dir> --recipe <name> check-published --repository <namespace>/<name> --revision <commit>` | Downloads each file of a published revision without a token, checks it against the build's own bytes and its card, and prints the revision that mostt pins. |
 | `./model-build.sh --work <dir> --recipe <name> clean [<step>]` | Removes the outputs, the request and the log of a step at HEAD's commit, or of every step of the core and the recipe, and the verification's report and the model card. |
 | `./model-build.sh --work <dir> lock` | Resolves the lock of the images' libraries in its container, checks it, prints its change and writes it to `images/environment.lock`. |

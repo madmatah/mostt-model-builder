@@ -23,6 +23,7 @@ from mostt_model_builder.domain.containers.container_steps import (
     ONNX_INSPECT_IMAGE,
     OUTPUT_IN_THE_CONTAINER,
     PEAKS_FILE_NAME,
+    PUBLISH_ROW,
     REQUEST_IN_THE_CONTAINER,
     SCRATCH_IN_THE_CONTAINER,
     TEMPORARY_DIRECTORY_IN_THE_CONTAINER,
@@ -100,7 +101,7 @@ CODE_READING_IMAGES = {
     for image in contract.images
     if image.reads_code_running_sources
 }
-EVERY_ROW = (
+BUILD_ROWS = (
     FLEURS_CHECK_ROW,
     INSPECT_ROW,
     LOCK_ROW,
@@ -108,6 +109,8 @@ EVERY_ROW = (
     *(row for recipe in JUDGED_RECIPES for row in recipe.rows),
     *(build_clean_row(image) for recipe in JUDGED_RECIPES for image in recipe.images),
 )
+BUILD_ROW_IDS = [f"{row.name} in {row.image.tag}" for row in BUILD_ROWS]
+EVERY_ROW = (*BUILD_ROWS, PUBLISH_ROW)
 ROW_IDS = [f"{row.name} in {row.image.tag}" for row in EVERY_ROW]
 GOOD_LIMITS = StepLimits(memory_mib=1024, process_count=64, cpu_count=2, temporary_directory_mib=64)
 CLEAN_ROW = build_clean_row(CORE_IMAGES[0])
@@ -236,7 +239,15 @@ REFUSED_ROWS = {
     ),
     "the network on a step other than the lock": (
         replace(FLEURS_CHECK_ROW, has_network=True),
-        "asks for the network, which only the core's lock has",
+        "asks for the network, which only the core's lock and publish have",
+    ),
+    "a source beside the token": (
+        replace(PUBLISH_ROW, sources=(SourceReference("google/fleurs", "data/test.tsv"),)),
+        "binds a source or an earlier output, or the GPU, beside the maintainer's token",
+    ),
+    "the gpu beside the token": (
+        replace(PUBLISH_ROW, image=replace(PUBLISH_ROW.image, device=Device.GPU), uses_gpu=True),
+        "binds a source or an earlier output, or the GPU, beside the maintainer's token",
     ),
     "the token on a recipe's row named publish": (
         replace(
@@ -306,7 +317,7 @@ class TestTheContainerSteps:
                 with pytest.raises(StepTableError, match=re.escape(reason)):
                     judge_act()
 
-        @pytest.mark.parametrize("row", EVERY_ROW, ids=ROW_IDS)
+        @pytest.mark.parametrize("row", BUILD_ROWS, ids=BUILD_ROW_IDS)
         class TestWhenAnyOtherRowTakesTheToken:
             @pytest.fixture
             def judge_act(self, row: StepRow) -> Callable[[], object]:
@@ -317,6 +328,16 @@ class TestTheContainerSteps:
             ) -> None:
                 with pytest.raises(StepTableError, match=re.escape("takes the maintainer's token")):
                     judge_act()
+
+        class TestWhenThePublicationIsJudged:
+            @pytest.fixture
+            def judge_act(self) -> Callable[[], object]:
+                return partial(judge_row, PUBLISH_ROW, HOST_CPU_COUNT)
+
+            def test_should_accept_its_network_and_its_token(
+                self, judge_act: Callable[[], object]
+            ) -> None:
+                assert judge_act() is None
 
         class TestWhenAGpuImageRunsAStepOnTheGpu:
             @pytest.fixture
@@ -355,6 +376,8 @@ class TestTheContainerSteps:
             def test_should_use_the_gpu_only_in_an_image_of_the_gpu(self, row: StepRow) -> None:
                 assert row.uses_gpu is False or row.image.device is Device.GPU
 
+        @pytest.mark.parametrize("row", BUILD_ROWS, ids=BUILD_ROW_IDS)
+        class TestWhenARowOfTheBuildIsRead:
             def test_should_give_the_network_to_the_lock_alone(self, row: StepRow) -> None:
                 assert row.has_network is (row.name == LOCK_STEP_NAME)
 
@@ -531,6 +554,12 @@ class TestTheContainerSteps:
                     ],
                 ) == (len(row.sources), [])
 
+        @pytest.mark.parametrize("row", BUILD_ROWS, ids=BUILD_ROW_IDS)
+        class TestWhenEachRowOfTheBuildIsPlanned:
+            @pytest.fixture
+            def container_run(self, row: StepRow) -> ContainerRun:
+                return plan_row(row)
+
             def test_should_keep_every_cache_and_home_under_tmp_and_the_hub_offline(
                 self, container_run: ContainerRun, row: StepRow
             ) -> None:
@@ -546,6 +575,64 @@ class TestTheContainerSteps:
                     "HF_HUB_DISABLE_TELEMETRY": "1",
                     **({"TMPDIR": "/scratch"} if row.limits.scratch_mib is not None else {}),
                 }
+
+        class TestWhenThePublicationIsPlanned:
+            @pytest.fixture
+            def container_run(self) -> ContainerRun:
+                return plan_row(PUBLISH_ROW)
+
+            def test_should_keep_every_cache_and_home_under_tmp_beside_the_hub_s_settings(
+                self, container_run: ContainerRun
+            ) -> None:
+                assert {
+                    name: setting
+                    for name, setting in container_run.environment
+                    if name not in PROXY_VARIABLE_NAMES
+                } == {
+                    "HOME": "/tmp/home",
+                    "XDG_CACHE_HOME": "/tmp/cache",
+                    "HF_HOME": "/tmp/huggingface",
+                    "HF_HUB_OFFLINE": "0",
+                    "HF_HUB_DISABLE_TELEMETRY": "1",
+                    "HF_HUB_DISABLE_PROGRESS_BARS": "1",
+                }
+
+            def test_should_put_the_hub_online_without_progress_bars(
+                self, container_run: ContainerRun
+            ) -> None:
+                assert [
+                    (name, setting)
+                    for name, setting in container_run.environment
+                    if name.startswith("HF_HUB_")
+                ] == [
+                    ("HF_HUB_OFFLINE", "0"),
+                    ("HF_HUB_DISABLE_TELEMETRY", "1"),
+                    ("HF_HUB_DISABLE_PROGRESS_BARS", "1"),
+                ]
+
+            def test_should_give_it_the_network_and_a_standard_input(
+                self, container_run: ContainerRun
+            ) -> None:
+                assert (container_run.has_network, container_run.has_standard_input) == (
+                    True,
+                    True,
+                )
+
+            def test_should_bind_the_candidate_its_request_and_its_output_alone(
+                self, container_run: ContainerRun
+            ) -> None:
+                assert [
+                    (mount.container_path, mount.is_read_only) for mount in container_run.mounts
+                ] == [
+                    (CANDIDATE_IN_THE_CONTAINER, True),
+                    (REQUEST_IN_THE_CONTAINER, True),
+                    (OUTPUT_IN_THE_CONTAINER, False),
+                ]
+
+            def test_should_hold_the_hypothesis_of_its_limits(self) -> None:
+                assert PUBLISH_ROW.limits == StepLimits(
+                    memory_mib=8192, process_count=512, cpu_count=4, temporary_directory_mib=2048
+                )
 
         class TestWhenTheFleursCheckIsPlanned:
             @pytest.fixture

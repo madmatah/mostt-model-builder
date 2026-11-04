@@ -43,6 +43,7 @@ from mostt_model_builder.domain.containers.work_directory import (
     CANDIDATE_DIRECTORY_NAME,
     LOGS_DIRECTORY_NAME,
     MODEL_CARD_FILE_NAME,
+    PUBLICATIONS_DIRECTORY_NAME,
     REQUESTS_DIRECTORY_NAME,
 )
 from mostt_model_builder.domain.contract.derived_rows import (
@@ -98,7 +99,13 @@ CORE_STEP_NAMES = frozenset(
 )
 # A step's outputs live beside the run's requests, logs and candidate, under the same commit.
 RESERVED_STEP_NAMES = frozenset(
-    {*CORE_STEP_NAMES, REQUESTS_DIRECTORY_NAME, LOGS_DIRECTORY_NAME, CANDIDATE_DIRECTORY_NAME}
+    {
+        *CORE_STEP_NAMES,
+        REQUESTS_DIRECTORY_NAME,
+        LOGS_DIRECTORY_NAME,
+        CANDIDATE_DIRECTORY_NAME,
+        PUBLICATIONS_DIRECTORY_NAME,
+    }
 )
 BUILT_CORE_STEP_NAMES = (FLEURS_CHECK_STEP_NAME, INSPECT_STEP_NAME)
 REFERENCE_VARIANT = "reference"

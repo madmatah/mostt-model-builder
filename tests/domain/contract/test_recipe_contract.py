@@ -317,6 +317,14 @@ MODEL = ModelDescription(
 
 
 REFUSED_CONTRACTS = {
+    "a step named like the directory of the publications": (
+        change_step(0, name="publications"),
+        "its step 'publications' bears the name of a step of the core or of a directory of its run",
+    ),
+    "a step named like the core's publication": (
+        change_step(0, name="publish"),
+        "its step 'publish' bears the name of a step of the core or of a directory of its run",
+    ),
     "a candidate file named like the model card, in any case": (
         change_candidate(name="readme.MD"),
         "its candidate file 'readme.MD' bears the name of the model card, README.md, which the "
