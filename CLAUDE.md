@@ -38,7 +38,7 @@ Project-management material, such as the status, the roadmap, the decisions, the
 ## Machine boundaries
 
 - **Never run `sudo`, and install nothing on the host** beyond the project's own environment, `.venv/`, which `uv sync --frozen` writes. A step that needs elevated rights or a host install goes in the session's final report, as the exact commands for the user to run.
-- **Never publish a model or a file to Hugging Face, or anywhere else:** publication is the user's, once the build's checks have passed.
+- **Never publish a model or a file to Hugging Face, or anywhere else:** publication is the user's, once the build's checks have passed. `.claude/settings.json` denies agents `model-build.sh publish`, as a defense in depth that matches the literal command alone; `card` and `check-published` publish nothing.
 - **Never run `git clean` with `-ff` at the repository root:** a double `-f` deletes nested repositories, such as the worktrees under `.claude/worktrees/`.
 - **Push only the work branches, `<type>/<topic>`;** never push to `main`, which changes only through a merged pull request.
 

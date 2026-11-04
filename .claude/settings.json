@@ -5,6 +5,14 @@
     "pr": "",
     "sessionUrl": false
   },
+  "permissions": {
+    "deny": [
+      "Bash(*model-build.sh * publish)",
+      "Bash(*model-build.sh * publish *)",
+      "Bash(*mostt_model_builder.host_main * publish)",
+      "Bash(*mostt_model_builder.host_main * publish *)"
+    ]
+  },
   "hooks": {
     "SessionStart": [
       {
