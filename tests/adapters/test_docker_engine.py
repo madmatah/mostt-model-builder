@@ -1,7 +1,7 @@
 import os
 import re
 import subprocess
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import replace
 from functools import partial
 from pathlib import Path, PurePosixPath
@@ -14,6 +14,7 @@ from mostt_model_builder.adapters.docker_engine import (
     DockerEngine,
     build_image_arguments,
     build_run_arguments,
+    give_token,
     parse_image_inspection,
     run_logged,
 )
@@ -34,12 +35,14 @@ from mostt_model_builder.domain.containers.container_steps import (
     build_clean_row,
     plan_container_run,
 )
+from mostt_model_builder.domain.containers.secret_redaction import REDACTED_SECRET
 from mostt_model_builder.domain.contract.recipe_contract import (
     RECIPES_DIRECTORY_NAME,
     JudgedRecipe,
     RecipeFacts,
     judge_recipe,
 )
+from mostt_model_builder.domain.publication.hub_token import HubToken, parse_hub_token
 from mostt_model_builder.host_main import (
     CLONE_ROOT,
     RECIPES,
@@ -154,6 +157,34 @@ def write_fake_docker(directory: Path, output: bytes, status: int) -> Path:
     fake_docker.write_text(f'#!/usr/bin/env bash\ncat "{output_path}"\nexit {status}\n')
     fake_docker.chmod(0o755)
     return fake_docker
+
+
+PLACEHOLDER_TOKEN = parse_hub_token("hf_placeholder0123456789")
+TOKEN_ROW = replace(INSPECT_ROW, takes_token=True)
+
+
+def write_echoing_docker(directory: Path) -> None:
+    echoing_docker = directory / "docker"
+    echoing_docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "IFS= read -r line\n"
+        'printf "read %s, then %s%s\\n" "$line" "${line:0:7}" "${line:7}"\n'
+    )
+    echoing_docker.chmod(0o755)
+
+
+def run_with_echoing_docker(
+    directory: Path, monkeypatch: pytest.MonkeyPatch, token: HubToken | None
+) -> tuple[ContainerExit, bytes]:
+    program_directory = directory / "programs"
+    program_directory.mkdir()
+    write_echoing_docker(program_directory)
+    monkeypatch.setenv("PATH", f"{program_directory}{os.pathsep}{os.environ['PATH']}")
+    log_path = directory / "publish.log"
+    container_exit = DockerEngine().run_container(
+        plan_row(TOKEN_ROW), PurePosixPath(log_path), token
+    )
+    return container_exit, log_path.read_bytes()
 
 
 def write_recording_docker(directory: Path, record_directory: Path) -> None:
@@ -521,3 +552,86 @@ class TestTheDockerEngine:
             def test_should_refuse_to_follow_it(self, run_act: Callable[[], ContainerExit]) -> None:
                 with pytest.raises(OSError, match=re.escape("Too many levels of symbolic links")):
                     run_act()
+
+    class TestTheRunContainerMethod:
+        class TestWhenARowTakesTheToken:
+            @pytest.fixture
+            def logged_run(
+                self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+            ) -> tuple[ContainerExit, bytes]:
+                return run_with_echoing_docker(tmp_path, monkeypatch, PLACEHOLDER_TOKEN)
+
+            def test_should_give_it_on_the_standard_input_and_log_only_its_placeholder(
+                self, logged_run: tuple[ContainerExit, bytes]
+            ) -> None:
+                assert logged_run[1] == (
+                    b"read " + REDACTED_SECRET + b", then " + REDACTED_SECRET + b"\n"
+                )
+
+            def test_should_show_only_the_placeholder_in_the_tail_too(
+                self, logged_run: tuple[ContainerExit, bytes]
+            ) -> None:
+                assert PLACEHOLDER_TOKEN.encode_secret() not in logged_run[0].log_tail
+
+        class TestWhenARowThatTakesTheTokenIsGivenNone:
+            @pytest.fixture
+            def run_act(self, tmp_path: Path) -> Callable[[], ContainerExit]:
+                return partial(
+                    DockerEngine().run_container,
+                    plan_row(TOKEN_ROW),
+                    PurePosixPath(tmp_path / "publish.log"),
+                )
+
+            def test_should_refuse_to_start_it(self, run_act: Callable[[], ContainerExit]) -> None:
+                with pytest.raises(ContainerEngineError, match="exactly when its row takes it"):
+                    run_act()
+
+        class TestWhenARowThatTakesNoTokenIsGivenOne:
+            @pytest.fixture
+            def run_act(self, tmp_path: Path) -> Callable[[], ContainerExit]:
+                return partial(
+                    DockerEngine().run_container,
+                    plan_row(INSPECT_ROW),
+                    PurePosixPath(tmp_path / "inspect.log"),
+                    PLACEHOLDER_TOKEN,
+                )
+
+            def test_should_refuse_to_start_it(self, run_act: Callable[[], ContainerExit]) -> None:
+                with pytest.raises(ContainerEngineError, match="exactly when its row takes it"):
+                    run_act()
+
+    class TestTheGiveTokenFunction:
+        class TestWhenDockerExitedBeforeReadingItsStandardInput:
+            @pytest.fixture
+            def give_act(self) -> Iterator[Callable[[], object]]:
+                with subprocess.Popen(["true"], stdin=subprocess.PIPE) as exited_process:
+                    exited_process.wait()
+                    yield partial(give_token, exited_process, PLACEHOLDER_TOKEN)
+
+            def test_should_leave_the_exit_to_the_status_and_the_log_of_docker(
+                self, give_act: Callable[[], object]
+            ) -> None:
+                assert give_act() is None
+
+    class TestTheStandardInputOfARun:
+        class TestWhenTheRowTakesTheToken:
+            @pytest.fixture
+            def run_arguments(self) -> list[str]:
+                return build_run_arguments(plan_row(TOKEN_ROW))
+
+            def test_should_keep_the_standard_input_open_and_name_no_token(
+                self, run_arguments: list[str]
+            ) -> None:
+                assert (
+                    "--interactive" in run_arguments,
+                    any("hf_" in argument for argument in run_arguments),
+                ) == (True, False)
+
+        @pytest.mark.parametrize("row", EVERY_ROW, ids=ROW_IDS)
+        class TestWhenARowOfTheBuildRuns:
+            @pytest.fixture
+            def run_arguments(self, row: StepRow) -> list[str]:
+                return build_run_arguments(plan_row(row))
+
+            def test_should_give_it_no_standard_input(self, run_arguments: list[str]) -> None:
+                assert "--interactive" not in run_arguments

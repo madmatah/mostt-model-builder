@@ -4,7 +4,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 
-from mostt_model_builder.adapters.docker_engine import build_run_arguments
+from mostt_model_builder.adapters.docker_engine import ContainerEngineError, build_run_arguments
 from mostt_model_builder.application.assemble_candidate import HashedFile
 from mostt_model_builder.application.fetch_sources import SourceFileError
 from mostt_model_builder.application.run_step import (
@@ -24,6 +24,7 @@ from mostt_model_builder.domain.containers.container_steps import (
     ContainerRun,
     build_clean_row,
 )
+from mostt_model_builder.domain.publication.hub_token import HubToken
 
 USER_ID = 1000
 GROUP_ID = 1000
@@ -218,11 +219,20 @@ class FakeContainerEngine:
     log_tail: bytes = b""
     runs: list[ContainerRun] = field(default_factory=list)
     log_paths: list[PurePosixPath] = field(default_factory=list)
+    tokens: list[HubToken] = field(default_factory=list)
 
     def inspect_image(self, tag: str) -> ImageFacts | None:
         return self.images.get(tag)
 
-    def run_container(self, run: ContainerRun, log_path: PurePosixPath) -> ContainerExit:
+    def run_container(
+        self, run: ContainerRun, log_path: PurePosixPath, token: HubToken | None = None
+    ) -> ContainerExit:
+        if run.has_standard_input != (token is not None):
+            raise ContainerEngineError(
+                "a container reads the token on its standard input exactly when its row takes it"
+            )
+        if token is not None:
+            self.tokens.append(token)
         build_run_arguments(run)
         self.runs.append(run)
         self.log_paths.append(log_path)

@@ -24,6 +24,7 @@ from mostt_model_builder.domain.containers.container_steps import (
     INSPECT_STEP_NAME,
     LOCK_STEP_NAME,
     PEAKS_FILE_NAME,
+    PUBLISH_STEP_NAME,
     RUNNABLE_CORE_ROWS,
     STEP_NAME_GRAMMAR,
     ContainerImage,
@@ -86,7 +87,14 @@ RECIPES_DIRECTORY_NAME = "recipes"
 MODULE_SEPARATOR = "."
 PYTHON_SOURCE_SUFFIX = ".py"
 CORE_STEP_NAMES = frozenset(
-    {FLEURS_CHECK_STEP_NAME, CLEAN_STEP_NAME, LOCK_STEP_NAME, INSPECT_STEP_NAME, CONVERT_STEP_NAME}
+    {
+        FLEURS_CHECK_STEP_NAME,
+        CLEAN_STEP_NAME,
+        LOCK_STEP_NAME,
+        INSPECT_STEP_NAME,
+        CONVERT_STEP_NAME,
+        PUBLISH_STEP_NAME,
+    }
 )
 # A step's outputs live beside the run's requests, logs and candidate, under the same commit.
 RESERVED_STEP_NAMES = frozenset(
