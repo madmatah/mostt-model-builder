@@ -1,5 +1,8 @@
+import io
 import os
+import re
 import subprocess
+import tarfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import partial
@@ -8,12 +11,24 @@ from pathlib import Path, PurePosixPath
 import pytest
 
 from mostt_model_builder.adapters.git_tree import GitError, GitTree, drop_git_variables
+from mostt_model_builder.domain.containers.provenance import ProvenanceError
 
 GIT_TIMEOUT_S = 60
 COMMITTED_FILE = "tracked.txt"
 UNTRACKED_FILE = "src/untracked.py"
 IGNORED_FILE = "ignored.log"
+IGNORED_SOURCE_FILE = "src/ignored.log"
 RENAMED_FILE = "renamed.txt"
+COMMITTED_CONTENT = b"content\n"
+CHANGED_CONTENT = b"changed\n"
+IDENT_CONTENT = b"$Id$\nfirst line\nsecond line\n"
+IDENT_FILE = "ident.txt"
+RESHAPING_ATTRIBUTES = "* ident text eol=crlf\n"
+COMMITTED_TEXT_ATTRIBUTES = "* text=auto\n"
+RESHAPING_UMASK = "0077"
+COMMITTED_FILE_MODE = 0o644
+MISSING_TREE = "0" * 40
+MALFORMED_TREE = "HEAD"
 
 
 def run_git(repository: Path, *arguments: str) -> str:
@@ -36,10 +51,43 @@ def run_git(repository: Path, *arguments: str) -> str:
 
 def build_repository(repository: Path) -> None:
     run_git(repository, "init", "--quiet")
-    (repository / COMMITTED_FILE).write_text("content\n")
+    (repository / COMMITTED_FILE).write_bytes(COMMITTED_CONTENT)
     (repository / ".gitignore").write_text("*.log\n")
     run_git(repository, "add", COMMITTED_FILE, ".gitignore")
     run_git(repository, "-c", "commit.gpgsign=false", "commit", "--quiet", "--message", "first")
+
+
+def write_reshaping_configuration(home: Path) -> None:
+    attributes_path = home / "attributes"
+    attributes_path.write_text(RESHAPING_ATTRIBUTES)
+    (home / ".gitconfig").write_text(
+        "[core]\n"
+        "\tautocrlf = true\n"
+        "\teol = crlf\n"
+        f"\tattributesFile = {attributes_path}\n"
+        "[tar]\n"
+        f"\tumask = {RESHAPING_UMASK}\n"
+    )
+
+
+def read_archived_modes(archive: bytes) -> dict[str, int]:
+    with tarfile.open(fileobj=io.BytesIO(archive), mode="r:") as archive_file:
+        return {member.name: member.mode for member in archive_file.getmembers()}
+
+
+def read_archived_files(archive: bytes) -> dict[str, bytes]:
+    with tarfile.open(fileobj=io.BytesIO(archive), mode="r:") as archive_file:
+        return {
+            member.name: extracted.read()
+            for member in archive_file.getmembers()
+            if (extracted := archive_file.extractfile(member)) is not None
+        }
+
+
+@dataclass(frozen=True)
+class ArchivedTree:
+    files: dict[str, bytes]
+    modes: dict[str, int]
 
 
 @dataclass(frozen=True)
@@ -110,6 +158,152 @@ class TestTheGitTree:
                 self, changes: tuple[str, ...]
             ) -> None:
                 assert sorted(changes) == sorted((RENAMED_FILE, COMMITTED_FILE))
+
+    class TestTheArchiveTreeMethod:
+        class TestWhenTheCloneHoldsIgnoredUntrackedAndChangedFilesBesideItsCommit:
+            @pytest.fixture
+            def archived_files(self, tmp_path: Path) -> dict[str, bytes]:
+                build_repository(tmp_path)
+                (tmp_path / "src").mkdir()
+                (tmp_path / IGNORED_FILE).write_text("ignored\n")
+                (tmp_path / IGNORED_SOURCE_FILE).write_text("ignored\n")
+                (tmp_path / UNTRACKED_FILE).write_text("x = 1\n")
+                (tmp_path / COMMITTED_FILE).write_bytes(CHANGED_CONTENT)
+                git_tree = GitTree(PurePosixPath(tmp_path))
+                return read_archived_files(git_tree.archive_tree(git_tree.find_head_tree()))
+
+            def test_should_hold_only_committed_files_so_no_ignored_file_enters_an_image(
+                self, archived_files: dict[str, bytes]
+            ) -> None:
+                assert sorted(archived_files) == [".gitignore", COMMITTED_FILE]
+
+            def test_should_hold_each_file_as_committed_rather_than_as_the_working_tree_holds_it(
+                self, archived_files: dict[str, bytes]
+            ) -> None:
+                assert archived_files[COMMITTED_FILE] == COMMITTED_CONTENT
+
+        class TestWhenALaterCommitChangesAFile:
+            @pytest.fixture
+            def archived_files(self, tmp_path: Path) -> dict[str, bytes]:
+                build_repository(tmp_path)
+                (tmp_path / COMMITTED_FILE).write_bytes(CHANGED_CONTENT)
+                run_git(
+                    tmp_path,
+                    "-c",
+                    "commit.gpgsign=false",
+                    "commit",
+                    "--quiet",
+                    "--all",
+                    "--message",
+                    "second",
+                )
+                first_tree = run_git(tmp_path, "rev-parse", "HEAD~1^{tree}")
+                return read_archived_files(
+                    GitTree(PurePosixPath(tmp_path)).archive_tree(first_tree)
+                )
+
+            def test_should_hold_the_files_of_the_tree_it_is_given_rather_than_of_head(
+                self, archived_files: dict[str, bytes]
+            ) -> None:
+                assert archived_files[COMMITTED_FILE] == COMMITTED_CONTENT
+
+        class TestWhenAReplaceRefSwapsTheTreeForAnother:
+            @pytest.fixture
+            def archived_files(self, tmp_path: Path) -> dict[str, bytes]:
+                build_repository(tmp_path)
+                first_tree = run_git(tmp_path, "rev-parse", "HEAD^{tree}")
+                (tmp_path / COMMITTED_FILE).write_bytes(CHANGED_CONTENT)
+                run_git(
+                    tmp_path,
+                    "-c",
+                    "commit.gpgsign=false",
+                    "commit",
+                    "--quiet",
+                    "--all",
+                    "--message",
+                    "second",
+                )
+                run_git(
+                    tmp_path, "replace", first_tree, run_git(tmp_path, "rev-parse", "HEAD^{tree}")
+                )
+                return read_archived_files(
+                    GitTree(PurePosixPath(tmp_path)).archive_tree(first_tree)
+                )
+
+            def test_should_hold_the_files_of_the_tree_itself_so_the_label_names_its_bytes(
+                self, archived_files: dict[str, bytes]
+            ) -> None:
+                assert archived_files[COMMITTED_FILE] == COMMITTED_CONTENT
+
+        class TestWhenTheUsersGitConfigurationWouldReshapeItsFiles:
+            @pytest.fixture
+            def archived_tree(
+                self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+            ) -> ArchivedTree:
+                repository = tmp_path / "repository"
+                home = tmp_path / "home"
+                repository.mkdir()
+                home.mkdir()
+                build_repository(repository)
+                (repository / IDENT_FILE).write_bytes(IDENT_CONTENT)
+                (repository / ".gitattributes").write_text(COMMITTED_TEXT_ATTRIBUTES)
+                run_git(repository, "add", IDENT_FILE, ".gitattributes")
+                run_git(
+                    repository,
+                    "-c",
+                    "commit.gpgsign=false",
+                    "commit",
+                    "--quiet",
+                    "--message",
+                    "ident",
+                )
+                write_reshaping_configuration(home)
+                monkeypatch.setenv("HOME", str(home))
+                monkeypatch.setenv("XDG_CONFIG_HOME", str(home))
+                git_tree = GitTree(PurePosixPath(repository))
+                archive = git_tree.archive_tree(git_tree.find_head_tree())
+                return ArchivedTree(read_archived_files(archive), read_archived_modes(archive))
+
+            def test_should_hold_each_file_as_committed_so_the_label_names_its_bytes(
+                self, archived_tree: ArchivedTree
+            ) -> None:
+                assert (
+                    archived_tree.files[COMMITTED_FILE],
+                    archived_tree.files[IDENT_FILE],
+                ) == (COMMITTED_CONTENT, IDENT_CONTENT)
+
+            def test_should_give_each_file_the_mode_of_a_committed_file_whatever_the_users_umask(
+                self, archived_tree: ArchivedTree
+            ) -> None:
+                assert archived_tree.modes[COMMITTED_FILE] == COMMITTED_FILE_MODE
+
+        class TestWhenTheTreeIsNotAGitObjectName:
+            @pytest.fixture
+            def archive_act(self, tmp_path: Path) -> Callable[[], bytes]:
+                build_repository(tmp_path)
+                return partial(GitTree(PurePosixPath(tmp_path)).archive_tree, MALFORMED_TREE)
+
+            def test_should_refuse_it_before_git_reads_it_as_a_revision(
+                self, archive_act: Callable[[], bytes]
+            ) -> None:
+                with pytest.raises(
+                    ProvenanceError,
+                    match=rf"^the tree to archive '{re.escape(MALFORMED_TREE)}' "
+                    r"is not a git object name$",
+                ):
+                    archive_act()
+
+        class TestWhenTheCloneHoldsNoSuchTree:
+            @pytest.fixture
+            def archive_act(self, tmp_path: Path) -> Callable[[], bytes]:
+                build_repository(tmp_path)
+                return partial(GitTree(PurePosixPath(tmp_path)).archive_tree, MISSING_TREE)
+
+            def test_should_refuse_it_and_show_what_git_says(
+                self, archive_act: Callable[[], bytes]
+            ) -> None:
+                with pytest.raises(GitError, match=rf"^git archive failed: .*{MISSING_TREE}"):
+                    archive_act()
 
     class TestTheRunGitMethod:
         class TestWhenGitGivesNoAnswerInTime:

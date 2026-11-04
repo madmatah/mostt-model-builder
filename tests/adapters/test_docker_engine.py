@@ -1,3 +1,4 @@
+import os
 import re
 import subprocess
 from collections.abc import Callable
@@ -16,8 +17,10 @@ from mostt_model_builder.adapters.docker_engine import (
     parse_image_inspection,
     run_logged,
 )
+from mostt_model_builder.application.build_images import TarArchive
 from mostt_model_builder.application.run_step import ContainerExit, ImageFacts
 from mostt_model_builder.domain.containers.container_steps import (
+    BENCH_IMAGE,
     BOOTSTRAP_IN_THE_IMAGE,
     CORE_IMAGES,
     FLEURS_CHECK_ROW,
@@ -96,6 +99,7 @@ CONFINEMENT_SEQUENCES = {
 }
 FAKE_DOCKER_OUTPUT = b"line one\n\x1b[31mred\x07\x00\xff\n"
 FAKE_DOCKER_STATUS = 3
+CONTEXT_ARCHIVE = TarArchive(b"the archive of the tree\0\xff")
 NETWORK_BY_STEP_NAME = {LOCK_STEP_NAME: "bridge"}
 NO_NETWORK = "none"
 READ_ONLY_OPTION = {True: ",readonly", False: ""}
@@ -150,6 +154,17 @@ def write_fake_docker(directory: Path, output: bytes, status: int) -> Path:
     fake_docker.write_text(f'#!/usr/bin/env bash\ncat "{output_path}"\nexit {status}\n')
     fake_docker.chmod(0o755)
     return fake_docker
+
+
+def write_recording_docker(directory: Path, record_directory: Path) -> None:
+    directory.mkdir()
+    recording_docker = directory / "docker"
+    recording_docker.write_text(
+        "#!/usr/bin/env bash\n"
+        f'printf "%s\\n" "$@" > "{record_directory / "arguments.txt"}"\n'
+        f'cat > "{record_directory / "input.bin"}"\n'
+    )
+    recording_docker.chmod(0o755)
 
 
 class TestTheDockerEngine:
@@ -327,13 +342,12 @@ class TestTheDockerEngine:
             @pytest.fixture
             def build_arguments(self) -> list[str]:
                 return build_image_arguments(
-                    PurePosixPath("/clone/images/bench/Containerfile"),
-                    PurePosixPath("/clone"),
+                    PurePosixPath("images/bench/Containerfile"),
                     "mostt-model-builder-core-bench",
                     TREE_HASH,
                 )
 
-            def test_should_build_its_containerfile_from_the_clone_under_its_tag_and_tree(
+            def test_should_build_its_containerfile_from_its_input_under_its_tag_and_tree(
                 self, build_arguments: list[str]
             ) -> None:
                 assert build_arguments == [
@@ -342,7 +356,7 @@ class TestTheDockerEngine:
                     "--progress",
                     "plain",
                     "--file",
-                    "/clone/images/bench/Containerfile",
+                    "images/bench/Containerfile",
                     "--tag",
                     "mostt-model-builder-core-bench",
                     "--build-arg",
@@ -352,7 +366,7 @@ class TestTheDockerEngine:
                         for name in PROXY_VARIABLE_NAMES
                         for argument in ("--build-arg", f"{name}=")
                     ],
-                    "/clone",
+                    "-",
                 ]
 
             def test_should_set_every_proxy_variable_empty_so_that_dockers_own_never_reaches_it(
@@ -429,7 +443,7 @@ class TestTheDockerEngine:
 
                 monkeypatch.setattr(subprocess, "run", run_until_the_timeout)
                 return partial(
-                    DockerEngine(PurePosixPath("/clone")).inspect_image,
+                    DockerEngine().inspect_image,
                     "mostt-model-builder-core-bench",
                 )
 
@@ -441,6 +455,36 @@ class TestTheDockerEngine:
                     match=r"^docker image inspect gave no answer within 60 s$",
                 ):
                     inspect_act()
+
+    class TestTheBuildImageMethod:
+        class TestWhenAnImageIsBuilt:
+            @pytest.fixture
+            def recorded_build(
+                self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+            ) -> tuple[list[str], bytes]:
+                program_directory = tmp_path / "programs"
+                write_recording_docker(program_directory, tmp_path)
+                monkeypatch.setenv("PATH", f"{program_directory}{os.pathsep}{os.environ['PATH']}")
+                DockerEngine().build_image(
+                    BENCH_IMAGE, TREE_HASH, CONTEXT_ARCHIVE, PurePosixPath(tmp_path / "build.log")
+                )
+                return (
+                    (tmp_path / "arguments.txt").read_text().splitlines(),
+                    (tmp_path / "input.bin").read_bytes(),
+                )
+
+            def test_should_give_docker_the_archive_on_its_standard_input(
+                self, recorded_build: tuple[list[str], bytes]
+            ) -> None:
+                assert recorded_build[1] == CONTEXT_ARCHIVE
+
+            def test_should_find_the_containerfile_in_the_archive_it_reads_as_its_context(
+                self, recorded_build: tuple[list[str], bytes]
+            ) -> None:
+                assert (
+                    read_option_values(recorded_build[0], "--file"),
+                    recorded_build[0][-1],
+                ) == ([str(BENCH_IMAGE.containerfile)], "-")
 
     class TestTheRunLoggedFunction:
         class TestWhenTheProgramPrintsBytesATerminalWouldRead:

@@ -401,7 +401,7 @@ def build_container_images(
         (*CORE_IMAGES, *recipe.images),
         PurePosixPath(work_directory.path),
         GitTree(clone_root),
-        DockerEngine(clone_root),
+        DockerEngine(),
         files,
     )
     for image in built_images:
@@ -420,7 +420,7 @@ def check_fleurs(recipe: JudgedRecipe, work_directory: WorkDirectory, files: Wor
             head_tree=git_tree.find_head_tree(),
             host=read_host_identity(),
         ),
-        DockerEngine(clone_root),
+        DockerEngine(),
         files,
     )
     for language in outcome.report.languages:
@@ -501,9 +501,7 @@ def describe_hypotheses(run_name: str, hypotheses: Sequence[Hypothesis]) -> list
 def run_plain_step(
     recipe: JudgedRecipe, row: StepRow, context: BuildContext, files: WorkFiles
 ) -> None:
-    outcome = run_recipe_step(
-        build_recipe_step_run(recipe, row, context), DockerEngine(PurePosixPath(CLONE_ROOT)), files
-    )
+    outcome = run_recipe_step(build_recipe_step_run(recipe, row, context), DockerEngine(), files)
     describe_outcome(row, outcome)
 
 
@@ -517,7 +515,7 @@ def run_sharded_run(
     context: BuildContext,
     files: WorkFiles,
 ) -> None:
-    engine = DockerEngine(PurePosixPath(CLONE_ROOT))
+    engine = DockerEngine()
     step_runs = [
         build_recipe_step_run(
             recipe,
@@ -553,9 +551,7 @@ def build_candidate_request(recipe: JudgedRecipe, context: BuildContext) -> Cand
 
 
 def inspect_candidate(recipe: JudgedRecipe, context: BuildContext, files: WorkFiles) -> None:
-    assembled = assemble_candidate(
-        build_candidate_request(recipe, context), DockerEngine(PurePosixPath(CLONE_ROOT)), files
-    )
+    assembled = assemble_candidate(build_candidate_request(recipe, context), DockerEngine(), files)
     for copy in assembled.files:
         print(
             f"candidate {copy.name}, {copy.file_format.value}, {copy.size_bytes} bytes, "
@@ -587,7 +583,7 @@ def convert(recipe: JudgedRecipe, context: BuildContext, files: WorkFiles) -> No
             head_tree=context.head_tree,
             host=context.host,
         ),
-        DockerEngine(PurePosixPath(CLONE_ROOT)),
+        DockerEngine(),
         files,
     )
     describe_conversion(row, outcome)
@@ -724,7 +720,7 @@ def clean(
     report_outcome = remove_verification_report(requests[0], files)
     print(f"{CLEAN_OUTCOME_WORDS[report_outcome]} the verification's report", flush=True)
     for request in requests:
-        outcome = clean_step(request, DockerEngine(clone_root), files)
+        outcome = clean_step(request, DockerEngine(), files)
         print(f"{CLEAN_OUTCOME_WORDS[outcome]} {request.row.name}", flush=True)
         if request.row.name == INSPECT_STEP_NAME:
             candidate_outcome = remove_candidate(request, files)
@@ -745,7 +741,7 @@ def lock(work_directory: WorkDirectory, files: WorkFiles) -> None:
             head_tree=GitTree(clone_root).find_head_tree(),
             host=read_host_identity(),
         ),
-        DockerEngine(clone_root),
+        DockerEngine(),
         files,
         lambda line: print(line, flush=True),
     )

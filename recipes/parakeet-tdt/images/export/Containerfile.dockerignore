@@ -1,9 +1,0 @@
-*
-!images/pyproject.toml
-!images/uv.lock
-!recipes/parakeet-tdt/images/export/antlr4-build-requirements.txt
-!recipes/parakeet-tdt/images/export/built-wheels.sha256
-!src/mostt_model_builder
-!recipes/parakeet-tdt/src/mostt_recipe_parakeet_tdt
-**/__pycache__
-**/*.pyc

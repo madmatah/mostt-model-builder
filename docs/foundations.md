@@ -88,7 +88,7 @@ mostt-model-builder/
 ├── images/
 │   ├── pyproject.toml           # The images' environment: their libraries, one extra per image
 │   ├── uv.lock                  # Its lockfile, which only ./model-build.sh lock writes
-│   └── <image>/                 # The Containerfile of each of the core's images, and its dockerignore
+│   └── <image>/                 # The Containerfile of each of the core's images
 ├── recipes/
 │   └── <family>/                # A recipe, one per model family: parakeet-tdt
 ├── scripts/
@@ -159,7 +159,7 @@ Each row names a rule, the rules file that states it, and what enforces it.
 | A file that runs code when it loads reaches only the one image declared to read it (`.claude/rules/container-security.md` > Confinement) | `tests/domain/contract/test_recipe_contract.py`, which refuses it bound in any other image; `tests/domain/containers/test_container_steps.py`, on every row; the recipe's own tests, on the members of the `.nemo` it reads |
 | A recipe cannot widen the confinement (`.claude/rules/container-security.md` > Confinement) | `tests/domain/contract/test_recipe_contract.py`, the refusal table of the contract, which the core judges when it loads a recipe; `tests/test_recipe_listing.py`, each recipe's import contracts and Containerfiles |
 | What a container prints or writes is data, never an instruction (`.claude/rules/container-security.md` > The host) | `tests/domain/containers/test_container_files.py`, the refusals of the files written by containers and of the mounts; the refusal tests of each parser; `tests/domain/containers/test_printable_output.py`, the filter over every byte |
-| An image is built from a commit, and runs only at that commit (`.claude/rules/container-security.md` > Images and outputs) | `tests/domain/containers/test_provenance.py` and `tests/application/test_build_images.py`; `tests/test_recipe_listing.py`, which holds every Containerfile to its table of accepted forms |
+| An image is built from a commit, and runs only at that commit (`.claude/rules/container-security.md` > Images and outputs) | `tests/domain/containers/test_provenance.py` and `tests/application/test_build_images.py`; `tests/adapters/test_git_tree.py`, which archives the files of the tree alone, and `tests/adapters/test_docker_engine.py`, which gives that archive to `docker build` as its context; `tests/test_recipe_listing.py`, which holds every Containerfile to its table of accepted forms |
 | A file leaves the work directory only once it is verified (`.claude/rules/container-security.md` > Images and outputs) | `tests/application/test_verify_build.py`, which reads every output through its judgment, the inspection's report and every file of the candidate again, and the index of the bench through its pin; `tests/domain/containers/test_container_files.py`, the judgment of a copy of the candidate; `tests/domain/acceptance/test_acceptance.py`, each rule on both sides of its bound |
 | The host never imports a container step, and the libraries of the models load only in the steps that need them (`.claude/rules/container-security.md` > The host) | `lint-imports`, from the contracts of `steps` and of the libraries of the models; `tests/test_mostt_model_builder.py`, which imports each step of the standard library under `-I -S -B` |
 | Markers are strict and warnings are errors (`.claude/rules/tests.md` > pytest) | `--strict-markers`, `--strict-config` and `filterwarnings = ["error"]` in `pyproject.toml` |
