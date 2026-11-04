@@ -37,6 +37,6 @@
 
 ### Hygiene
 
-- [ ] No secret, credential, `.env` file or personal data is committed.
-- [ ] No project-management material is committed: status, roadmap, decisions, handoffs, notes, `TODO`.
+- [ ] No secret, credential, `.env` file or personal data is committed, apart from what credits a work.
+- [ ] No project-management material is committed: status, roadmap, decisions, handoffs, notes, `TODO`, nor where that material lives.
 - [ ] No file is committed by accident: build output, logs, temporary captures, model weights, datasets or exported models.
