@@ -17,12 +17,12 @@ The code of the models and of their frameworks is treated as untrusted: every st
 ## Requirements
 
 - Python 3.12 on the host, as `python3`, which runs the command line on its standard library alone;
-- curl, which downloads the sources;
+- curl, which downloads the sources, and the files of a published revision for `check-published`;
 - git, with which `images` reads the commit and its tree, and the GitHub CLI (`gh`), which the pull requests use;
 - [uv](https://docs.astral.sh/uv/) 0.13.7, the version CI runs, which finds or downloads Python 3.12, the version `.python-version` names;
 - Docker, with BuildKit, its default builder, for the containers of the build and their images;
 - the NVIDIA Container Toolkit 1.17.8 or later, with its Container Device Interface (CDI) set up, `nvidia.com/gpu=all`, for the steps on the GPU;
-- disk: about 27 GB of images, 4.5 GB of sources and 11 GB of work directory for a whole build.
+- disk: about 27 GB of images, 4.5 GB of sources and 11 GB of work directory for a whole build, and 5.9 GB more for the downloads of `check-published`.
 
 ## Getting started
 
@@ -115,6 +115,13 @@ Once the build passes, `card` verifies it again, from a clean clone, and writes 
 ./model-build.sh --work /data/model-build --recipe parakeet-tdt card
 ```
 
+Once the files are published, `check-published` downloads each file of the published revision, without a token, into `sources/` in the work directory, and checks it against the build's own bytes and its card; it then prints the revision for mostt to pin:
+
+```sh
+./model-build.sh --work /data/model-build --recipe parakeet-tdt check-published \
+    --repository <user>/parakeet-ultra-onnx --revision <commit>
+```
+
 `docs/model-build.md` describes each step and the reasons behind its method.
 
 ## Commands
@@ -135,6 +142,7 @@ Once the build passes, `card` verifies it again, from a clean clone, and writes 
 | `./model-build.sh --work <dir> --recipe <name> verify` | Measures every run on FLEURS, holds the parities, the runs and their comparisons to the recipe's rules, and writes `verification.json`. |
 | `./model-build.sh --work <dir> --recipe <name> build` | Runs every step of the recipe's build, in its order, then `verify`. |
 | `./model-build.sh --work <dir> --recipe <name> card` | Verifies the build again from a clean clone, renders its model card and writes it to `runs/<recipe>/<commit>/README.md` for review. |
+| `./model-build.sh --work <dir> --recipe <name> check-published --repository <namespace>/<name> --revision <commit>` | Downloads each file of a published revision without a token, checks it against the build's own bytes and its card, and prints the revision that mostt pins. |
 | `./model-build.sh --work <dir> --recipe <name> clean [<step>]` | Removes the outputs, the request and the log of a step at HEAD's commit, or of every step of the core and the recipe, and the verification's report and the model card. |
 | `./model-build.sh --work <dir> lock` | Resolves the lock of the images' libraries in its container, checks it, prints its change and writes it to `images/environment.lock`. |
 | `uv sync --frozen` | Installs the development tools from the lockfile, without changing it. |

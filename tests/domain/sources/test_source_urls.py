@@ -1,7 +1,7 @@
 import pytest
 
 from mostt_model_builder.domain.sources.source_pins import RepositoryType, SourcePin
-from mostt_model_builder.domain.sources.source_urls import build_source_url
+from mostt_model_builder.domain.sources.source_urls import build_source_url, build_tree_url
 
 REVISION = "70bb2e84b976b7e960aa89f1c648e09c59f894dd"
 SHA256 = "0" * 64
@@ -49,4 +49,16 @@ class TestTheSourceUrls:
                 assert source_url == (
                     f"https://huggingface.co/moondream/parakeet-ultra/resolve/{REVISION}/"
                     "model.safetensors"
+                )
+
+    class TestTheBuildTreeUrlFunction:
+        class TestWhenGivenAModelRepositoryAndARevision:
+            @pytest.fixture
+            def tree_url(self) -> str:
+                return build_tree_url("example-user/parakeet-ultra-onnx", REVISION)
+
+            def test_should_list_the_files_of_the_revision_on_the_hub(self, tree_url: str) -> None:
+                assert tree_url == (
+                    "https://huggingface.co/api/models/example-user/parakeet-ultra-onnx/tree/"
+                    f"{REVISION}"
                 )
