@@ -189,7 +189,6 @@ The conventions serve one aim: the code explains itself, so that it needs no com
 - **A header that says what the change achieves, under the scope it belongs to,** lets a reader find a change in `git log --oneline` without opening it: the diff already lists the files.
 - **A footer that holds only what tools read** lets release notes and the issue tracker trust it. A trailer naming the tool that typed a change would add a line to every message and say nothing of its reason.
 - **"Rebase and merge"** lands each commit as written, after the review ([Code review](#code-review)) and CI ([Technology stack](#technology-stack)).
-- **One writer for `.pm/`,** the coordinating session, keeps its commits from racing, while each session in parallel still writes the plan of its own branch, a file that no other session touches.
 
 ### Plans
 
@@ -201,7 +200,7 @@ The conventions serve one aim: the code explains itself, so that it needs no com
 - **The code follows the plan, or the plan changes first,** since a design changed while it is built escapes the critic.
 - **Within one planning, the planner answers the critic itself,** since it already holds the code the plan rests on, in a context far smaller than an implementer's: a new planner would read it all again.
 - **A change that leaves the design as it is goes without a plan,** such as a bug fix inside one function: a plan and its check, both at `xhigh`, would cost more than the mistakes they could catch there.
-- **The plan lives in `.pm/`,** since the repository holds only the current state, and a plan describes work to come. Each plan has one writer, the session that owns its branch, so plans written in parallel never collide.
+- **The plan lives outside the repository,** since the repository holds only the current state, and a plan describes work to come. Each plan has one writer, the session that owns its branch, so plans written in parallel never collide.
 
 ### Agent guidance
 
@@ -214,7 +213,7 @@ Agents work from four kinds of documents, each with one job, so that a statement
 - **This document holds the design and its reasons,** and states no rule, so that a rule changes in one place.
 - **An expert reviewer reads at least the rules files of its domain,** one hop away, so that it never chases a rule across documents. It starts without the session's `CLAUDE.md` files, which would cost it tokens on every turn and could steer it: the rules that apply are the checkout's.
 - **Each agent runs on the model and at the effort its task needs,** because every turn of every run pays for both, and a review multiplies the runs: Opus where a miss costs most or where code is written, at `xhigh` only for plans ([Plans](#plans)), Sonnet where written rules guide the check, Haiku for search. A low effort saves Haiku and Sonnet little and costs them much quality, so they never run at it.
-- **The history of a decision lives in `.pm/`,** a private repository, so the documents here describe only the present, with its reasons.
+- **The history of a decision lives outside the repository,** with the project-management material, so the documents here describe only the present, with its reasons.
 
 ## Testing
 
