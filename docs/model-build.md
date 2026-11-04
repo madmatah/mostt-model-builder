@@ -4,7 +4,7 @@ This document describes the build part by part: what each command does, and the 
 
 ## The core
 
-The core holds what every model family shares. Built: the work directory, the sources, the confined containers and their boundary with the host, the images and their lock, the check of the FLEURS bench, the recipe contract and its runs, the formats with their checks, the conversions of an ONNX graph, the candidate and its inspection, the parity reports, and the verification of a build against FLEURS, with the bytes it accepted, which the sections below describe.
+The core holds what every model family shares. Built: the work directory, the sources, the confined containers and their boundary with the host, the images and their lock, the check of the FLEURS bench, the recipe contract and its runs, the formats with their checks, the conversions of an ONNX graph, the candidate and its inspection, the parity reports, the verification of a build against FLEURS, with the bytes it accepted, and the model card, which the sections below describe.
 
 Every command runs as `./model-build.sh --work <dir> --recipe <name> <command>`, on the host's Python and its standard library, isolated from the environment and the site packages. `--recipe` names the model family to build, [Recipes](#recipes) lists them, and every command needs it but `lock`, which resolves the libraries of every recipe's images at once.
 
@@ -247,6 +247,28 @@ The published files are the contract with mostt, which pins them by hash: their 
 | `decoder_joint-model.onnx`, `decoder_joint-model.fp16.onnx`, `decoder_joint-model.bf16.onnx`, `decoder_joint-model.int8.onnx` | `onnx`, the FP32 decoder and joint, the same file under each name, since onnx-asr picks one file per quantization |
 | `vocab.txt` | `text`, the vocabulary of Parakeet TDT 0.6B v3, at the SHA-256 `d58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d` |
 | `config.json` | `text`: `{"model_type": "nemo-conformer-tdt", "features_size": 128, "subsampling_factor": 8, "max_tokens_per_step": 10}`, which onnx-asr reads, since its defaults would choose the wrong preprocessor |
+
+## The publication
+
+### The model card
+
+The card is the `README.md` of the Hugging Face repository that the files are published in, `domain/publication/model_card.py`: the recipe's template, a `string.Template` of the standard library, with each placeholder filled from the build's records, the same bytes for the same records, since it holds no date and writes every number in a fixed format. The template holds the prose: the front matter that the Hub reads, the summary, the languages and limitations, how the files were built, the usage and the license and attribution; the core fills what the build computes. A placeholder that the core does not fill fails the render, which is the template's only check. The core takes the model's description from the recipe ([The recipe contract](#the-recipe-contract)), the pins, a verification with the size of every file of the candidate, the runs and the conversions of the contract, and the libraries that measured the variants, each with its version on each device, `domain/publication/measuring_libraries.py`: the libraries that the description names, as the images of the variants' runs pin them, the images of a reference framework's runs left out. It reads by variant, from the summary of each, `domain/publication/variant_summaries.py`. Its placeholders:
+
+| Placeholder | Holds |
+|---|---|
+| `title` | The description's title |
+| `variant_table` | A table for choosing a variant: each variant under the description's name for it, the devices its runs used, its size, the sum of the files it loads, the files of every variant included, in GB, 10⁹ bytes, as the Hub shows sizes, and one word error rate per language that the rated runs measured, in percent, without the unknown tokens, which the vocabulary cannot write. A variant's rated run is its run on the CPU, or on the GPU when it has none, since the runtime and the hardware, not the files, make the devices differ |
+| `variant_sections` | A section per variant: its own files; the description's note on it, if any; one sentence on its differences from the runs its rated run is compared with, from each comparison that judges the rated run against a run of another variant or of a reference framework, and each that judges a reference framework's run against the rated run, its difference turned around, each with its differences in points per language and its verdict, a reference run named by the description's title for it; and its conversion, or none for the exported graph |
+| `shared_files` | The files that serve every variant, when the candidate has more than one |
+| `measured_languages` | The languages that FLEURS measured |
+| `sources` | Each pinned repository, once, linked on the Hub at its revision |
+| `measured_with` | The versions of the libraries that measured the rates, on each device |
+| `build_commit` | The commit of this repository that built the files, so that the card links the code that built them |
+| One per pinned revision | The revision at which the pins name the repository that the description gives for it, such as an upstream work that the attribution links |
+
+The card gives no file's size or SHA-256, nor the libraries and base images of the tooling: the Hub shows each file's size and hash, a hash beside its file in the same repository proves nothing, and the integrity of the published files rests on mostt's pins of their hashes and on the check of the published revision against the build. A variant without a name in the description, a reference run that a sentence names without a title, a variant without a run, a pinned revision that no pin names or that takes a placeholder the core fills, and a placeholder of the template that nothing fills fail the render, with `CardError` or `VariantSummaryError`, since the card would have no word for them.
+
+CC BY 4.0 asks a work that adapts licensed material to credit its creator, keep the notices its card gives, link to it, and say that it was modified, its section 3(a)(1). The template therefore links each upstream work on the Hub at its pinned revision, and links the code of this repository at the commit that built the files, which must therefore be on GitHub's `main` before the card is written, since a rebased or unpushed commit leaves the link without a target and a published card is held to its reviewed bytes. The recipe's test of its card renders it from fixed measures and compares it with a committed copy, so that a change of the card shows in its diff.
 
 ## Recipes
 
