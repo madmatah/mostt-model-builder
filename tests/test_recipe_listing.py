@@ -31,8 +31,8 @@ GIT_VARIABLE_PREFIX = "GIT_"
 RECIPE_NAMES = sorted(RECIPES)
 # A manifest or a lock is a tree of TOML tables, which the tests walk by their known keys.
 MANIFEST: dict[str, Any] = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text())
-IMAGES_MANIFEST: dict[str, Any] = tomllib.loads((REPO_ROOT / "images/pyproject.toml").read_text())
-IMAGES_LOCK: dict[str, Any] = tomllib.loads((REPO_ROOT / "images/uv.lock").read_text())
+IMAGES_MANIFEST: dict[str, Any] = tomllib.loads((REPO_ROOT / "images/environment.toml").read_text())
+IMAGES_LOCK: dict[str, Any] = tomllib.loads((REPO_ROOT / "images/environment.lock").read_text())
 SOURCES_FILES = [REPO_ROOT / "sources.toml", *sorted(RECIPES_DIRECTORY.glob("*/sources.toml"))]
 # The one source of the build that runs code when it loads: the .nemo of Parakeet TDT 0.6B v3,
 # whose configuration and tokenizer NeMo builds the model from.
@@ -80,8 +80,11 @@ ACCEPTED_FORMS = {
         rf"COPY recipes/(?P<recipe>{NAME})/src/(?P<package>mostt_recipe_[a-z0-9_]+) "
         r"/opt/model-builder/recipes/(?P=recipe)/src/(?P=package)"
     ),
-    "the images' manifest and lock": re.compile(
-        r"COPY images/pyproject\.toml images/uv\.lock /opt/model-builder/images/"
+    "the images' manifest, under the name by which uv finds a project": re.compile(
+        r"COPY images/environment\.toml /opt/model-builder/images/pyproject\.toml"
+    ),
+    "the images' lock, under the name by which uv reads a lock": re.compile(
+        r"COPY images/environment\.lock /opt/model-builder/images/uv\.lock"
     ),
     "the uv binary from the uv image, by its digest": re.compile(
         rf"COPY --from={re.escape(UV_IMAGE)} /uv /usr/local/bin/uv"

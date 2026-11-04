@@ -2,7 +2,8 @@ FROM docker.io/library/python:3.12-slim-bookworm@sha256:6a0e06f5ba0b373d051aabd3
 COPY --from=ghcr.io/astral-sh/uv:0.13.7@sha256:96f40d3904aad8d0bd010539001d36c8e2188b981e1334471a90c4a1d93bb490 /uv /usr/local/bin/uv
 ENV UV_FROZEN=1 UV_NO_CACHE=1 UV_LINK_MODE=copy UV_COMPILE_BYTECODE=1 UV_PYTHON=/usr/local/bin/python3.12 UV_PYTHON_DOWNLOADS=never UV_PROJECT_ENVIRONMENT=/opt/venv
 WORKDIR /opt/model-builder/images
-COPY images/pyproject.toml images/uv.lock /opt/model-builder/images/
+COPY images/environment.toml /opt/model-builder/images/pyproject.toml
+COPY images/environment.lock /opt/model-builder/images/uv.lock
 RUN uv sync --frozen --no-dev --no-install-project --no-build --extra core-onnx-convert
 COPY src/mostt_model_builder /opt/model-builder/src/mostt_model_builder
 ARG TREE_HASH

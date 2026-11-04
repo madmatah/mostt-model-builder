@@ -242,7 +242,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
         LOCK_STEP_NAME,
         add_help=False,
         help="resolve the lock of the images' environment in its container, check it, print "
-        "its change, and write it to images/uv.lock",
+        "its change, and write it to images/environment.lock",
     )
     commands.add_parser(
         IMAGES_COMMAND,

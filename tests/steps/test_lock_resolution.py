@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from mostt_model_builder.domain.lock.lock_check import LOCK_FILE_NAME, MANIFEST_FILE_NAME
 from mostt_model_builder.steps.lock_resolution import build_lock_arguments, resolve_lock
 
 MANIFEST = b'[project]\nname = "mostt-model-builder-images"\n'
@@ -18,9 +19,9 @@ FAKE_UV = (
 def write_request(directory: Path, has_lock: bool) -> Path:
     request = directory / "request"
     request.mkdir()
-    (request / "pyproject.toml").write_bytes(MANIFEST)
+    (request / MANIFEST_FILE_NAME).write_bytes(MANIFEST)
     if has_lock:
-        (request / "uv.lock").write_bytes(COMMITTED_LOCK)
+        (request / LOCK_FILE_NAME).write_bytes(COMMITTED_LOCK)
     return request
 
 
@@ -44,7 +45,7 @@ class TestTheLockResolution:
     class TestTheResolveLockFunction:
         class TestWhenUvWritesANewLock:
             @pytest.fixture
-            def resolved(self, tmp_path: Path) -> tuple[str, bytes]:
+            def resolved(self, tmp_path: Path) -> tuple[str, bytes, list[str], list[str]]:
                 request = write_request(tmp_path, has_lock=True)
                 (tmp_path / "output").mkdir()
                 resolve_lock(
@@ -54,16 +55,28 @@ class TestTheLockResolution:
                     [sys.executable, "-I", "-c", FAKE_UV],
                 )
                 return (
-                    (tmp_path / "output" / "uv.lock").read_text(),
+                    (tmp_path / "output" / LOCK_FILE_NAME).read_text(),
                     (tmp_path / "project" / "pyproject.toml").read_bytes(),
+                    sorted(path.name for path in (tmp_path / "project").iterdir()),
+                    sorted(path.name for path in (tmp_path / "output").iterdir()),
                 )
 
             def test_should_let_uv_update_the_committed_lock_and_copy_the_new_one_into_the_output(
-                self, resolved: tuple[str, bytes]
+                self, resolved: tuple[str, bytes, list[str], list[str]]
             ) -> None:
                 assert resolved[0] == COMMITTED_LOCK.decode() + RESOLVED_LINE
 
-            def test_should_work_on_a_copy_of_the_manifest(
-                self, resolved: tuple[str, bytes]
+            def test_should_give_uv_a_copy_of_the_manifest_under_the_name_it_finds_a_project_by(
+                self, resolved: tuple[str, bytes, list[str], list[str]]
             ) -> None:
                 assert resolved[1] == MANIFEST
+
+            def test_should_write_the_new_lock_under_a_name_that_no_uv_on_the_host_reads(
+                self, resolved: tuple[str, bytes, list[str], list[str]]
+            ) -> None:
+                assert resolved[3] == ["environment.lock"]
+
+            def test_should_leave_the_project_only_the_files_uv_reads(
+                self, resolved: tuple[str, bytes, list[str], list[str]]
+            ) -> None:
+                assert resolved[2] == ["pyproject.toml", "uv.lock"]

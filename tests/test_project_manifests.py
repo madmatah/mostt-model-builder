@@ -1,18 +1,25 @@
+import os
 import re
+import subprocess
 import tomllib
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import pytest
 
+from mostt_model_builder.adapters.git_tree import drop_git_variables
 from mostt_model_builder.domain.containers.base_images import UV_VERSION
 from mostt_model_builder.domain.lock.declared_requirements import (
     DeclaredRequirement,
     read_declared_requirements,
 )
+from mostt_model_builder.domain.lock.lock_check import MANIFEST_FILE_NAME
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 HOST_MANIFEST_PATH = REPO_ROOT / "pyproject.toml"
-IMAGES_MANIFEST_PATH = REPO_ROOT / "images" / "pyproject.toml"
+IMAGES_MANIFEST_PATH = REPO_ROOT / "images" / MANIFEST_FILE_NAME
+GIT_TIMEOUT_S = 60
+# uv 0.13.7 uses a lock with --frozen even without a project beside it.
+UV_FILE_NAMES = {"pyproject.toml", "uv.toml", "uv.lock"}
 IMAGES_UV_KEYS = {
     "package",
     "no-build",
@@ -106,6 +113,18 @@ def list_unpinned_requirements(requirements: list[str]) -> list[str]:
     ]
 
 
+def list_tracked_paths(repository: Path) -> list[str]:
+    tracked_paths = subprocess.run(
+        ["git", "-C", str(repository), "ls-files", "-z"],
+        capture_output=True,
+        check=True,
+        text=True,
+        env=drop_git_variables(os.environ),
+        timeout=GIT_TIMEOUT_S,
+    ).stdout
+    return [path for path in tracked_paths.split("\0") if path]
+
+
 class TestTheProjectManifests:
     class TestWhenTheHostManifestIsRead:
         @pytest.fixture
@@ -130,6 +149,18 @@ class TestTheProjectManifests:
             )
             assert len(development_requirements) > 0
             assert list_unpinned_requirements(development_requirements) == []
+
+    class TestWhenTheTrackedFilesAreListedByName:
+        @pytest.fixture
+        def tracked_paths(self) -> list[str]:
+            return list_tracked_paths(REPO_ROOT)
+
+        def test_should_track_uv_files_only_at_the_root_so_that_uv_finds_the_hosts_project_alone(
+            self, tracked_paths: list[str]
+        ) -> None:
+            assert sorted(
+                path for path in tracked_paths if PurePosixPath(path).name in UV_FILE_NAMES
+            ) == ["pyproject.toml", "uv.lock"]
 
     class TestWhenTheImagesManifestIsRead:
         @pytest.fixture
@@ -179,7 +210,7 @@ class TestTheProjectManifests:
         ) -> None:
             assert read_table(images_manifest, "tool.uv")["conflicts"] == CONFLICTS
 
-        def test_should_require_the_uv_of_the_uv_image_so_any_other_uv_refuses_the_project(
+        def test_should_require_the_uv_of_the_uv_image_so_the_lock_moves_only_with_it(
             self, images_manifest: dict[str, object]
         ) -> None:
             assert read_table(images_manifest, "tool.uv")["required-version"] == f"=={UV_VERSION}"

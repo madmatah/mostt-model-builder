@@ -46,6 +46,7 @@ from mostt_model_builder.domain.containers.container_steps import (
 )
 from mostt_model_builder.domain.containers.provenance import ProvenanceError
 from mostt_model_builder.domain.containers.step_peaks import StepPeaks, render_step_peaks
+from mostt_model_builder.domain.lock.lock_check import LOCK_FILE_NAME, MANIFEST_FILE_NAME
 
 WORK_ROOT = PurePosixPath("/data/builds/work")
 HEAD_TREE = "3f1d1ffe79bc3336eb583331cfbf9b189fd45f01"
@@ -66,14 +67,14 @@ HOST = HostIdentity(USER_ID, GROUP_ID, 20, HostAccounts(False, (), ()))
 REQUEST = StepRunRequest(
     row=LOCK_ROW,
     placement=PLACEMENT,
-    request_files={"pyproject.toml": MANIFEST_CONTENT},
+    request_files={MANIFEST_FILE_NAME: MANIFEST_CONTENT},
     source_paths={},
     work_root=WORK_ROOT,
     head_tree=HEAD_TREE,
     host=HOST,
 )
 GOOD_OUTPUTS = {
-    "uv.lock": build_step_output(LOCK_CONTENT),
+    LOCK_FILE_NAME: build_step_output(LOCK_CONTENT),
     PEAKS_FILE_NAME: build_step_output(render_step_peaks(PEAKS)),
 }
 LOCK_ROW_SOURCE = SourceReference("google/fleurs", "data/fr_fr/test.tsv")
@@ -170,7 +171,7 @@ class TestTheRunStep:
             def test_should_give_back_the_size_of_its_other_outputs(
                 self, step_record: CompletedStep
             ) -> None:
-                assert step_record.outputs.sizes_bytes == {"uv.lock": len(LOCK_CONTENT)}
+                assert step_record.outputs.sizes_bytes == {LOCK_FILE_NAME: len(LOCK_CONTENT)}
 
             def test_should_start_the_images_python_isolated_on_the_bootstrap_of_the_image(
                 self, step_record: CompletedStep
@@ -189,7 +190,7 @@ class TestTheRunStep:
             ) -> None:
                 assert (
                     step_record.files.entries[REQUEST_DIRECTORY].permission_bits,
-                    step_record.files.file_modes[REQUEST_DIRECTORY / "pyproject.toml"],
+                    step_record.files.file_modes[REQUEST_DIRECTORY / MANIFEST_FILE_NAME],
                 ) == (0o750, 0o640)
 
             def test_should_keep_the_log_outside_every_output_directory(
@@ -203,13 +204,13 @@ class TestTheRunStep:
             @pytest.fixture
             def step_outputs(self) -> StepOutputs:
                 files = build_files()
-                request = replace(REQUEST, parsed_output_names=frozenset({"uv.lock"}))
+                request = replace(REQUEST, parsed_output_names=frozenset({LOCK_FILE_NAME}))
                 return run_step(request, build_engine(files), files)
 
             def test_should_give_back_its_content_read_through_its_descriptor(
                 self, step_outputs: StepOutputs
             ) -> None:
-                assert step_outputs.contents == {"uv.lock": LOCK_CONTENT}
+                assert step_outputs.contents == {LOCK_FILE_NAME: LOCK_CONTENT}
 
         class TestWhenTheHostParsesAnOutputTheStepDoesNotDeclare:
             @pytest.fixture
@@ -343,27 +344,28 @@ class TestTheRunStep:
                 pytest.param(
                     {
                         **GOOD_OUTPUTS,
-                        "uv.lock": (
-                            replace(GOOD_OUTPUTS["uv.lock"][0], permission_bits=0o600),
+                        LOCK_FILE_NAME: (
+                            replace(GOOD_OUTPUTS[LOCK_FILE_NAME][0], permission_bits=0o600),
                             LOCK_CONTENT,
                         ),
                     },
-                    "the output uv.lock has the mode 0600, not 0640",
+                    f"the output {LOCK_FILE_NAME} has the mode 0600, not 0640",
                     id="another mode",
                 ),
                 pytest.param(
                     {
                         **GOOD_OUTPUTS,
-                        "uv.lock": (
-                            replace(GOOD_OUTPUTS["uv.lock"][0], size_bytes=16 * 2**20 + 1),
+                        LOCK_FILE_NAME: (
+                            replace(GOOD_OUTPUTS[LOCK_FILE_NAME][0], size_bytes=16 * 2**20 + 1),
                             LOCK_CONTENT,
                         ),
                     },
-                    "the output uv.lock holds 16777217 bytes, beyond its bound of 16777216",
+                    f"the output {LOCK_FILE_NAME} holds 16777217 bytes, "
+                    "beyond its bound of 16777216",
                     id="a file beyond its size bound",
                 ),
                 pytest.param(
-                    {"uv.lock": GOOD_OUTPUTS["uv.lock"]},
+                    {LOCK_FILE_NAME: GOOD_OUTPUTS[LOCK_FILE_NAME]},
                     "the step did not write its output peaks.json",
                     id="a missing output",
                 ),
