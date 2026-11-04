@@ -109,6 +109,12 @@ docker image rm mostt-model-builder-core-bench mostt-model-builder-core-uv \
 ./model-build.sh --work /data/model-build --recipe parakeet-tdt verify
 ```
 
+Once the build passes, `card` verifies it again, from a clean clone, and writes its model card, the `README.md` of its Hugging Face repository, to `runs/<recipe>/<commit>/README.md` in the work directory: read it before anything is published. It publishes nothing.
+
+```sh
+./model-build.sh --work /data/model-build --recipe parakeet-tdt card
+```
+
 `docs/model-build.md` describes each step and the reasons behind its method.
 
 ## Commands
@@ -128,7 +134,8 @@ docker image rm mostt-model-builder-core-bench mostt-model-builder-core-uv \
 | `./model-build.sh --work <dir> --recipe parakeet-tdt step transcribe` | Transcribes FLEURS fr and en with onnx-asr from the candidate, on the CPU and on the GPU. |
 | `./model-build.sh --work <dir> --recipe <name> verify` | Measures every run on FLEURS, holds the parities, the runs and their comparisons to the recipe's rules, and writes `verification.json`. |
 | `./model-build.sh --work <dir> --recipe <name> build` | Runs every step of the recipe's build, in its order, then `verify`. |
-| `./model-build.sh --work <dir> --recipe <name> clean [<step>]` | Removes the outputs, the request and the log of a step at HEAD's commit, or of every step of the core and the recipe, and the verification's report. |
+| `./model-build.sh --work <dir> --recipe <name> card` | Verifies the build again from a clean clone, renders its model card and writes it to `runs/<recipe>/<commit>/README.md` for review. |
+| `./model-build.sh --work <dir> --recipe <name> clean [<step>]` | Removes the outputs, the request and the log of a step at HEAD's commit, or of every step of the core and the recipe, and the verification's report and the model card. |
 | `./model-build.sh --work <dir> lock` | Resolves the lock of the images' libraries in its container, checks it, prints its change and writes it to `images/environment.lock`. |
 | `uv sync --frozen` | Installs the development tools from the lockfile, without changing it. |
 | `uv run --locked pytest` | Runs the tests. |

@@ -26,6 +26,7 @@ from mostt_model_builder.domain.publication.variant_summaries import (
 from mostt_model_builder.domain.sources.source_pins import RepositoryType, SourcePin
 
 CARD_ENCODING = "utf-8"
+MODEL_CARD_MAX_SIZE_BYTES = 2**20
 HUB_URL = "https://huggingface.co/"
 BYTES_PER_GIGABYTE = 10**9
 
@@ -75,6 +76,15 @@ def render_model_card(inputs: CardInputs) -> bytes:
     if unfilled:
         raise CardError(f"the template holds the placeholder {unfilled[0]}, which nothing fills")
     return template.substitute(fills).encode(CARD_ENCODING)
+
+
+def refuse_card_of_changed_clone(changed_paths: Sequence[str]) -> None:
+    if changed_paths:
+        raise CardError(
+            f"the clone holds {len(changed_paths)} uncommitted changes or untracked files, such "
+            f"as {changed_paths[0]!a}: the card states the libraries and the code of HEAD's "
+            "commit"
+        )
 
 
 def find_revision(repository: str, revisions: Mapping[str, str]) -> str:
