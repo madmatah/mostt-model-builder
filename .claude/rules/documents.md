@@ -12,7 +12,7 @@ paths:
 
 ## Present tense
 
-- **Documents describe the present.** They keep the reasons behind a choice and drop its history. How a decision came about lives in `.pm/`, whose notes are history by design and follow none of these rules.
+- **Documents describe the present.** They keep the reasons behind a choice and drop its history. How a decision came about lives with the project-management material, outside the repository, whose notes are history by design and follow none of these rules.
 - **What is not built says so.** A built component is described in the present tense, with no label. A planned one is labeled "(planned)".
 - **An unsettled choice is a hypothesis,** written "(hypothesis: …)" with the test or the measurement that will settle it.
 
