@@ -4,7 +4,7 @@ This document describes the build part by part: what each command does, and the 
 
 ## The core
 
-The core holds what every model family shares. Built: the work directory, the sources, the confined containers and their boundary with the host, the images and their lock, the check of the FLEURS bench, the recipe contract and its runs, the formats with their checks, the conversions of an ONNX graph, the candidate and its inspection, the parity reports, the verification of a build against FLEURS, with the bytes it accepted, and the model card, which the sections below describe.
+The core holds what every model family shares. Built: the work directory, the sources, the confined containers and their boundary with the host, the images and their lock, the check of the FLEURS bench, the recipe contract and its runs, the formats with their checks, the conversions of an ONNX graph, the candidate and its inspection, the parity reports, the verification of a build against FLEURS, with the bytes it accepted, and the model card with its writing for review, which the sections below describe.
 
 Every command runs as `./model-build.sh --work <dir> --recipe <name> <command>`, on the host's Python and its standard library, isolated from the environment and the site packages. `--recipe` names the model family to build, [Recipes](#recipes) lists them, and every command needs it but `lock`, which resolves the libraries of every recipe's images at once.
 
@@ -23,6 +23,7 @@ Its layout:
 | `runs/<recipe>/<commit>/requests/<step>/` | The request the host writes for that step, in mode 0750 |
 | `runs/<recipe>/<commit>/logs/<step>.log` | What its container printed, through the printable filter, and the log of its cleaning, `clean-<step>.log` |
 | `runs/<recipe>/<commit>/candidate/` | The candidate, the host's own copies of the files its recipe names, in mode 0444 |
+| `runs/<recipe>/<commit>/README.md` | The model card that `card` writes for review, in mode 0444 |
 | `lock/<n>/` | A run of `lock`: its `request/`, the copies of the images' manifest and lock, its `output/`, the new lock and its peaks, and its `logs/`, a new number each time |
 | `image-builds/<image>.log` | The output of the last build of each image, through the printable filter |
 
@@ -269,6 +270,17 @@ The card is the `README.md` of the Hugging Face repository that the files are pu
 The card gives no file's size or SHA-256, nor the libraries and base images of the tooling: the Hub shows each file's size and hash, a hash beside its file in the same repository proves nothing, and the integrity of the published files rests on mostt's pins of their hashes and on the check of the published revision against the build. A variant without a name in the description, a reference run that a sentence names without a title, a variant without a run, a pinned revision that no pin names or that takes a placeholder the core fills, and a placeholder of the template that nothing fills fail the render, with `CardError` or `VariantSummaryError`, since the card would have no word for them.
 
 CC BY 4.0 asks a work that adapts licensed material to credit its creator, keep the notices its card gives, link to it, and say that it was modified, its section 3(a)(1). The template therefore links each upstream work on the Hub at its pinned revision, and links the code of this repository at the commit that built the files, which must therefore be on GitHub's `main` before the card is written, since a rebased or unpushed commit leaves the link without a target and a published card is held to its reviewed bytes. The recipe's test of its card renders it from fixed measures and compares it with a committed copy, so that a change of the card shows in its diff.
+
+### The card for review
+
+`./model-build.sh --work <dir> --recipe <name> card` prepares the publication, `application/prepare_publication.py`:
+
+1. it refuses a clone with any change, untracked files included, since the card states the versions that HEAD's `images/environment.toml` pins;
+2. it refuses a recipe that describes no model, naming the missing description;
+3. it runs the verification again, which writes the same `verification.json` and hashes every file of the candidate, and refuses a build that it does not accept;
+4. it renders the recipe's template from that verification, with the versions of the libraries the recipe names, as the images of its variants' runs pin them, so that the card's "accepted" and "passed its comparisons" hold.
+
+It then writes `runs/<recipe>/<commit>/README.md`, in mode 0444, for the user and the reviewers to read before anything leaves the machine. A card already there that equals the new render is kept, and `card` says it is unchanged; one that differs is refused, naming `clean`, so that the card on disk is always the render of the records beside it. `clean` removes the card, whatever step it cleans, as it removes `verification.json`. `card` publishes nothing.
 
 ## Recipes
 

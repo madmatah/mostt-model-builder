@@ -20,6 +20,7 @@ from mostt_model_builder.application.clean_run import (
     CleanRequest,
     clean_step,
     remove_candidate,
+    remove_model_card,
     remove_verification_report,
 )
 from mostt_model_builder.application.run_step import HostIdentity, ImageFacts, StepError
@@ -58,6 +59,7 @@ LINK_FACTS = FileFacts(FileKind.LINK, USER_ID, 0o777, 10, 1)
 CANDIDATE_DIRECTORY = WORK_ROOT / RUN_DIRECTORY / "candidate"
 CANDIDATE_FILE_NAMES = ("encoder-model.onnx", "vocab.txt")
 REPORT_PATH = WORK_ROOT / RUN_DIRECTORY / "verification.json"
+CARD_PATH = WORK_ROOT / RUN_DIRECTORY / "README.md"
 HOST = HostIdentity(USER_ID, GROUP_ID, 20, HostAccounts(False, (), ()))
 INSPECT_REQUEST = CleanRequest(INSPECT_ROW, RECIPE_NAME, COMMIT, WORK_ROOT, HEAD_TREE, HOST)
 REQUEST = CleanRequest(FLEURS_CHECK_ROW, RECIPE_NAME, COMMIT, WORK_ROOT, HEAD_TREE, HOST)
@@ -404,3 +406,27 @@ class TestTheCleanRun:
                     ),
                 ):
                     remove_act()
+
+    class TestTheRemoveModelCardFunction:
+        class TestWhenTheRunHoldsTheCardForReview:
+            @pytest.fixture
+            def removal(self) -> ReportRemoval:
+                files = build_files_with_a_run()
+                files.add_file(CARD_PATH, build_file_facts(5, 0o444), b"# card")
+                return ReportRemoval(remove_model_card(REQUEST, files), files)
+
+            def test_should_remove_it_since_it_was_rendered_from_the_verification(
+                self, removal: ReportRemoval
+            ) -> None:
+                assert (CARD_PATH in removal.files.entries, removal.outcome) == (
+                    False,
+                    CleanOutcome.CLEANED,
+                )
+
+        class TestWhenTheRunHoldsNoCard:
+            @pytest.fixture
+            def outcome(self) -> CleanOutcome:
+                return remove_model_card(REQUEST, build_files_with_a_run())
+
+            def test_should_say_there_was_nothing_to_clean(self, outcome: CleanOutcome) -> None:
+                assert outcome is CleanOutcome.NOTHING_TO_CLEAN

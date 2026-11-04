@@ -18,6 +18,7 @@ from mostt_model_builder.domain.containers.container_steps import (
     plan_container_run,
 )
 from mostt_model_builder.domain.containers.work_directory import (
+    MODEL_CARD_FILE_NAME,
     locate_run,
     place_clean,
     place_step,
@@ -113,11 +114,18 @@ def remove_candidate(request: CleanRequest, files: CleanFiles) -> CleanOutcome:
 # it itself, at any cleaning, since a report of outputs that are gone would vouch for what no longer
 # exists.
 def remove_verification_report(request: CleanRequest, files: CleanFiles) -> CleanOutcome:
+    return remove_record_of_run(request, VERIFICATION_REPORT_FILE_NAME, files)
+
+
+# The card is rendered from the verification, so it goes with it.
+def remove_model_card(request: CleanRequest, files: CleanFiles) -> CleanOutcome:
+    return remove_record_of_run(request, MODEL_CARD_FILE_NAME, files)
+
+
+def remove_record_of_run(request: CleanRequest, name: str, files: CleanFiles) -> CleanOutcome:
     run_directory = locate_run(request.recipe_name, request.commit)
     if not is_judged_directory(request, run_directory, files):
         return CleanOutcome.NOTHING_TO_CLEAN
-    if files.remove_file_if_present(
-        request.work_root / run_directory / VERIFICATION_REPORT_FILE_NAME
-    ):
+    if files.remove_file_if_present(request.work_root / run_directory / name):
         return CleanOutcome.CLEANED
     return CleanOutcome.NOTHING_TO_CLEAN

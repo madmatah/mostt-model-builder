@@ -164,6 +164,10 @@ def place_step(owner: str, commit: str, step_name: str) -> StepPlacement:
     )
 
 
+def locate_model_card(owner: str, commit: str) -> PurePosixPath:
+    return locate_run(owner, commit) / MODEL_CARD_FILE_NAME
+
+
 def place_clean(owner: str, commit: str, step_name: str) -> StepPlacement:
     run = locate_run(owner, commit)
     return StepPlacement(

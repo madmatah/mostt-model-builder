@@ -3,6 +3,7 @@ import os
 import pwd
 import stat
 import sys
+import tomllib
 from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -25,6 +26,7 @@ from mostt_model_builder.application.clean_run import (
     CleanRequest,
     clean_step,
     remove_candidate,
+    remove_model_card,
     remove_verification_report,
 )
 from mostt_model_builder.application.convert_variants import (
@@ -42,6 +44,13 @@ from mostt_model_builder.application.fetch_sources import (
 from mostt_model_builder.application.open_work_directory import (
     WorkDirectoryRequest,
     open_work_directory,
+)
+from mostt_model_builder.application.prepare_publication import (
+    CardOutcome,
+    CardRequest,
+    PublicationError,
+    prepare_publication,
+    write_model_card,
 )
 from mostt_model_builder.application.resolve_lock import (
     LockRequest,
@@ -120,6 +129,10 @@ from mostt_model_builder.domain.contract.recipe_contract import (
     locate_entry_module_file,
 )
 from mostt_model_builder.domain.formats.external_data import ExternalDataError
+from mostt_model_builder.domain.lock.declared_requirements import (
+    DeclaredRequirement,
+    read_declared_requirements,
+)
 from mostt_model_builder.domain.lock.lock_check import (
     LOCK_FILE_NAME,
     MANIFEST_FILE_NAME,
@@ -157,6 +170,7 @@ IMAGES_COMMAND = "images"
 STEP_COMMAND = "step"
 BUILD_COMMAND = "build"
 VERIFY_COMMAND = "verify"
+CARD_COMMAND = "card"
 CPU_PROVIDER = "CPUExecutionProvider"
 CUDA_PROVIDER = "CUDAExecutionProvider"
 RECIPES = {contract.name: contract for contract in (PARAKEET_TDT_RECIPE,)}
@@ -168,6 +182,7 @@ STEP_NAMES = sorted(
 TEXT_ENCODING = "utf-8"
 FAILURE_EXIT_STATUS = 1
 NO_ACCOUNT_HOME = ""
+CARD_OUTCOME_WORDS = {CardOutcome.WRITTEN: "wrote", CardOutcome.UNCHANGED: "unchanged:"}
 OUTCOME_WORDS = {FetchOutcome.FETCHED: "fetched", FetchOutcome.ALREADY_FETCHED: "already fetched"}
 CLEAN_OUTCOME_WORDS = {
     CleanOutcome.CLEANED: "cleaned",
@@ -207,6 +222,7 @@ COMMAND_ERRORS = (
     AcceptanceError,
     WordErrorRateError,
     BuildRejectedError,
+    PublicationError,
     ValueError,
     OSError,
 )
@@ -268,6 +284,12 @@ def build_argument_parser() -> argparse.ArgumentParser:
         add_help=False,
         help="run every step of the recipe's build, in its order, each row of a run in its own "
         "container, then verify it",
+    )
+    commands.add_parser(
+        CARD_COMMAND,
+        add_help=False,
+        help="verify the build again from a clean clone, render its model card, the README.md of "
+        "its Hugging Face repository, and write it beside verification.json for review",
     )
     clean_parser = commands.add_parser(
         CLEAN_STEP_NAME,
@@ -639,19 +661,20 @@ def build(recipe: JudgedRecipe, work_directory: WorkDirectory, files: WorkFiles)
     verify(recipe, work_directory, files)
 
 
+def build_verification_request(recipe: JudgedRecipe, context: BuildContext) -> VerificationRequest:
+    return VerificationRequest(
+        candidate=build_candidate_request(recipe, context),
+        pins=recipe.pins,
+        runs=recipe.runs,
+        derived_rows=recipe.derived_rows,
+        parities=recipe.parities,
+        comparisons=recipe.comparisons,
+    )
+
+
 def verify(recipe: JudgedRecipe, work_directory: WorkDirectory, files: WorkFiles) -> None:
     context = read_build_context(work_directory)
-    verified = verify_build(
-        VerificationRequest(
-            candidate=build_candidate_request(recipe, context),
-            pins=recipe.pins,
-            runs=recipe.runs,
-            derived_rows=recipe.derived_rows,
-            parities=recipe.parities,
-            comparisons=recipe.comparisons,
-        ),
-        files,
-    )
+    verified = verify_build(build_verification_request(recipe, context), files)
     for line in describe_verification(verified.verification):
         print(line, flush=True)
     for digest in verified.verification.candidate:
@@ -661,6 +684,46 @@ def verify(recipe: JudgedRecipe, work_directory: WorkDirectory, files: WorkFiles
         )
     print(f"wrote {verified.report_path}", flush=True)
     refuse_rejected_build(verified)
+
+
+def read_images_requirements() -> tuple[DeclaredRequirement, ...]:
+    manifest = tomllib.loads(
+        (IMAGES_ENVIRONMENT_DIRECTORY / MANIFEST_FILE_NAME).read_text(encoding=TEXT_ENCODING)
+    )
+    project = manifest.get("project")
+    if not isinstance(project, dict):
+        raise ValueError(f"images/{MANIFEST_FILE_NAME} holds no project table")
+    return read_declared_requirements(project.get("optional-dependencies"))
+
+
+def read_card_template(recipe: JudgedRecipe) -> str | None:
+    if recipe.model is None:
+        return None
+    return (
+        CLONE_ROOT / RECIPES_DIRECTORY_NAME / recipe.name / recipe.model.template_path
+    ).read_text(encoding=TEXT_ENCODING)
+
+
+def build_card_request(recipe: JudgedRecipe, context: BuildContext) -> CardRequest:
+    return CardRequest(
+        verification=build_verification_request(recipe, context),
+        model=recipe.model,
+        template=read_card_template(recipe),
+        conversions=recipe.conversions,
+        requirements=read_images_requirements(),
+    )
+
+
+def write_card(recipe: JudgedRecipe, work_directory: WorkDirectory, files: WorkFiles) -> None:
+    context = read_build_context(work_directory)
+    prepared = prepare_publication(
+        build_card_request(recipe, context), GitTree(PurePosixPath(CLONE_ROOT)), files
+    )
+    outcome = write_model_card(prepared, context.work_root, files)
+    print(
+        f"{CARD_OUTCOME_WORDS[outcome]} {prepared.card_path}; review it before publishing",
+        flush=True,
+    )
 
 
 def describe_verification(verification: Verification) -> list[str]:
@@ -724,6 +787,8 @@ def clean(
     ]
     report_outcome = remove_verification_report(requests[0], files)
     print(f"{CLEAN_OUTCOME_WORDS[report_outcome]} the verification's report", flush=True)
+    card_outcome = remove_model_card(requests[0], files)
+    print(f"{CLEAN_OUTCOME_WORDS[card_outcome]} the model card", flush=True)
     for request in requests:
         outcome = clean_step(request, DockerEngine(), files)
         print(f"{CLEAN_OUTCOME_WORDS[outcome]} {request.row.name}", flush=True)
@@ -773,6 +838,8 @@ def run_command(arguments: argparse.Namespace) -> None:
         verify(recipe, work_directory, files)
     elif arguments.command == BUILD_COMMAND:
         build(recipe, work_directory, files)
+    elif arguments.command == CARD_COMMAND:
+        write_card(recipe, work_directory, files)
 
 
 def main(arguments: Sequence[str]) -> None:
