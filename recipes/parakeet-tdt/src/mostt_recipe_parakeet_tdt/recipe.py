@@ -34,6 +34,7 @@ from mostt_model_builder.domain.onnx.node_placement import (
     PLACEMENT_MAX_SIZE_BYTES,
 )
 from mostt_recipe_parakeet_tdt.domain.export.tensor_fixtures import NAME_LIST_MAX_SIZE_BYTES
+from mostt_recipe_parakeet_tdt.domain.publication.model_description import MODEL_DESCRIPTION
 from mostt_recipe_parakeet_tdt.domain.transcripts.run_readers import (
     read_onnx_asr_lines,
     read_token_id_lines,
@@ -395,4 +396,5 @@ RECIPE = RecipeContract(
         TRANSFORMERS_STEP_NAME,
         TRANSCRIBE_STEP_NAME,
     ),
+    model=MODEL_DESCRIPTION,
 )

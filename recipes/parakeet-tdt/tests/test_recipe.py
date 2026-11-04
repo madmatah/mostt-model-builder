@@ -14,6 +14,7 @@ from mostt_model_builder.domain.contract.recipe_contract import (
 )
 from mostt_model_builder.domain.sources.source_pins import SourcePin, parse_source_pins
 from mostt_model_builder.host_main import CLONE_ROOT, find_present_entry_modules, read_pins
+from mostt_recipe_parakeet_tdt.domain.publication.model_description import MODEL_DESCRIPTION
 from mostt_recipe_parakeet_tdt.domain.transcripts.run_readers import (
     read_onnx_asr_lines,
     read_token_id_lines,
@@ -387,6 +388,11 @@ class TestTheParakeetTdtRecipe:
             assert [
                 derived_row.row.name for derived_row in judged_recipe.derived_rows
             ] == DERIVED_ROW_NAMES
+
+        def test_should_carry_the_description_of_its_model(
+            self, judged_recipe: JudgedRecipe
+        ) -> None:
+            assert judged_recipe.model == MODEL_DESCRIPTION
 
         def test_should_keep_every_comparison_of_its_runs(
             self, judged_recipe: JudgedRecipe
