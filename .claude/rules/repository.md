@@ -16,6 +16,6 @@
 
 ## External work
 
-- **Credit every external work the project reuses in `CREDITS.md`, in the same change that brings it in.** This covers code or algorithms ported or adapted from another project, data taken from someone else's work, assets such as sounds or images, and libraries shipped in a build.
+- **Credit every external work the project reuses in `CREDITS.md`, in the same change that brings it in.** This covers code or algorithms ported or adapted from another project, data taken from someone else's work, assets such as sounds or images, and libraries shipped in a build. The work of the mostt project is not external: its author is this project's, who may reuse it under any terms, so it needs no entry.
 - **Each entry says** what is reused, where it lives in the repository, where it comes from and under which terms. When a license asks for its notice to be kept, copy the notice verbatim.
 - **The works the design comes from are named,** with their links, in `docs/foundations.md` > References.
