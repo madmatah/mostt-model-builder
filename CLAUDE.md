@@ -51,7 +51,7 @@ Never run `git clean` with `-ff` at the repository root: a double `-f` deletes n
 ## Commands
 
 - `./model-build.sh --help`: prints the build's usage.
-- `uv sync --frozen`: installs the dependencies from the lockfile, without changing it. uv runs at the root only, never in `images/`, whose lock only `./model-build.sh --work <dir> lock` writes, in its container.
+- `uv sync --frozen`: installs the dependencies from the lockfile, without changing it.
 - `uv run --locked pytest`: runs the tests.
 - `uv run --locked ruff format && uv run --locked ruff check --fix`: formats the code and applies safe lint fixes.
 - `scripts/check-commit.sh`: the check of the last commit, on what it touches, which for now is the whole gate. Every commit you push passes it.
@@ -64,7 +64,7 @@ Each file of `.claude/rules/` holds the rules of one concern, in full. Claude Co
 - `repository.md`, loaded in every session: what belongs in the repository, the documents a change updates, and how external work is credited.
 - `conventions.md`, loaded in every session: naming and the allowed acronyms, units, comments, Python, shell, and input from outside the program.
 - `architecture.md`, for any source code, test or module manifest, and before adding a dependency: layers, ports and wiring, responsibilities, stored and shared data, SOLID and organization.
-- `configuration.md`, for a module manifest, either environment's manifest or lockfile, `pyproject.toml` and `uv.lock` or `images/pyproject.toml` and `images/uv.lock`, the toolchain, a tool's configuration, the gate's scripts, CI, Claude Code settings, skills or agents, before adding or upgrading a dependency, even with a command that edits no file you read, and before giving a task to an agent or making a web request: modules, dependencies and their licenses, continuous integration, checks and Claude Code automation, the model and the effort of each agent, its worktree and its web requests included.
+- `configuration.md`, for a module manifest, either environment's manifest or lockfile, `pyproject.toml` and `uv.lock` or `images/environment.toml` and `images/environment.lock`, the toolchain, a tool's configuration, the gate's scripts, CI, Claude Code settings, skills or agents, before adding or upgrading a dependency, even with a command that edits no file you read, and before giving a task to an agent or making a web request: modules, dependencies and their licenses, continuous integration, checks and Claude Code automation, the model and the effort of each agent, its worktree and its web requests included.
 - `container-security.md`, for the host's side of the build, the containers, their images and the parsing of what they write, both manifests and both lockfiles: the host, the confinement of the code of the models, and the images and outputs.
 - `tests.md`, for any test, test support or test framework configuration, and before fixing a bug, since the fix starts with a test: the structure of a test file, writing a test, test levels, test support and pytest.
 - `documents.md`, for any document or agent guidance, and any reference to a document, tool messages included: present tense, where each statement lives, references by heading, rules files, expert reviewers, skills and the pull request template.

@@ -16,10 +16,10 @@ from mostt_model_builder.domain.lock.lock_freshness import check_lock_freshness
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LOCKS = {
     "the host's lock": (REPO_ROOT / "uv.lock", HOST_ROOT_NAME),
-    "the images' lock": (REPO_ROOT / "images" / "uv.lock", IMAGES_ROOT_NAME),
+    "the images' lock": (REPO_ROOT / "images" / "environment.lock", IMAGES_ROOT_NAME),
 }
-IMAGES_MANIFEST_PATH = REPO_ROOT / "images" / "pyproject.toml"
-IMAGES_LOCK_PATH = REPO_ROOT / "images" / "uv.lock"
+IMAGES_MANIFEST_PATH = REPO_ROOT / "images" / "environment.toml"
+IMAGES_LOCK_PATH = REPO_ROOT / "images" / "environment.lock"
 # Published as an sdist alone, it is built by a stage of the export image, without network.
 PACKAGES_BUILT_BY_A_STAGE = ["antlr4-python3-runtime"]
 

@@ -86,11 +86,11 @@ Every other step runs in a confined container, from an image that `images` build
 ./model-build.sh --work /data/model-build --recipe parakeet-tdt clean describe
 ```
 
-The libraries of the images are locked in `images/uv.lock`, which `lock` resolves in a container, with the network to reach PyPI, then checks and writes into the clone, printing the packages it adds, removes or changes in version. Review that change in the diff before you commit it. Never run uv in `images/` (`.claude/rules/container-security.md` > The host, "uv never runs on the images' environment on the host"): its manifest allows a package to be built from its source, which would then run on your machine with your rights, and its `required-version` stops every other version of uv, not yours when it is the images' version.
+The libraries of the images are locked in `images/environment.lock`, which `lock` resolves in a container, with the network to reach PyPI, then checks and writes into the clone, printing the packages it adds, removes or changes in version. Review that change in the diff before you commit it. Their manifest, `images/environment.toml`, allows a package to be built from its source, which on your machine would run with your rights, so it never bears the name `pyproject.toml`, nor its lock the name `uv.lock`, outside a container, and no uv on your machine finds them: uv run in `images/` works on the host's project at the root. Never copy the manifest to a `pyproject.toml` or the lock to a `uv.lock`, or give either to uv on your machine (`.claude/rules/container-security.md` > The host, "No uv on the host finds the images' environment").
 
 ```sh
 ./model-build.sh --work /data/model-build lock
-git diff images/uv.lock
+git diff images/environment.lock
 ```
 
 The images take some room in Docker's storage. Remove them by name, never with a prune, which would remove other projects' images too:
@@ -129,8 +129,8 @@ docker image rm mostt-model-builder-core-bench mostt-model-builder-core-uv \
 | `./model-build.sh --work <dir> --recipe <name> verify` | Measures every run on FLEURS, holds the parities, the runs and their comparisons to the recipe's rules, and writes `verification.json`. |
 | `./model-build.sh --work <dir> --recipe <name> build` | Runs every step of the recipe's build, in its order, then `verify`. |
 | `./model-build.sh --work <dir> --recipe <name> clean [<step>]` | Removes the outputs, the request and the log of a step at HEAD's commit, or of every step of the core and the recipe, and the verification's report. |
-| `./model-build.sh --work <dir> lock` | Resolves the lock of the images' libraries in its container, checks it, prints its change and writes it to `images/uv.lock`. |
-| `uv sync --frozen` | Installs the development tools from the lockfile, without changing it. Run uv at the root only, never in `images/`. |
+| `./model-build.sh --work <dir> lock` | Resolves the lock of the images' libraries in its container, checks it, prints its change and writes it to `images/environment.lock`. |
+| `uv sync --frozen` | Installs the development tools from the lockfile, without changing it. |
 | `uv run --locked pytest` | Runs the tests. |
 | `uv run --locked ruff format && uv run --locked ruff check --fix` | Formats the code and applies safe lint fixes. |
 | `scripts/check-commit.sh` | Checks the last commit, on what it touches, which for now is the whole gate. Must pass on every commit that reaches GitHub. |

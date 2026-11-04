@@ -3,8 +3,8 @@ import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-MANIFEST_FILE_NAME = "pyproject.toml"
-LOCK_FILE_NAME = "uv.lock"
+MANIFEST_FILE_NAME = "environment.toml"
+LOCK_FILE_NAME = "environment.lock"
 LOCK_MAX_SIZE_BYTES = 16 * 2**20
 LOCK_VERSION = 1
 HOST_ROOT_NAME = "mostt-model-builder"

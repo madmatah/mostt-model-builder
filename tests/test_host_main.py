@@ -171,6 +171,6 @@ class TestTheHostMain:
             self, lock_description: str
         ) -> None:
             assert lock_description == (
-                f"wrote images/uv.lock, {len(LOCKED_PACKAGES)} packages, "
+                f"wrote images/environment.lock, {len(LOCKED_PACKAGES)} packages, "
                 f"{len(RECORDED_EXTRAS)} extras, from {LOCK_RUN}; review its change in the diff"
             )

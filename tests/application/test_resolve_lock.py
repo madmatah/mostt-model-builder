@@ -28,7 +28,7 @@ from mostt_model_builder.domain.lock.lock_check import LockedPackage, LockError
 from mostt_model_builder.domain.lock.lock_freshness import LockFreshnessError
 
 WORK_ROOT = PurePosixPath("/data/builds/work")
-CLONE_LOCK_PATH = PurePosixPath("/opt/clones/mostt-model-builder/images/uv.lock")
+CLONE_LOCK_PATH = PurePosixPath("/opt/clones/mostt-model-builder/images/environment.lock")
 HEAD_TREE = "3f1d1ffe79bc3336eb583331cfbf9b189fd45f01"
 IMAGE_ID = "sha256:" + "e" * 64
 ROOT = "mostt-model-builder-images"
@@ -137,7 +137,7 @@ def build_engine(files: FakeStepFiles, new_lock: str) -> FakeContainerEngine:
         files=files,
         images={LOCK_ROW.image.tag: ImageFacts(IMAGE_ID, HEAD_TREE)},
         step_outputs={
-            "uv.lock": build_step_output(new_lock.encode()),
+            "environment.lock": build_step_output(new_lock.encode()),
             PEAKS_FILE_NAME: build_step_output(render_step_peaks(PEAKS)),
         },
     )
@@ -166,7 +166,7 @@ class TestTheResolveLock:
                     path.name: content.decode()
                     for path, content in lock_record.files.contents.items()
                     if path.parent == WORK_ROOT / "lock/1/request"
-                } == {"pyproject.toml": MANIFEST, "uv.lock": COMMITTED_LOCK}
+                } == {"environment.toml": MANIFEST, "environment.lock": COMMITTED_LOCK}
 
             def test_should_print_the_packages_added_removed_and_changed_in_version(
                 self, lock_record: LockRecord
@@ -203,7 +203,7 @@ class TestTheResolveLock:
                     path.name
                     for path in lock_record.files.contents
                     if path.parent == WORK_ROOT / "lock/1/request"
-                ] == ["pyproject.toml"]
+                ] == ["environment.toml"]
 
             def test_should_print_every_package_as_added(self, lock_record: LockRecord) -> None:
                 assert lock_record.shown_lines == [
@@ -276,8 +276,11 @@ class TestTheResolveLock:
             def lock_record(self) -> LockRecord:
                 files = build_files()
                 engine = build_engine(files, NEW_LOCK)
-                facts, content = engine.step_outputs["uv.lock"]
-                engine.step_outputs["uv.lock"] = (replace(facts, permission_bits=0o600), content)
+                facts, content = engine.step_outputs["environment.lock"]
+                engine.step_outputs["environment.lock"] = (
+                    replace(facts, permission_bits=0o600),
+                    content,
+                )
                 resolution = None
                 with contextlib.suppress(ContainerFileError):
                     resolution = resolve_lock(REQUEST, engine, files, ShownLines().show)
