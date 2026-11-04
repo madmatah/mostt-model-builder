@@ -23,6 +23,10 @@ from mostt_model_builder.domain.containers.container_steps import (
     StepLimits,
     StepRow,
 )
+from mostt_model_builder.domain.contract.model_description import (
+    ModelDescription,
+    VariantDescription,
+)
 from mostt_model_builder.domain.contract.recipe_contract import (
     CANDIDATE_MOUNT,
     REFERENCE_VARIANT,
@@ -304,7 +308,20 @@ def change_parity(**fields: object) -> RecipeContract:
     return replace(CONTRACT, parities=(replace(NAMES_PARITY, **fields),))  # type: ignore[arg-type]  # the test feeds a value outside the contract's types, on purpose
 
 
+MODEL = ModelDescription(
+    title="Weights in ONNX",
+    template_path=PurePosixPath("model-card.md"),
+    measuring_library_names=("onnx-asr",),
+    variants=(VariantDescription("float32", "float32"),),
+)
+
+
 REFUSED_CONTRACTS = {
+    "a candidate file named like the model card, in any case": (
+        change_candidate(name="readme.MD"),
+        "its candidate file 'readme.MD' bears the name of the model card, README.md, which the "
+        "core writes",
+    ),
     "a recipe name outside the grammar": (
         replace(CONTRACT, name="Family"),
         "the recipe 'Family' is not named under",
@@ -875,6 +892,26 @@ class TestTheRecipeContract:
                     "inspect",
                     "transcribe-variants",
                 )
+
+        class TestWhenTheContractDescribesItsModel:
+            @pytest.fixture
+            def judged_recipe(self) -> JudgedRecipe:
+                return judge_recipe(replace(RUN_CONTRACT, model=MODEL), RUN_FACTS)
+
+            def test_should_carry_the_description_for_the_card(
+                self, judged_recipe: JudgedRecipe
+            ) -> None:
+                assert judged_recipe.model == MODEL
+
+        class TestWhenTheContractDescribesNoModel:
+            @pytest.fixture
+            def judged_recipe(self) -> JudgedRecipe:
+                return judge_recipe(RUN_CONTRACT, RUN_FACTS)
+
+            def test_should_carry_none_so_that_the_card_names_what_is_missing(
+                self, judged_recipe: JudgedRecipe
+            ) -> None:
+                assert judged_recipe.model is None
 
         class TestWhenARunReadsTheReference:
             @pytest.fixture

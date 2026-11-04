@@ -19,6 +19,8 @@ RUNS_DIRECTORY_NAME = "runs"
 REQUESTS_DIRECTORY_NAME = "requests"
 LOGS_DIRECTORY_NAME = "logs"
 CANDIDATE_DIRECTORY_NAME = "candidate"
+# The name under which a Hugging Face repository takes its model card.
+MODEL_CARD_FILE_NAME = "README.md"
 LOCK_DIRECTORY_NAME = "lock"
 LOCK_REQUEST_DIRECTORY_NAME = "request"
 LOCK_OUTPUT_DIRECTORY_NAME = "output"

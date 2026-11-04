@@ -41,6 +41,7 @@ from mostt_model_builder.domain.containers.container_steps import (
 from mostt_model_builder.domain.containers.work_directory import (
     CANDIDATE_DIRECTORY_NAME,
     LOGS_DIRECTORY_NAME,
+    MODEL_CARD_FILE_NAME,
     REQUESTS_DIRECTORY_NAME,
 )
 from mostt_model_builder.domain.contract.derived_rows import (
@@ -53,6 +54,7 @@ from mostt_model_builder.domain.contract.derived_rows import (
     StepTemplate,
     derive_rows,
 )
+from mostt_model_builder.domain.contract.model_description import ModelDescription
 from mostt_model_builder.domain.formats.file_formats import FileFormat
 from mostt_model_builder.domain.formats.file_names import (
     REFUSED_SUFFIXES,
@@ -207,6 +209,7 @@ class RecipeContract:
     build_order: tuple[str, ...] = ()
     conversions: tuple[VariantConversion, ...] = ()
     comparisons: tuple[Comparison, ...] = ()
+    model: ModelDescription | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -251,6 +254,7 @@ class JudgedRecipe:
     build_order: tuple[str, ...] = ()
     conversions: tuple[VariantConversion, ...] = ()
     comparisons: tuple[Comparison, ...] = ()
+    model: ModelDescription | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -371,6 +375,7 @@ def judge_recipe(contract: RecipeContract, facts: RecipeFacts) -> JudgedRecipe:
         ),
         conversions=contract.conversions,
         comparisons=judge_comparisons(contract.comparisons, runs, where),
+        model=contract.model,
     )
 
 
@@ -938,6 +943,11 @@ def judge_build_order(
 def judge_candidate_name(name: str, where: str) -> None:
     if not is_file_name(name):
         raise RecipeContractError(f"{where} is not a file name")
+    if name.casefold() == MODEL_CARD_FILE_NAME.casefold():
+        raise RecipeContractError(
+            f"{where} bears the name of the model card, {MODEL_CARD_FILE_NAME}, which the core "
+            "writes"
+        )
     refused_suffixes = find_refused_suffixes(name, REFUSED_SUFFIXES)
     if refused_suffixes:
         raise RecipeContractError(
