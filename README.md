@@ -1,8 +1,18 @@
 # mostt-model-builder
 
-mostt-model-builder is the tooling of reproducible, confined builds of speech recognition models from their original weights: export, quantization and FLEURS verification.
+mostt-model-builder builds speech recognition models in ONNX from the weights their authors publish, and checks that each file it produces still transcribes as well as the original model.
 
-- **Built:** the command line, `model-build.sh`, which runs on the host's Python and the standard library, isolated from the environment and the site packages, and refuses to run as root; `fetch`, which downloads the pinned sources into a work directory, each checked by its size and its SHA-256; the confined containers in which every step runs, with their images, the lock of the images' libraries, and the check of the FLEURS bench; `clean`; and the first recipe, `parakeet-tdt`, for the Parakeet TDT family, which builds Parakeet Ultra: its sources, its images, `describe`, which lists the tensors of Moondream's weights and of NeMo's model, `export`, which writes Parakeet Ultra's FP32 ONNX files and measures the encoder against NeMo's, `convert`, the core's conversions of the exported encoder to float16, bfloat16 and 8-bit blocks, `inspect`, which copies and checks the candidate and inspects its graphs, `reference`, NeMo's transcription of FLEURS, `transformers-reference`, which checks Moondream's weights in Transformers against NeMo's reference and transcribes FLEURS fr, `transcribe`, onnx-asr's of each variant from the candidate, on the CPU and the GPU; and `verify`, which measures every run on FLEURS and holds the parities, the runs and their comparisons to the recipe's rules. The checked files land in a candidate directory laid out for Hugging Face, where the maintainer publishes them, and mostt, the local dictation project, pins them by hash.
+Its first model is Parakeet Ultra, Moondream's post-training of NVIDIA's Parakeet TDT 0.6B v3. A build:
+
+1. downloads the pinned sources, each checked by its size and its hash: the model's weights, and the FLEURS recordings it is measured on;
+2. exports the model to ONNX, in float32;
+3. converts it to float16, bfloat16 and 8-bit blocks;
+4. checks every file, then transcribes FLEURS in French and in English with each variant, on the CPU and on the GPU;
+5. accepts each variant against its reference, from its word error rate and its parity: the float32 export against the original model, each conversion against the float32 export.
+
+The accepted files land in a directory laid out for Hugging Face, where the maintainer publishes them, and mostt, a local dictation project, installs them, pinned by hash.
+
+The code of the models and of their frameworks is treated as untrusted: every step that runs it does so in a container without network, with a read-only file system and bounded resources. A build is reproducible: two builds of the same commit write the same bytes. The tooling is a core and one recipe per model family, and `parakeet-tdt` is the first.
 
 ## Requirements
 
