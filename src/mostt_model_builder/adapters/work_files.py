@@ -8,6 +8,7 @@ from dataclasses import replace
 from pathlib import PurePosixPath
 from typing import BinaryIO
 
+from mostt_model_builder.application.assemble_candidate import HashedFile
 from mostt_model_builder.application.fetch_sources import FileDigest, SourceFileError
 from mostt_model_builder.application.run_step import WrittenFile, WrittenOutputs
 from mostt_model_builder.domain.containers.container_files import (
@@ -178,6 +179,24 @@ class WorkFiles:
         finally:
             os.close(directory_descriptor)
 
+    def digest_host_file(
+        self, directory: PurePosixPath, name: str, max_size_bytes: int
+    ) -> HashedFile:
+        directory_descriptor = os.open(directory, OPEN_DIRECTORY_WITHOUT_FOLLOWING)
+        try:
+            entry_facts, descriptor = open_regular_entry(directory_descriptor, name)
+        except FileNotFoundError:
+            return HashedFile(NO_FACTS, None)
+        finally:
+            os.close(directory_descriptor)
+        if descriptor is None:
+            return HashedFile(entry_facts, None)
+        with os.fdopen(descriptor, "rb") as stream:
+            facts = describe_status(os.fstat(stream.fileno()))
+            if facts.kind is not FileKind.REGULAR or facts.size_bytes > max_size_bytes:
+                return HashedFile(facts, None)
+            return hash_stream(stream, facts, max_size_bytes)
+
     def list_entry_names(self, directory: PurePosixPath) -> tuple[str, ...]:
         directory_descriptor = os.open(directory, OPEN_DIRECTORY_WITHOUT_FOLLOWING)
         try:
@@ -254,22 +273,29 @@ def inspect_entry(path: PurePosixPath) -> FileFacts:
         return NO_FACTS
 
 
-def read_written_file(
-    directory_descriptor: int, name: str, max_size_bytes: int, *, is_parsed: bool
-) -> WrittenFile:
+def open_regular_entry(directory_descriptor: int, name: str) -> tuple[FileFacts, int | None]:
     entry_facts = describe_status(os.stat(name, dir_fd=directory_descriptor, follow_symlinks=False))
     if entry_facts.kind is not FileKind.REGULAR:
-        return WrittenFile(entry_facts, None)
+        return entry_facts, None
     try:
         descriptor = os.open(
             name, os.O_RDONLY | OPEN_WITHOUT_FOLLOWING, dir_fd=directory_descriptor
         )
     except PermissionError:
-        return WrittenFile(replace_kind(entry_facts, FileKind.UNREADABLE), None)
+        return replace_kind(entry_facts, FileKind.UNREADABLE), None
     except OSError as error:
         if error.errno == errno.ELOOP:
-            return WrittenFile(replace_kind(entry_facts, FileKind.LINK), None)
+            return replace_kind(entry_facts, FileKind.LINK), None
         raise
+    return entry_facts, descriptor
+
+
+def read_written_file(
+    directory_descriptor: int, name: str, max_size_bytes: int, *, is_parsed: bool
+) -> WrittenFile:
+    entry_facts, descriptor = open_regular_entry(directory_descriptor, name)
+    if descriptor is None:
+        return WrittenFile(entry_facts, None)
     with os.fdopen(descriptor, "rb") as stream:
         facts = describe_status(os.fstat(stream.fileno()))
         if not is_parsed or facts.kind is not FileKind.REGULAR or facts.size_bytes > max_size_bytes:
@@ -278,6 +304,17 @@ def read_written_file(
     if len(content) > max_size_bytes:
         return WrittenFile(replace(facts, size_bytes=len(content)), None)
     return WrittenFile(facts, content)
+
+
+def hash_stream(stream: BinaryIO, facts: FileFacts, max_size_bytes: int) -> HashedFile:
+    digest = hashlib.new(DIGEST_ALGORITHM)
+    hashed_bytes = 0
+    while chunk := stream.read(COPY_CHUNK_BYTES):
+        hashed_bytes += len(chunk)
+        if hashed_bytes > max_size_bytes:
+            return HashedFile(replace(facts, size_bytes=hashed_bytes), None)
+        digest.update(chunk)
+    return HashedFile(replace(facts, size_bytes=hashed_bytes), digest.hexdigest())
 
 
 def copy_stream(

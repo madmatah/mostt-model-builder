@@ -7,6 +7,8 @@ from typing import Protocol
 from mostt_model_builder.application.assemble_candidate import (
     CandidateFiles,
     CandidateRequest,
+    DigestFiles,
+    digest_candidate,
     judge_inspected_copies,
     read_candidate_texts,
 )
@@ -65,7 +67,7 @@ class BuildRejectedError(Exception):
     pass
 
 
-class VerificationFiles(CandidateFiles, Protocol):
+class VerificationFiles(CandidateFiles, DigestFiles, Protocol):
     def replace_file(self, path: PurePosixPath, content: bytes) -> None: ...
 
 
@@ -88,6 +90,7 @@ class VerifiedBuild:
 def verify_build(request: VerificationRequest, files: VerificationFiles) -> VerifiedBuild:
     candidate = request.candidate
     judge_inspected_copies(candidate, files)
+    candidate_digests = digest_candidate(candidate, files)
     candidate_texts = read_candidate_texts(candidate, files)
     references = collect_reference_words(
         read_bench_transcriptions(request.pins, candidate.work_root, candidate.host.user_id, files)
@@ -98,7 +101,11 @@ def verify_build(request: VerificationRequest, files: VerificationFiles) -> Veri
         for run in request.runs
     ]
     verification = verify_transcripts(
-        runs, references, request.comparisons, read_parity_measures(request.parities, outputs)
+        runs,
+        references,
+        request.comparisons,
+        read_parity_measures(request.parities, outputs),
+        candidate_digests,
     )
     run_directory = locate_run(candidate.recipe_name, candidate.commit)
     judge_mount(

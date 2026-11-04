@@ -1,9 +1,11 @@
 import errno
+import hashlib
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 
 from mostt_model_builder.adapters.docker_engine import build_run_arguments
+from mostt_model_builder.application.assemble_candidate import HashedFile
 from mostt_model_builder.application.fetch_sources import SourceFileError
 from mostt_model_builder.application.run_step import (
     ContainerExit,
@@ -52,6 +54,9 @@ class FakeStepFiles:
     contents: dict[PurePosixPath, bytes] = field(default_factory=dict)
     file_modes: dict[PurePosixPath, int] = field(default_factory=dict)
     read_paths: list[PurePosixPath] = field(default_factory=list)
+    # A file swapped once judged shows other facts to the descriptor that hashes it.
+    hashing_facts: dict[PurePosixPath, FileFacts] = field(default_factory=dict)
+    digested_paths: list[PurePosixPath] = field(default_factory=list)
 
     def add_directory(self, path: PurePosixPath, facts: FileFacts | None = None) -> None:
         for parent in reversed(path.parents):
@@ -162,6 +167,17 @@ class FakeStepFiles:
             return WrittenFile(facts, None)
         self.read_paths.append(directory / name)
         return WrittenFile(facts, self.contents.get(directory / name, b""))
+
+    def digest_host_file(
+        self, directory: PurePosixPath, name: str, max_size_bytes: int
+    ) -> HashedFile:
+        self.require_directory(directory)
+        path = directory / name
+        facts = self.hashing_facts.get(path, self.entries.get(path, MISSING))
+        if facts.kind is not FileKind.REGULAR or facts.size_bytes > max_size_bytes:
+            return HashedFile(facts, None)
+        self.digested_paths.append(path)
+        return HashedFile(facts, hashlib.sha256(self.contents.get(path, b"")).hexdigest())
 
     def require_directory(self, directory: PurePosixPath) -> None:
         if self.entries.get(directory, MISSING).kind is not FileKind.DIRECTORY:

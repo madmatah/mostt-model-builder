@@ -25,6 +25,7 @@ from mostt_model_builder.domain.bench.word_error_rate import (
     compute_word_error_rate_percent,
     count_word_errors,
 )
+from mostt_model_builder.domain.formats.file_formats import FileFormat
 
 VERIFICATION_REPORT_FILE_NAME = "verification.json"
 TEXT_ENCODING = "utf-8"
@@ -76,10 +77,20 @@ class ParityMeasure:
 
 
 @dataclass(frozen=True, slots=True)
+class CandidateDigest:
+    name: str
+    file_format: FileFormat
+    variants: tuple[str, ...]
+    size_bytes: int
+    sha256: str
+
+
+@dataclass(frozen=True, slots=True)
 class Verification:
     runs: tuple[RunMeasure, ...]
     comparisons: tuple[ComparisonMeasure, ...]
     parities: tuple[ParityMeasure, ...]
+    candidate: tuple[CandidateDigest, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,6 +127,7 @@ def verify_transcripts(
     references: ReferenceWords,
     comparisons: Sequence[Comparison],
     parities: Sequence[ParityMeasure],
+    candidate: Sequence[CandidateDigest],
 ) -> Verification:
     hypotheses_by_run: dict[str, dict[UtteranceKey, Hypothesis]] = {}
     errors_by_run: dict[str, dict[UtteranceKey, UtteranceErrors]] = {}
@@ -145,7 +157,9 @@ def verify_transcripts(
         if has_language(hypotheses_by_run, comparison.run, language)
         and has_language(hypotheses_by_run, comparison.reference_run, language)
     ]
-    return Verification(tuple(run_measures), tuple(comparison_measures), tuple(parities))
+    return Verification(
+        tuple(run_measures), tuple(comparison_measures), tuple(parities), tuple(candidate)
+    )
 
 
 def has_language(
@@ -301,6 +315,16 @@ def render_verification_report(verification: Verification) -> bytes:
                 "failures": list(measure.failures),
             }
             for measure in verification.comparisons
+        ],
+        "candidate": [
+            {
+                "name": digest.name,
+                "format": digest.file_format.value,
+                "variants": list(digest.variants),
+                "size_bytes": digest.size_bytes,
+                "sha256": digest.sha256,
+            }
+            for digest in verification.candidate
         ],
     }
     return (json.dumps(document, indent=2, allow_nan=False) + "\n").encode(TEXT_ENCODING)
