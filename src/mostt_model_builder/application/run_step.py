@@ -28,6 +28,7 @@ from mostt_model_builder.domain.containers.container_steps import (
 from mostt_model_builder.domain.containers.printable_output import show_printable
 from mostt_model_builder.domain.containers.provenance import refuse_foreign_image
 from mostt_model_builder.domain.containers.step_peaks import StepPeaks, parse_step_peaks
+from mostt_model_builder.domain.publication.hub_token import HubToken
 
 OUTPUT_DIRECTORY_MODE = 0o2770
 REQUEST_DIRECTORY_MODE = 0o750
@@ -67,7 +68,9 @@ class WrittenOutputs:
 class ContainerEngine(Protocol):
     def inspect_image(self, tag: str) -> ImageFacts | None: ...
 
-    def run_container(self, run: ContainerRun, log_path: PurePosixPath) -> ContainerExit: ...
+    def run_container(
+        self, run: ContainerRun, log_path: PurePosixPath, token: HubToken | None = None
+    ) -> ContainerExit: ...
 
 
 class StepFiles(Protocol):

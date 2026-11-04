@@ -238,6 +238,16 @@ REFUSED_ROWS = {
         replace(FLEURS_CHECK_ROW, has_network=True),
         "asks for the network, which only the core's lock has",
     ),
+    "the token on a recipe's row named publish": (
+        replace(
+            FLEURS_CHECK_ROW,
+            name="publish",
+            image=RECIPE_IMAGE,
+            entry_module="mostt_recipe_family.steps.publication",
+            takes_token=True,
+        ),
+        "takes the maintainer's token, which only the core's publish does",
+    ),
 }
 
 
@@ -296,6 +306,18 @@ class TestTheContainerSteps:
                 with pytest.raises(StepTableError, match=re.escape(reason)):
                     judge_act()
 
+        @pytest.mark.parametrize("row", EVERY_ROW, ids=ROW_IDS)
+        class TestWhenAnyOtherRowTakesTheToken:
+            @pytest.fixture
+            def judge_act(self, row: StepRow) -> Callable[[], object]:
+                return partial(judge_row, replace(row, takes_token=True), HOST_CPU_COUNT)
+
+            def test_should_refuse_it_since_the_token_reaches_the_publication_alone(
+                self, judge_act: Callable[[], object]
+            ) -> None:
+                with pytest.raises(StepTableError, match=re.escape("takes the maintainer's token")):
+                    judge_act()
+
         class TestWhenAGpuImageRunsAStepOnTheGpu:
             @pytest.fixture
             def judge_act(self) -> Callable[[], object]:
@@ -335,6 +357,9 @@ class TestTheContainerSteps:
 
             def test_should_give_the_network_to_the_lock_alone(self, row: StepRow) -> None:
                 assert row.has_network is (row.name == LOCK_STEP_NAME)
+
+            def test_should_give_the_token_to_no_row_of_the_build(self, row: StepRow) -> None:
+                assert (row.takes_token, plan_row(row).has_standard_input) == (False, False)
 
         def test_should_clean_with_the_limits_of_a_step_that_only_removes_files(self) -> None:
             assert CLEAN_ROW.limits == StepLimits(

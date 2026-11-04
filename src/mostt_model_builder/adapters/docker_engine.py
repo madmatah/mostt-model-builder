@@ -1,3 +1,4 @@
+import contextlib
 import json
 import os
 import re
@@ -25,7 +26,9 @@ from mostt_model_builder.domain.containers.provenance import (
     IMAGE_TREE_LABEL,
     TREE_HASH_BUILD_ARGUMENT,
 )
+from mostt_model_builder.domain.containers.secret_redaction import SecretRedaction
 from mostt_model_builder.domain.json_documents.json_depth import MAX_JSON_DEPTH, refuse_deep_json
+from mostt_model_builder.domain.publication.hub_token import HubToken
 
 DOCKER_PROGRAM = "docker"
 # Docker reads a mount's options as comma-separated pairs, so a path holds none of the
@@ -86,6 +89,8 @@ def build_run_arguments(run: ContainerRun) -> list[str]:
         "--cpus",
         str(limits.cpu_count),
     ]
+    if run.has_standard_input:
+        arguments.append("--interactive")
     for temporary_filesystem in run.temporary_filesystems:
         target = require_grammar(
             str(temporary_filesystem.container_path), MOUNT_PATH_GRAMMAR, "a temporary filesystem"
@@ -152,6 +157,7 @@ def run_logged(
     arguments: Sequence[str],
     log_path: PurePosixPath,
     standard_input: IO[bytes] | None = None,
+    token: HubToken | None = None,
 ) -> ContainerExit:
     log_descriptor = os.open(
         log_path,
@@ -160,27 +166,64 @@ def run_logged(
     )
     written_size_bytes = 0
     tail = b""
+    redaction = None if token is None else SecretRedaction(token.encode_secret())
     try:
         with subprocess.Popen(
             list(arguments),
-            stdin=subprocess.DEVNULL if standard_input is None else standard_input,
+            stdin=choose_standard_input(standard_input, token),
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
         ) as process:
             if process.stdout is None:
                 raise ContainerEngineError(f"{DOCKER_PROGRAM} gave no output stream")
+            if token is not None:
+                give_token(process, token)
             while chunk := os.read(process.stdout.fileno(), READ_CHUNK_BYTES):
-                printable = filter_printable(chunk)
+                printable = filter_printable(redact(redaction, chunk))
                 kept = take_within_cap(written_size_bytes, printable)
                 if kept:
                     written_size_bytes += os.write(log_descriptor, kept)
                 tail = keep_tail(tail, printable)
+            if redaction is not None:
+                rest = filter_printable(redaction.finish())
+                kept = take_within_cap(written_size_bytes, rest)
+                if kept:
+                    written_size_bytes += os.write(log_descriptor, kept)
+                tail = keep_tail(tail, rest)
             status = process.wait()
     except FileNotFoundError as error:
         raise ContainerEngineError(f"{DOCKER_PROGRAM} is not installed") from error
     finally:
         os.close(log_descriptor)
     return ContainerExit(status, tail)
+
+
+def choose_standard_input(
+    standard_input: IO[bytes] | None, token: HubToken | None
+) -> int | IO[bytes]:
+    if token is not None:
+        return subprocess.PIPE
+    if standard_input is not None:
+        return standard_input
+    return subprocess.DEVNULL
+
+
+# The token is one short line, which the pipe's buffer holds whole, so writing it before the
+# output is drained cannot block; closing the pipe ends the container's standard input. A docker
+# that exits before it reads the line, such as one that refuses its options, breaks the pipe, and
+# its status and its log then say why, where a broken pipe would hide it.
+def give_token(process: subprocess.Popen[bytes], token: HubToken) -> None:
+    if process.stdin is None:
+        raise ContainerEngineError(f"{DOCKER_PROGRAM} was started without its standard input")
+    with contextlib.suppress(BrokenPipeError):
+        try:
+            process.stdin.write(token.encode_line())
+        finally:
+            process.stdin.close()
+
+
+def redact(redaction: SecretRedaction | None, chunk: bytes) -> bytes:
+    return chunk if redaction is None else redaction.redact(chunk)
 
 
 class DockerEngine:
@@ -216,8 +259,14 @@ class DockerEngine:
             )
         return parse_image_inspection(completed.stdout[:INSPECTION_MAX_SIZE_BYTES])
 
-    def run_container(self, run: ContainerRun, log_path: PurePosixPath) -> ContainerExit:
-        return run_logged(build_run_arguments(run), log_path)
+    def run_container(
+        self, run: ContainerRun, log_path: PurePosixPath, token: HubToken | None = None
+    ) -> ContainerExit:
+        if run.has_standard_input != (token is not None):
+            raise ContainerEngineError(
+                "a container reads the token on its standard input exactly when its row takes it"
+            )
+        return run_logged(build_run_arguments(run), log_path, token=token)
 
     # The archive waits in an unnamed file, rather than a pipe, so that docker reads it at its
     # own pace while the host drains its output.

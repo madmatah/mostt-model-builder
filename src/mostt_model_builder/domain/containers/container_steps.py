@@ -75,6 +75,7 @@ CLEAN_STEP_NAME = "clean"
 LOCK_STEP_NAME = "lock"
 INSPECT_STEP_NAME = "inspect"
 CONVERT_STEP_NAME = "convert"
+PUBLISH_STEP_NAME = "publish"
 # Docker reads 0 or -1 as no limit, and refuses a memory limit under 6 MiB; the ceilings only
 # refuse a value that no step could mean on the machines a build runs on.
 MIN_MEMORY_MIB = 6
@@ -161,6 +162,7 @@ class StepRow:
     has_network: bool = False
     earlier_outputs: tuple[EarlierOutput, ...] = ()
     binds_candidate: bool = False
+    takes_token: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -200,6 +202,7 @@ class ContainerRun:
     user_id: int
     group_id: int
     environment: tuple[tuple[str, str], ...]
+    has_standard_input: bool = False
 
     @property
     def python_arguments(self) -> tuple[str, ...]:
@@ -318,6 +321,10 @@ def judge_row(row: StepRow, host_cpu_count: int) -> None:
         )
     if row.has_network and not (row.image.owner == CORE_OWNER and row.name == LOCK_STEP_NAME):
         raise StepTableError(f"{where} asks for the network, which only the core's lock has")
+    if row.takes_token and not (row.image.owner == CORE_OWNER and row.name == PUBLISH_STEP_NAME):
+        raise StepTableError(
+            f"{where} takes the maintainer's token, which only the core's {PUBLISH_STEP_NAME} does"
+        )
 
 
 def refuse_foreign_entry_module(row: StepRow, where: str) -> None:
@@ -464,4 +471,5 @@ def plan_container_run(
         user_id=CONTAINER_USER_ID,
         group_id=group_id,
         environment=tuple(environment),
+        has_standard_input=row.takes_token,
     )
