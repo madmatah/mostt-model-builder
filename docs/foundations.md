@@ -200,9 +200,11 @@ The conventions serve one aim: the code explains itself, so that it needs no com
 - **A plan chooses the method before the code.** A test that covers the whole input space, a simpler design or a library costs nothing to choose in a plan; chosen after the code, it costs the rounds of review that showed the need for it.
 - **A critic that did not write the plan checks it,** against the code and the rules, as an expert reviews code it did not write: an assumption about the code that no one checked is the cheapest mistake to catch in a plan.
 - **The code follows the plan, or the plan changes first,** since a design changed while it is built escapes the critic.
+- **The planner writes its plan file and reports in a few lines:** a plan returned in a report is written twice, by the planner and again by the session, and then weighs on every later turn of the session, which needs its summary and its open questions, and reads the rest of the plan only where it needs it, such as its decisions.
+- **The critic checks a revision from its diff,** the parts it changes and what relies on them, since the rest was checked: checking a long plan whole at each round costs more than the mistakes a small change could hide elsewhere.
 - **Within one planning, the planner answers the critic itself,** since it already holds the code the plan rests on, in a context far smaller than an implementer's: a new planner would read it all again.
 - **A change that leaves the design as it is goes without a plan,** such as a bug fix inside one function: a plan and its check, both at `xhigh`, would cost more than the mistakes they could catch there.
-- **The plan lives outside the repository,** since the repository holds only the current state, and a plan describes work to come. Each plan has one writer, the session that owns its branch, so plans written in parallel never collide.
+- **The plan lives outside the repository,** since the repository holds only the current state, and a plan describes work to come. Each plan has one writer, the session that owns its branch, through its planner, so plans written in parallel never collide.
 
 ### Agent guidance
 
