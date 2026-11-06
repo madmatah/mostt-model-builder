@@ -40,7 +40,7 @@ Write the code from the plan, or give it to an agent on Opus at `high`, as `.cla
 ## Shape the history
 
 1. Before pushing, rewrite the branch into atomic commits, as `CLAUDE.md` > Workflow, "Commits" and "A commit message says why" ask, and write each message with the `writing-commits` skill. Interactive editors are unavailable: fold a change into its commit with `git commit --fixup=<commit>`, then `GIT_SEQUENCE_EDITOR=: git rebase -i --autosquash <base>`.
-2. Check every commit, as `CLAUDE.md` > Workflow, "Commits" asks: each one on what it touches, with `git rebase --exec 'scripts/check-commit.sh' <base>`, then the last one on the whole gate, with `scripts/check.sh`.
+2. Check every commit, as `CLAUDE.md` > Workflow, "Commits" and "Run each check once, at its level" ask: each one on what it touches, with `git rebase --exec 'scripts/check-commit.sh' <base>`. The CI runs the whole gate; run `scripts/check.sh` here only where "Run each check once, at its level" says. When a commit fails, take its hash from `git rev-parse --short HEAD`, run `git rebase --abort`, commit the fix with `git commit --fixup=<that commit>`, written by you or, once the branch is under review, by a new `fixer` agent with the brief that [Review](#review) gives it and the failure as its finding, whose fix the pull request names among the fixes that no expert checked. Fold it with `GIT_SEQUENCE_EDITOR=: git rebase -i --autosquash <base>`, and check again.
 
 ## Review
 
@@ -54,7 +54,7 @@ Write the code from the plan, or give it to an agent on Opus at `high`, as `.cla
 
 1. Push the branch: `git push -u origin HEAD` the first time.
 2. Open the pull request as the `pull-request` skill > Open the pull request says.
-3. Make sure CI (`scripts/check.sh` on GitHub Actions) passes on it: `gh pr checks <number> --watch`.
+3. Make sure CI (`scripts/check.sh` on GitHub Actions) passes on it: `gh pr checks <number> --watch`. The `link` of a failed check, from `gh pr checks <number> --json name,bucket,link`, holds its run id, as `/actions/runs/<run-id>/`. A failure of the runner or the network, not of the gate, is run again with `gh run rerun <run-id> --failed`. A failure of the gate goes to a new `fixer` agent as a finding that names the failing step, the command that runs it and its output, from `gh run view <run-id> --log-failed`, with the brief that [Review](#review) gives it, and the commit it belongs to, which you find from the files of the failing step, by meaning, as [Fold review fixes](#fold-review-fixes) finds the target of a leftover. Fold its fix as [Fold review fixes](#fold-review-fixes) says, which checks the commits again, pushes and updates the body: name the fix there among the fixes that no expert checked. Then watch the CI again. When the fixer fixes nothing, or the same step fails a second time, stop and tell the user, or, when the user does not follow the work, say in your final report, with the step and its log.
 
 ## Fold review fixes
 
@@ -67,7 +67,7 @@ Write the code from the plan, or give it to an agent on Opus at `high`, as `.cla
    - **when it fixes a commit of the branch this one is stacked on,** the fix belongs to that branch: its owner commits it there as above and folds it, then this branch moves, as [Stack on an unmerged branch](#stack-on-an-unmerged-branch) says. When another session owns that branch, keep `<dir>`, put the finding and the paths of `fix.patch`, and of `message` when one was saved, in your final report, for the coordinating session to pass on to that owner, and name the finding in the pull request. A check of this branch that fails for want of that fix waits for the move;
    - **when a step conflicts or fails,** such as `git apply --3way` that exits with an error and no conflict when the file it patches was deleted, undo it and keep `<dir>`: `git rebase --abort` when the drop stops, which leaves the leftover on the branch, or when the fold stops, which leaves the fix as a commit; `git reset --merge` when `git apply --3way` leaves conflicts or fails, which leaves the fix in `<dir>/fix.patch` only. Resolve nothing, stop [Fold review fixes](#fold-review-fixes) and push nothing: tell the user, or, when the user does not follow the work, put the finding, where its fix now lives and the paths of `fix.patch`, and of `message` when one was saved, in your final report.
 
-   Repeat this check until it lists none, then check the commits again, as [Shape the history](#shape-the-history) does.
+   Repeat this check until it lists none, then check the commits again, and fix a failure, as [Shape the history](#shape-the-history) says.
 4. Push with `git push --force-with-lease`, then keep the body true: update every section the fixes changed, once, as `.claude/skills/pull-request/SKILL.md` > Update the body says.
 
 ## Merge
