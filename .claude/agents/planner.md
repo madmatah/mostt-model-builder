@@ -41,7 +41,7 @@ Write the plan to its path, in Markdown, as long as the work needs and no longer
 - **Risks:** what could go wrong, and how the plan guards against it.
 - **Open questions:** what only the user can settle, each with the answer you recommend and its reason.
 
-When you revise a plan, change in place, with the Edit tool, only the parts that change, and leave the rest as it is: the critic checks what changed, from a diff.
+When you revise a plan, change in place, with the Edit tool, only the parts that change, and leave the rest as it is.
 
 ## Report
 
