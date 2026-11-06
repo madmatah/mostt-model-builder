@@ -46,6 +46,23 @@ paths:
 ## Checks
 
 - **A check that enforces a rule is never narrowed to let a change pass:** in the linter, the type checker or any other tool of the gate, no file excluded, no rule turned off or lowered, no threshold loosened, and no step dropped from the gate or from its CI run. The tests follow `tests.md`, where a loosened expectation states its reason. A change to the rule itself changes its rules file and its check together, and says why.
+- **A per-commit check that is a script apart from the gate skips a commit that already passed it:** `git rebase --exec` runs it on every commit of a branch each time the history is shaped again, while a reword, or a fix folded into a commit, leaves the commits before it as they were. A commit is known by its tree and its parent's tree, which fix both the files it holds and the steps that a check picking them from the files the commit changes runs: the same steps already passed on the same files, so the skip narrows nothing. The tree alone would let the squash of two commits, whose tree is the second's, skip the steps of the first. A commit is skipped or recorded only when the working tree is clean, since only then is `HEAD` what the check sees. The record lives in the repository's common git directory, outside the working tree and shared by every worktree: delete it after a change outside the repository that the check depends on, such as a toolchain installed on the machine. A per-commit check that is the gate itself keeps no record: it runs in full on every commit. After its shebang, the script holds the lines below, with its steps in place of the comment, and ends with the last two, which record the commit or say why they do not, so it never hands over to another command with `exec`. A step that reads more than the two trees, such as a check of the commit message, goes before the `if` instead, since the skip would pass over it. The lines need git 2.31 or later, for `--path-format`:
+
+  ```sh
+  set -eu
+  record="$(git rev-parse --path-format=absolute --git-common-dir)/passed-commit-check"
+  key="$(git rev-parse 'HEAD^{tree}') $(git rev-parse -q --verify 'HEAD~1^{tree}' || echo root)"
+  clean="$(git status --porcelain --untracked-files=normal)"
+  if [ -z "$clean" ] && grep -qxF "$key" "$record" 2>/dev/null; then
+    echo "Skipped: this commit already passed the check."
+    exit 0
+  fi
+
+  # The steps of the check, each a plain command, not in a pipeline, an `if`, `&&` or `||`: under `set -e`, the first that fails stops the script before the record.
+
+  [ -z "$clean" ] || echo "Not recorded: the working tree has changes or untracked files."
+  [ -n "$clean" ] || echo "$key" >> "$record"
+  ```
 
 ## Claude Code automation
 
