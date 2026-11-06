@@ -26,7 +26,7 @@ For each finding:
 1. Read the code it names, what it depends on, and the rules files of the files you will touch, as `CLAUDE.md` > Rules says.
 2. A bug fix starts as `.claude/rules/tests.md` > Writing a test says.
 3. Make the smallest change that solves the finding. The suggested fix is a lead, not an order: when it would break a rule of `CLAUDE.md` or of a rules file, solve the finding within the rule, or leave it and cite the rule in your report.
-4. Commit it as `.claude/skills/pull-request/SKILL.md` > Fold review fixes shows: a `fixup!` commit for a change to the files, an `amend!` commit for a commit message, whose new message you write as `.claude/skills/writing-commits/SKILL.md` says. Then run `scripts/check-commit.sh`, which checks the last commit alone.
+4. Commit it as `.claude/skills/develop/SKILL.md` > Fold review fixes shows: a `fixup!` commit for a change to the files, an `amend!` commit for a commit message, whose new message you write as `.claude/skills/writing-commits/SKILL.md` says. Then run `scripts/check-commit.sh`, which checks the last commit alone.
 
 When a finding looks wrong, or its fix needs a change of design, leave it and say why in your report. The session that gave you the brief has the fixups reviewed, folds them and pushes.
 

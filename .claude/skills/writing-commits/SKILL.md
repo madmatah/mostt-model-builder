@@ -13,7 +13,7 @@ Each commit holds one reason to change ("Commits"), so that a reader can review 
 
 - **A subject that needs an "and"** usually holds two commits. Two unrelated fixes made the same afternoon are two commits.
 - **The test that pins a fix** goes in the commit of the fix, since every commit passes its own checks ("Commits").
-- **A correction to an earlier commit of the branch** is folded into it, as `.claude/skills/pull-request/SKILL.md` > Shape the history shows. The history describes the change that ships, not the path that found it.
+- **A correction to an earlier commit of the branch** is folded into it, as `.claude/skills/develop/SKILL.md` > Shape the history shows. The history describes the change that ships, not the path that found it.
 
 ## Choose the type
 
@@ -126,4 +126,4 @@ Before committing, read the message against the rules:
 2. **The subject** ("A commit message says why"): what the change achieves, not the files it touches, in the mood, the case, the punctuation and the length that the rule gives.
 3. **The body** ("A commit message says why"): laid out as the rule says, it says why and lists nothing that the diff shows. Without one, the change really speaks for itself.
 4. **The footer** ("A commit footer holds only what tools read"): what the rule requires, nothing that it excludes, and nothing untrue.
-5. **The checks:** once committed, the commit passes what "Commits" asks of it, `scripts/check-commit.sh`, which checks the last commit. When you rewrite a branch, `.claude/skills/pull-request/SKILL.md` > Shape the history checks every commit at once, and the last one on the whole gate.
+5. **The checks:** once committed, the commit passes what "Commits" asks of it, `scripts/check-commit.sh`, which checks the last commit. When you rewrite a branch, `.claude/skills/develop/SKILL.md` > Shape the history checks every commit at once, and the last one on the whole gate.
