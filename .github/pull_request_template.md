@@ -23,7 +23,7 @@
 
 ### Quality
 
-- [ ] `scripts/check-commit.sh` passes on every commit, and `scripts/check.sh` on the last one.
+- [ ] `scripts/check-commit.sh` passes on every commit, and the whole gate ran locally too when the change touches the gate itself or what the CI cannot run, as `CLAUDE.md` > Workflow, "Run each check once, at its level" says.
 - [ ] `/expert-review` ran once on the completed branch, and again on the fixes of its blocking findings, when the first fixer fixed any, and this pull request names the fixes no expert checked; every finding is fixed or answered here; when the branch changes the skills or agents that review or fix it, this pull request names the definitions that reviewed it, and says when they are not the branch's.
 
 ### History
