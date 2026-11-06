@@ -24,7 +24,7 @@
 ### Quality
 
 - [ ] `scripts/check-commit.sh` passes on every commit, and `scripts/check.sh` on the last one.
-- [ ] `/expert-review` ran on the completed branch and on each round of its fixes, or this pull request names the fixes no expert reviewed; every finding is fixed or answered here; when the branch changes the skills or agents that review or fix it, this pull request names the definitions that reviewed it, and says when they are not the branch's.
+- [ ] `/expert-review` ran once on the completed branch, and again on the fixes of its blocking findings, when the first fixer fixed any, and this pull request names the fixes no expert checked; every finding is fixed or answered here; when the branch changes the skills or agents that review or fix it, this pull request names the definitions that reviewed it, and says when they are not the branch's.
 
 ### History
 
