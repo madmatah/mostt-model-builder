@@ -49,6 +49,7 @@ from mostt_model_builder.host_main import (
     CLONE_ROOT,
     RECIPES,
     find_present_entry_modules,
+    is_card_template_present,
     read_pins,
 )
 
@@ -75,6 +76,7 @@ def judge_every_recipe() -> tuple[JudgedRecipe, ...]:
                 recipe_pins=read_pins(CLONE_ROOT / RECIPES_DIRECTORY_NAME / contract.name),
                 present_entry_modules=find_present_entry_modules(contract),
                 host_cpu_count=HOST_CPU_COUNT,
+                has_card_template=is_card_template_present(contract, CLONE_ROOT),
             ),
         )
         for contract in RECIPES.values()

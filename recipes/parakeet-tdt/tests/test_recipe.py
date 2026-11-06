@@ -13,7 +13,12 @@ from mostt_model_builder.domain.contract.recipe_contract import (
     judge_recipe,
 )
 from mostt_model_builder.domain.sources.source_pins import SourcePin, parse_source_pins
-from mostt_model_builder.host_main import CLONE_ROOT, find_present_entry_modules, read_pins
+from mostt_model_builder.host_main import (
+    CLONE_ROOT,
+    find_present_entry_modules,
+    is_card_template_present,
+    read_pins,
+)
 from mostt_recipe_parakeet_tdt.domain.publication.model_description import MODEL_DESCRIPTION
 from mostt_recipe_parakeet_tdt.domain.transcripts.run_readers import (
     read_onnx_asr_lines,
@@ -227,6 +232,7 @@ def judge_the_recipe() -> JudgedRecipe:
             recipe_pins=read_pins(RECIPE_SOURCES_PATH.parent),
             present_entry_modules=find_present_entry_modules(RECIPE),
             host_cpu_count=HOST_CPU_COUNT,
+            has_card_template=is_card_template_present(RECIPE, CLONE_ROOT),
         ),
     )
 

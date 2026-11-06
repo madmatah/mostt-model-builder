@@ -50,6 +50,7 @@ from mostt_model_builder.domain.contract.recipe_contract import (
     find_graph_source,
     find_runnable_row,
     judge_recipe,
+    locate_card_template,
     locate_entry_module_file,
 )
 from mostt_model_builder.domain.formats.file_formats import FileFormat
@@ -125,6 +126,7 @@ FACTS = RecipeFacts(
         {DESCRIBE_MODULE, TRANSCRIBE_MODULE, RECIPE_MODULE, FLEURS_CHECK_MODULE}
     ),
     host_cpu_count=20,
+    has_card_template=True,
 )
 
 
@@ -317,6 +319,24 @@ MODEL = ModelDescription(
 
 
 REFUSED_CONTRACTS = {
+    "a card template at an absolute path": (
+        replace(CONTRACT, model=replace(MODEL, template_path=PurePosixPath("/etc/passwd"))),
+        "its card template '/etc/passwd' is not a file name in the recipe's directory",
+    ),
+    "a card template outside the recipe's directory": (
+        replace(
+            CONTRACT, model=replace(MODEL, template_path=PurePosixPath("../other/model-card.md"))
+        ),
+        "its card template '../other/model-card.md' is not a file name in the recipe's directory",
+    ),
+    "a card template in a subdirectory": (
+        replace(CONTRACT, model=replace(MODEL, template_path=PurePosixPath("cards/model-card.md"))),
+        "its card template 'cards/model-card.md' is not a file name in the recipe's directory",
+    ),
+    "a card template whose name starts with a dot": (
+        replace(CONTRACT, model=replace(MODEL, template_path=PurePosixPath(".model-card.md"))),
+        "its card template '.model-card.md' is not a file name in the recipe's directory",
+    ),
     "a step named like the directory of the publications": (
         change_step(0, name="publications"),
         "its step 'publications' bears the name of a step of the core or of a directory of its run",
@@ -911,15 +931,44 @@ class TestTheRecipeContract:
             ) -> None:
                 assert judged_recipe.model == MODEL
 
+            def test_should_carry_the_path_of_its_template_in_the_recipes_directory(
+                self, judged_recipe: JudgedRecipe
+            ) -> None:
+                assert judged_recipe.card_template == PurePosixPath("recipes/family/model-card.md")
+
+        class TestWhenTheTemplateOfItsCardIsNoRegularFile:
+            @pytest.fixture
+            def judge_act(self) -> Callable[[], JudgedRecipe]:
+                return partial(
+                    judge_recipe,
+                    replace(RUN_CONTRACT, model=MODEL),
+                    replace(RUN_FACTS, has_card_template=False),
+                )
+
+            def test_should_refuse_it_and_name_its_path(
+                self, judge_act: Callable[[], JudgedRecipe]
+            ) -> None:
+                with pytest.raises(
+                    RecipeContractError,
+                    match=re.escape(
+                        "its card template model-card.md has no regular file at "
+                        "recipes/family/model-card.md"
+                    ),
+                ):
+                    judge_act()
+
         class TestWhenTheContractDescribesNoModel:
             @pytest.fixture
             def judged_recipe(self) -> JudgedRecipe:
-                return judge_recipe(RUN_CONTRACT, RUN_FACTS)
+                return judge_recipe(RUN_CONTRACT, replace(RUN_FACTS, has_card_template=False))
 
             def test_should_carry_none_so_that_the_card_names_what_is_missing(
                 self, judged_recipe: JudgedRecipe
             ) -> None:
                 assert judged_recipe.model is None
+
+            def test_should_carry_no_template(self, judged_recipe: JudgedRecipe) -> None:
+                assert judged_recipe.card_template is None
 
         class TestWhenARunReadsTheReference:
             @pytest.fixture
@@ -1216,6 +1265,42 @@ class TestTheRecipeContract:
                 self, located_file: PurePosixPath | None, module_file: PurePosixPath | None
             ) -> None:
                 assert located_file == module_file
+
+    class TestTheLocateCardTemplateFunction:
+        @pytest.mark.parametrize(
+            ("recipe_name", "model", "card_template"),
+            [
+                pytest.param(
+                    RECIPE_NAME,
+                    MODEL,
+                    PurePosixPath("recipes/family/model-card.md"),
+                    id="a file name, in the recipe's directory",
+                ),
+                pytest.param(RECIPE_NAME, None, None, id="no model, nowhere"),
+                pytest.param(
+                    RECIPE_NAME,
+                    replace(MODEL, template_path=PurePosixPath("../model-card.md")),
+                    None,
+                    id="a path outside the file-name grammar, nowhere",
+                ),
+                pytest.param(
+                    "../family", MODEL, None, id="a recipe name outside its grammar, nowhere"
+                ),
+            ],
+        )
+        class TestWhenGivenTheModelOfARecipe:
+            @pytest.fixture
+            def located_template(
+                self, recipe_name: str, model: ModelDescription | None
+            ) -> PurePosixPath | None:
+                return locate_card_template(recipe_name, model)
+
+            def test_should_place_it_only_once_both_names_pass_their_grammars(
+                self,
+                located_template: PurePosixPath | None,
+                card_template: PurePosixPath | None,
+            ) -> None:
+                assert located_template == card_template
 
     class TestTheFindRunnableRowFunction:
         @pytest.fixture

@@ -233,6 +233,7 @@ class RecipeFacts:
     recipe_pins: tuple[SourcePin, ...]
     present_entry_modules: frozenset[str]
     host_cpu_count: int
+    has_card_template: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -263,6 +264,7 @@ class JudgedRecipe:
     rows: tuple[StepRow, ...]
     candidate: tuple[JudgedCandidateFile, ...]
     parities: tuple[Parity, ...]
+    card_template: PurePosixPath | None
     runs: tuple[JudgedRun, ...] = ()
     derived_rows: tuple[DerivedRow, ...] = ()
     conversion_input: StepOutputOrigin | None = None
@@ -290,6 +292,14 @@ def locate_entry_module_file(entry_module: str, recipe_name: str) -> PurePosixPa
         return None
     *parent_packages, module_name = (package, *module_path)
     return source_directory.joinpath(*parent_packages, module_name + PYTHON_SOURCE_SUFFIX)
+
+
+def locate_card_template(recipe_name: str, model: ModelDescription | None) -> PurePosixPath | None:
+    if model is None or not RECIPE_NAME_GRAMMAR.fullmatch(recipe_name):
+        return None
+    if not is_file_name(str(model.template_path)):
+        return None
+    return PurePosixPath(RECIPES_DIRECTORY_NAME, recipe_name, model.template_path)
 
 
 def list_runnable_rows(recipe: JudgedRecipe) -> tuple[StepRow, ...]:
@@ -391,7 +401,27 @@ def judge_recipe(contract: RecipeContract, facts: RecipeFacts) -> JudgedRecipe:
         conversions=contract.conversions,
         comparisons=judge_comparisons(contract.comparisons, runs, where),
         model=contract.model,
+        card_template=judge_card_template(contract, facts.has_card_template, where),
     )
+
+
+def judge_card_template(
+    contract: RecipeContract, has_card_template: bool, where: str
+) -> PurePosixPath | None:
+    if contract.model is None:
+        return None
+    card_template = locate_card_template(contract.name, contract.model)
+    if card_template is None:
+        raise RecipeContractError(
+            f"{where}: its card template {str(contract.model.template_path)!a} is not a file "
+            "name in the recipe's directory"
+        )
+    if not has_card_template:
+        raise RecipeContractError(
+            f"{where}: its card template {contract.model.template_path} has no regular file at "
+            f"{card_template}"
+        )
+    return card_template
 
 
 def combine_pins(

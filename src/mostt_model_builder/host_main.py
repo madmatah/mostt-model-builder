@@ -136,6 +136,7 @@ from mostt_model_builder.domain.contract.recipe_contract import (
     list_entry_modules,
     list_rows_of_step,
     list_runnable_rows,
+    locate_card_template,
     locate_entry_module_file,
 )
 from mostt_model_builder.domain.formats.external_data import ExternalDataError
@@ -424,6 +425,11 @@ def find_present_entry_modules(contract: RecipeContract) -> frozenset[str]:
     return frozenset(present_entry_modules)
 
 
+def is_card_template_present(contract: RecipeContract, clone_root: Path) -> bool:
+    card_template = locate_card_template(contract.name, contract.model)
+    return card_template is not None and is_regular_file(clone_root / card_template)
+
+
 def load_recipe(name: str) -> JudgedRecipe:
     contract = RECIPES[name]
     return judge_recipe(
@@ -433,6 +439,7 @@ def load_recipe(name: str) -> JudgedRecipe:
             recipe_pins=read_pins(CLONE_ROOT / RECIPES_DIRECTORY_NAME / contract.name),
             present_entry_modules=find_present_entry_modules(contract),
             host_cpu_count=len(os.sched_getaffinity(0)),
+            has_card_template=is_card_template_present(contract, CLONE_ROOT),
         ),
     )
 
@@ -749,11 +756,9 @@ def read_images_requirements() -> tuple[DeclaredRequirement, ...]:
 
 
 def read_card_template(recipe: JudgedRecipe) -> str | None:
-    if recipe.model is None:
+    if recipe.card_template is None:
         return None
-    return (
-        CLONE_ROOT / RECIPES_DIRECTORY_NAME / recipe.name / recipe.model.template_path
-    ).read_text(encoding=TEXT_ENCODING)
+    return (CLONE_ROOT / recipe.card_template).read_text(encoding=TEXT_ENCODING)
 
 
 def build_card_request(recipe: JudgedRecipe, context: BuildContext) -> CardRequest:

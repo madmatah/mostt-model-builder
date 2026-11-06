@@ -6,8 +6,13 @@ import pytest
 
 from mostt_model_builder.application.resolve_lock import LockResolution
 from mostt_model_builder.domain.containers.step_peaks import StepPeaks
+from mostt_model_builder.domain.contract.model_description import ModelDescription
+from mostt_model_builder.domain.contract.recipe_contract import (
+    RECIPES_DIRECTORY_NAME,
+    RecipeContract,
+)
 from mostt_model_builder.domain.lock.lock_check import CheckedLock, LockedPackage
-from mostt_model_builder.host_main import describe_lock_resolution
+from mostt_model_builder.host_main import describe_lock_resolution, is_card_template_present
 
 BOOTSTRAP_PATH = (
     Path(__file__).resolve().parent.parent / "src" / "mostt_model_builder" / "bootstrap.py"
@@ -50,6 +55,30 @@ LOCK_RESOLUTION = LockResolution(
     change_lines=(),
     peaks=StepPeaks(memory_peak_bytes=0, process_count_peak=0),
 )
+TEMPLATE_RECIPE_NAME = "family"
+CARD_TEMPLATE_NAME = "card-template.md"
+CARD_TEMPLATE_TEXT = "# {title}\n"
+CONTRACT_WITHOUT_MODEL = RecipeContract(
+    name=TEMPLATE_RECIPE_NAME, images=(), steps=(), candidate=()
+)
+CONTRACT_WITH_MODEL = RecipeContract(
+    name=TEMPLATE_RECIPE_NAME,
+    images=(),
+    steps=(),
+    candidate=(),
+    model=ModelDescription(
+        title="Family",
+        template_path=PurePosixPath(CARD_TEMPLATE_NAME),
+        measuring_library_names=(),
+        variants=(),
+    ),
+)
+
+
+def make_recipe_directory(clone_root: Path) -> Path:
+    recipe_directory = clone_root / RECIPES_DIRECTORY_NAME / TEMPLATE_RECIPE_NAME
+    recipe_directory.mkdir(parents=True)
+    return recipe_directory
 
 
 def run_command_line(arguments: list[str]) -> subprocess.CompletedProcess[str]:
@@ -231,3 +260,57 @@ class TestTheHostMain:
                 f"wrote images/environment.lock, {len(LOCKED_PACKAGES)} packages, "
                 f"{len(RECORDED_EXTRAS)} extras, from {LOCK_RUN}; review its change in the diff"
             )
+
+    class TestTheIsCardTemplatePresentFunction:
+        class TestWhenTheTemplateIsARegularFile:
+            @pytest.fixture
+            def is_present(self, tmp_path: Path) -> bool:
+                recipe_directory = make_recipe_directory(tmp_path)
+                (recipe_directory / CARD_TEMPLATE_NAME).write_text(CARD_TEMPLATE_TEXT)
+                return is_card_template_present(CONTRACT_WITH_MODEL, tmp_path)
+
+            def test_should_find_the_template(self, is_present: bool) -> None:
+                assert is_present
+
+        class TestWhenTheTemplateIsALinkToARegularFile:
+            @pytest.fixture
+            def is_present(self, tmp_path: Path) -> bool:
+                recipe_directory = make_recipe_directory(tmp_path)
+                linked_file = tmp_path / CARD_TEMPLATE_NAME
+                linked_file.write_text(CARD_TEMPLATE_TEXT)
+                (recipe_directory / CARD_TEMPLATE_NAME).symlink_to(linked_file)
+                return is_card_template_present(CONTRACT_WITH_MODEL, tmp_path)
+
+            def test_should_refuse_the_link_so_that_the_host_never_reads_through_it(
+                self, is_present: bool
+            ) -> None:
+                assert not is_present
+
+        class TestWhenTheTemplateIsADirectory:
+            @pytest.fixture
+            def is_present(self, tmp_path: Path) -> bool:
+                recipe_directory = make_recipe_directory(tmp_path)
+                (recipe_directory / CARD_TEMPLATE_NAME).mkdir()
+                return is_card_template_present(CONTRACT_WITH_MODEL, tmp_path)
+
+            def test_should_refuse_the_directory(self, is_present: bool) -> None:
+                assert not is_present
+
+        class TestWhenTheTemplateIsMissing:
+            @pytest.fixture
+            def is_present(self, tmp_path: Path) -> bool:
+                make_recipe_directory(tmp_path)
+                return is_card_template_present(CONTRACT_WITH_MODEL, tmp_path)
+
+            def test_should_not_find_the_template(self, is_present: bool) -> None:
+                assert not is_present
+
+        class TestWhenTheContractDescribesNoModel:
+            @pytest.fixture
+            def is_present(self, tmp_path: Path) -> bool:
+                recipe_directory = make_recipe_directory(tmp_path)
+                (recipe_directory / CARD_TEMPLATE_NAME).write_text(CARD_TEMPLATE_TEXT)
+                return is_card_template_present(CONTRACT_WITHOUT_MODEL, tmp_path)
+
+            def test_should_find_no_template_since_no_card_is_built(self, is_present: bool) -> None:
+                assert not is_present
