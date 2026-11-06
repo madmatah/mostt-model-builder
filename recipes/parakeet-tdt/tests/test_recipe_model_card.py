@@ -1,5 +1,6 @@
 import tomllib
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -23,7 +24,13 @@ from mostt_model_builder.domain.lock.declared_requirements import (
 )
 from mostt_model_builder.domain.publication.measuring_libraries import select_measuring_libraries
 from mostt_model_builder.domain.publication.model_card import CardInputs, render_model_card
-from mostt_model_builder.host_main import CLONE_ROOT, find_present_entry_modules, read_pins
+from mostt_model_builder.host_main import (
+    CLONE_ROOT,
+    find_present_entry_modules,
+    is_card_template_present,
+    read_card_template,
+    read_pins,
+)
 from mostt_recipe_parakeet_tdt.domain.publication.model_description import MODEL_DESCRIPTION
 from mostt_recipe_parakeet_tdt.recipe import RECIPE
 
@@ -43,6 +50,7 @@ def judge_the_recipe() -> JudgedRecipe:
             recipe_pins=read_pins(RECIPE_DIRECTORY),
             present_entry_modules=find_present_entry_modules(RECIPE),
             host_cpu_count=HOST_CPU_COUNT,
+            has_card_template=is_card_template_present(RECIPE, CLONE_ROOT),
         ),
     )
 
@@ -98,9 +106,7 @@ def render_the_card() -> str:
     recipe = judge_the_recipe()
     card = render_model_card(
         CardInputs(
-            template=(RECIPE_DIRECTORY / MODEL_DESCRIPTION.template_path).read_text(
-                encoding="utf-8"
-            ),
+            template=cast(str, read_card_template(recipe)),
             description=MODEL_DESCRIPTION,
             pins=recipe.pins,
             verification=build_verification(recipe),
