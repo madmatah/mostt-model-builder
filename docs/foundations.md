@@ -196,8 +196,11 @@ The conventions serve one aim: the code explains itself, so that it needs no com
 
 `CLAUDE.md` > Workflow, "Plan before writing code" says when a plan is due, and the `develop` skill how it is made. The reasons:
 
-- **A mistake in a plan costs every step after it:** the code built on it, its review and its fixes. A plan is short, so thorough reasoning costs less there than anywhere else: the planner and the critic run on Opus at `xhigh`, and the implementation that follows a checked plan at `high`.
+- **A mistake in a plan costs every step after it:** the code built on it, its review and its fixes. A plan is short, so thorough reasoning costs less there than anywhere else: the planner and the critic of large work run on Opus at `xhigh`, the critic of normal work at `high`, since a normal plan adds no module, no public interface and no decision that changes the project, and the implementation that follows a checked plan at `high`.
 - **A plan chooses the method before the code.** A test that covers the whole input space, a simpler design or a library costs nothing to choose in a plan; chosen after the code, it costs a revised plan, the code written again and another full review.
+- **The work is sized before it is planned:** a sync made of mechanical commits and a new module do not need the same planning, and a planner with three rounds of a critic at `xhigh` can cost a third of a session that a brief would serve. The plan states its size and the reason, so that the critic and the user can question it.
+- **The decisions are settled with the user before the plan is written:** a decision that the user meets only in a written plan sends the plan back to planning and to its critic, while a question asked first, with its recommended answer, costs a line. The agents find the facts, since a question that the code answers spends the user's attention on nothing. When the user does not follow the work, the pull request lists the answers taken alone, so that the user checks them once.
+- **The session that held the interview writes the plan of normal work:** it holds the decisions first-hand, and a planner would read the code again to rebuild them. The planner stays for large work, whose design needs a context of its own.
 - **A plan holds decisions, not code:** the goal, the design choices and the alternatives they reject, where the tests go, the commits, the documents and the risks. File paths and code go stale as soon as the work starts, the implementation finds them anyway, and a plan that describes the code line by line runs to hundreds of lines that the planner, the critic and the implementation all pay for.
 - **A mock of an output a person reads comes before its plan:** a critic checks a plan against the code and the rules, but cannot tell whether a reader will like the output. A mock costs a few lines to write and to change, while an output that the user rejects once it is built costs a revised plan, a new implementation and another review.
 - **A critic that did not write the plan checks it,** against the code and the rules, as an expert reviews code it did not write: an assumption about the code that no one checked is the cheapest mistake to catch in a plan.
@@ -206,8 +209,8 @@ The conventions serve one aim: the code explains itself, so that it needs no com
 - **The planner writes its plan file and reports in a few lines:** a plan returned in a report is written twice, by the planner and again by the session, and then weighs on every later turn of the session, which needs its summary and its open questions, and reads the rest of the plan only where it needs it, such as its decisions.
 - **The critic checks the whole plan, and its mock, at each round,** since a plan of decisions is short: a check of a revision from its diff alone would miss the parts of the plan that a changed mock settles and the diff does not touch, such as a test that still asserts the old order of the output.
 - **Within one planning, the planner answers the critic itself,** since it already holds the code the plan rests on, in a context far smaller than an implementer's: a new planner would read it all again.
-- **A change that leaves the design as it is goes without a plan,** such as a bug fix inside one function: a plan and its check, both at `xhigh`, would cost more than the mistakes they could catch there.
-- **The plan lives outside the repository,** since the repository holds only the current state, and a plan describes work to come. Each plan has one writer, the session that owns its branch, through its planner, so plans written in parallel never collide.
+- **The smallest changes go without a plan,** such as a bug fix inside one function: even a brief would cost more than the mistakes it could catch there.
+- **The plan lives outside the repository,** since the repository holds only the current state, and a plan describes work to come. Each plan has one writer, the session that owns its branch, itself or through its planner, so plans written in parallel never collide.
 
 ### Agent guidance
 
@@ -219,7 +222,7 @@ Agents work from four kinds of documents, each with one job, so that a statement
 - **Skills hold procedures** because a procedure matters only while its task runs, and a skill loads only then.
 - **This document holds the design and its reasons,** and states no rule, so that a rule changes in one place.
 - **An expert reviewer reads at least the rules files of its domain,** one hop away, so that it never chases a rule across documents. It starts without the session's `CLAUDE.md` files, which would cost it tokens on every turn and could steer it: the rules that apply are the checkout's.
-- **Each agent runs on the model and at the effort its task needs,** because every turn of every run pays for both, and a review multiplies the runs: Opus where a miss costs most or where code is written, at `xhigh` only for plans ([Plans](#plans)), Sonnet where written rules guide the check, Haiku for search. A low effort saves Haiku and Sonnet little and costs them much quality, so they never run at it.
+- **Each agent runs on the model and at the effort its task needs,** because every turn of every run pays for both, and a review multiplies the runs: Opus where a miss costs most or where code is written, at `xhigh` only for large plans ([Plans](#plans)), Sonnet where written rules guide the check, Haiku for search. A low effort saves Haiku and Sonnet little and costs them much quality, so they never run at it.
 - **The history of a decision lives outside the repository,** with the project-management material, so the documents here describe only the present, with its reasons.
 
 ## Testing
@@ -272,3 +275,4 @@ Every branch goes through `/expert-review` before its pull request. It is a proj
 - Creative Commons Attribution 4.0 International, the license of the published files and of the works they adapt, whose section 3(a)(1) the card's attribution follows: https://creativecommons.org/licenses/by/4.0/legalcode.en
 - The Hub's model cards, whose metadata the card's front matter writes: https://huggingface.co/docs/hub/model-cards
 - M. Bisani and H. Ney, "Bootstrap estimates for confidence intervals in ASR performance evaluation", ICASSP 2004, the paired bootstrap of the comparisons: https://doi.org/10.1109/ICASSP.2004.1326009
+- mattpocock/skills, whose plans of decisions rather than code and whose interview of the user before planning [Plans](#plans) adapts: https://github.com/mattpocock/skills

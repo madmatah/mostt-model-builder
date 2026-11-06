@@ -76,4 +76,4 @@ paths:
   - Sonnet sorts, and checks a change against written rules, where it gives the best quality for its price;
   - Haiku searches and lists;
   - Haiku and Sonnet run at `medium` or higher, since a low effort costs them much quality for little saving, and Haiku's price leaves room for `high`;
-  - Opus runs at `medium` for well-specified work, such as a fix from a brief or the review of a change's tests, at `high` for an implementation and for judgment, and at `xhigh` for a plan and its check, since a mistake in a plan costs every step after it; any other `xhigh`, and any `max`, needs a reason that `docs/foundations.md` gives.
+  - Opus runs at `medium` for well-specified work, such as a fix from a brief or the review of a change's tests, at `high` for an implementation, for judgment and for the check of a normal plan, and at `xhigh` for the plan of large work and its check, since a mistake in a plan costs every step after it; any other `xhigh`, and any `max`, needs a reason that `docs/foundations.md` gives.
