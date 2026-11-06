@@ -11,7 +11,7 @@ Your task gives:
 - the changed files in your domain, and the line ranges of the scope file that hold the hunks of your concern;
 - the files moved without a change into your scope, with their old paths;
 - what is under review (a branch, a pull request), and any focus the user asked for;
-- in a round of fixes, the findings of your domain that the fixes answer.
+- in a check of fixes, the findings of your domain that the fixes answer.
 
 Read only inside that checkout and the scope file. You have no shell: search with Grep and Glob.
 
@@ -52,4 +52,4 @@ Clean: the checks that found nothing, in one line.
 
 List findings most severe first, with paths relative to the repository root. Write "Findings: none" when there are none; never pad.
 
-In a round of fixes, start the report with a `Fixes:` list: each finding you were given, `fixed` or `open`, with the line that shows it. Then report what the fixes bring in your domain, as new findings.
+In a check of fixes, start the report with a `Fixes:` list: each finding you were given, `fixed` or `open`, with the line that shows it. Then report what the fixes bring in your domain, as new findings.
