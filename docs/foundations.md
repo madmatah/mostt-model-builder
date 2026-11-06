@@ -183,7 +183,7 @@ The conventions serve one aim: the code explains itself, so that it needs no com
 
 ### Git
 
-`CLAUDE.md` > Workflow says how a session works, and the `pull-request` and `writing-commits` skills hold the procedures. The reasons behind them:
+`CLAUDE.md` > Workflow says how a session works, and the `develop`, `pull-request` and `writing-commits` skills hold the procedures. The reasons behind them:
 
 - **A worktree per piece of work** keeps parallel sessions from changing each other's files, and keeps the main checkout on `main`, where the user's running work never sees work in progress.
 - **A stacked branch** costs only a rebase of its own commits when its base is rewritten, so no work waits for a merge.
@@ -194,7 +194,7 @@ The conventions serve one aim: the code explains itself, so that it needs no com
 
 ### Plans
 
-`CLAUDE.md` > Workflow, "Plan before writing code" says when a plan is due, and the `pull-request` skill how it is made. The reasons:
+`CLAUDE.md` > Workflow, "Plan before writing code" says when a plan is due, and the `develop` skill how it is made. The reasons:
 
 - **A mistake in a plan costs every step after it:** the code built on it, its review and the rounds of fixes. A plan is short, so thorough reasoning costs less there than anywhere else: the planner and the critic run on Opus at `xhigh`, and the implementation that follows a checked plan at `high`.
 - **A plan chooses the method before the code.** A test that covers the whole input space, a simpler design or a library costs nothing to choose in a plan; chosen after the code, it costs the rounds of review that showed the need for it.
