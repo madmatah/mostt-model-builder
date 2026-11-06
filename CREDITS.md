@@ -44,6 +44,34 @@ mostt-model-builder reuses the work below. Each entry says what is reused, where
 > See the License for the specific language governing permissions and
 > limitations under the License.
 
+## Agent guidance
+
+- **mattpocock/skills:** the content of a plan in `.claude/agents/planner.md` > The plan, which records decisions rather than code, adapted from `skills/engineering/to-spec/SKILL.md` of mattpocock/skills (https://github.com/mattpocock/skills), read at commit `4ae2317`, under the MIT License:
+
+  ```
+  MIT License
+
+  Copyright (c) 2026 Matt Pocock
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files (the "Software"), to deal
+  in the Software without restriction, including without limitation the rights
+  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+  copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in all
+  copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  SOFTWARE.
+  ```
+
 ## Data
 
 - **The names and shapes of the tensors** of Moondream's Parakeet Ultra, https://huggingface.co/moondream/parakeet-ultra, and of NVIDIA's Parakeet TDT 0.6B v3, https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3, as `describe` lists them, without any weight: `recipes/parakeet-tdt/tests/fixtures/moondream-tensors` and `recipes/parakeet-tdt/tests/fixtures/nemo-state-dict`, which test the mapping of the weights' names. Both models are under CC-BY-4.0, https://creativecommons.org/licenses/by/4.0/: Parakeet Ultra by Moondream, and Parakeet TDT 0.6B v3 by NVIDIA.
