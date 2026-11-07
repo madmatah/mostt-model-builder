@@ -46,7 +46,7 @@ Files:
 
 ### float16 (FP16)
 
-The encoder converted to float16, for the GPU.
+The encoder converted to float16, with the computation of its lengths kept in float32, for the GPU.
 
 - **Runs on:** GPU; on the CPU, ONNX Runtime computes most of it in float32 again
 - **Size:** 0.00 GB
@@ -68,7 +68,7 @@ Files:
 
 ### bfloat16 (BF16)
 
-The encoder converted to bfloat16, with Pad, Tile and Floor kept in float32, for the GPU.
+The encoder converted to bfloat16, with Pad, Tile, Floor and the computation of its lengths kept in float32, for the GPU.
 
 - **Runs on:** GPU; on the CPU, ONNX Runtime computes most of it in float32 again
 - **Size:** 0.00 GB
@@ -134,7 +134,7 @@ Moondream's voice activity head, which its own runtime uses to cut long recordin
 4. Transformers reads the weights of Parakeet Ultra as Moondream publishes them, and its encoder and joint are checked against NeMo's, so that the mapping of the weights is checked from a second side.
 5. onnx-asr transcribes English, Latin American Spanish, French, Brazilian Portuguese and German from FLEURS with every variant, on each device that its section under Variants gives.
 
-Every file was copied out of the container that wrote it, and refused if it began as code, a pickle or an archive, or broke the structure of its format. Every ONNX graph was inspected against the build's rules, on its nodes, its tensors and its quantized products. The verification then measured every run on FLEURS, and held every comparison of two runs and every parity of an export with its reference framework to its rule.
+Every file was copied out of the container that wrote it, and refused if it began as code, a pickle or an archive, or broke the structure of its format. Every ONNX graph was inspected against the build's rules, on its nodes, its tensors and its quantized products, and each converted graph on the precision of the integers it computes. The verification then measured every run on FLEURS, and held every comparison of two runs and every parity of an export with its reference framework to its rule.
 
 Every step ran in a container without network, from pinned sources, libraries and base images.
 
@@ -166,7 +166,7 @@ Modifications:
 - Parakeet Ultra adapts Parakeet TDT 0.6B v3: Moondream post-trained its weights and kept its architecture and its tokenizer.
 - The weights of Parakeet Ultra, without Moondream's voice activity head, are loaded into NeMo's model of Parakeet TDT 0.6B v3 and exported to ONNX in float32: the encoder, with its external data, and the decoder and joint of one prediction step.
 - In the exported encoder, the 48 pointwise convolutions run as matrix products and the attention of each layer as one Attention node.
-- The encoder is converted to float16; to bfloat16, with Pad, Tile and Floor kept in float32; and to 8-bit blocks of 64 symmetric weights. The decoder and joint stay in float32 for every variant.
+- The encoder is converted to float16, with the computation of its lengths kept in float32; to bfloat16, with Pad, Tile, Floor and the computation of its lengths kept in float32; and to 8-bit blocks of 64 symmetric weights. The decoder and joint stay in float32 for every variant.
 - The vocabulary is that of Parakeet TDT 0.6B v3, one piece and its id per line.
 
 These files are licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). They are provided as is, without warranties, as section 5 of the license states. Neither Moondream nor NVIDIA endorses these files.

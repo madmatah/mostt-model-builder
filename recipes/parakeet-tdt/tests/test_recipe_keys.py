@@ -18,6 +18,7 @@ from mostt_model_builder.domain.contract.recipe_contract import (
     RecipeFacts,
     judge_recipe,
 )
+from mostt_model_builder.domain.onnx.conversion_request import FloatConversion
 from mostt_model_builder.host_main import (
     CLONE_ROOT,
     find_present_entry_modules,
@@ -33,6 +34,7 @@ BYTECODE_DIRECTORY_NAME = "__pycache__"
 REMOVED_LANGUAGE = "en_us"
 REMOVED_VARIANT = "bfloat16"
 CHANGED_BY_A_VARIANT = {CANDIDATE_ENTRY_NAME, INSPECT_ROW.name}
+CHANGED_BY_THE_KEPT_INPUTS = {"convert-float16", "convert-bfloat16"}
 
 
 def read_clone_tree() -> dict[PurePosixPath, bytes]:
@@ -126,6 +128,21 @@ def remove_variant(contract: RecipeContract, variant: str) -> RecipeContract:
     )
 
 
+def remove_kept_inputs(contract: RecipeContract) -> RecipeContract:
+    return replace(
+        contract,
+        conversions=tuple(
+            replace(
+                variant_conversion,
+                conversion=replace(variant_conversion.conversion, kept_inputs=()),
+            )
+            if isinstance(variant_conversion.conversion, FloatConversion)
+            else variant_conversion
+            for variant_conversion in contract.conversions
+        ),
+    )
+
+
 @dataclass(frozen=True)
 class KeyChanges:
     removed_rows: frozenset[str]
@@ -201,3 +218,22 @@ class TestTheKeysOfTheParakeetTdtRecipe:
             self, key_changes: KeyChanges
         ) -> None:
             assert key_changes.changed_rows == CHANGED_BY_A_VARIANT
+
+    class TestWhenTheFloatConversionsKeepNoComputationInFloat32:
+        @pytest.fixture(scope="class")
+        @classmethod
+        def key_changes(cls) -> KeyChanges:
+            tree_files = read_clone_tree()
+            return compare_keys(
+                key_every_row(RECIPE, tree_files),
+                key_every_row(remove_kept_inputs(RECIPE), tree_files),
+                lambda _name: False,
+            )
+
+        def test_should_drop_no_row(self, key_changes: KeyChanges) -> None:
+            assert key_changes.removed_rows == frozenset()
+
+        def test_should_change_the_keys_of_the_float16_and_bfloat16_conversions_alone(
+            self, key_changes: KeyChanges
+        ) -> None:
+            assert key_changes.changed_rows == CHANGED_BY_THE_KEPT_INPUTS

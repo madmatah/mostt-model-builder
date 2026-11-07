@@ -4,12 +4,16 @@ import pytest
 
 from mostt_model_builder.domain.containers.devices import Device
 from mostt_model_builder.domain.formats.file_formats import FileFormat
-from mostt_model_builder.domain.onnx.conversion_request import EightBitBlocksConversion
+from mostt_model_builder.domain.onnx.conversion_request import (
+    EightBitBlocksConversion,
+    FloatConversion,
+)
 from mostt_recipe_parakeet_tdt.domain.variants.quantizations import find_quantization
 from mostt_recipe_parakeet_tdt.domain.variants.variants import VARIANTS, Variant, name_run
 from mostt_recipe_parakeet_tdt.recipe import RECIPE
 
 CANDIDATE_NAMES = [candidate_file.name for candidate_file in RECIPE.candidate]
+LENGTHS_KEPT_IN_FLOAT32 = ("length",)
 DEVICES_BY_VARIANT = {
     "float32": (Device.CPU, Device.GPU),
     "float16": (Device.GPU,),
@@ -55,6 +59,13 @@ class TestTheVariants:
 
         def test_should_run_float16_and_bfloat16_on_the_gpu_and_the_others_on_both(self) -> None:
             assert {variant.name: variant.devices for variant in VARIANTS} == DEVICES_BY_VARIANT
+
+        def test_should_compute_the_lengths_in_float32_in_float16_and_bfloat16(self) -> None:
+            assert {
+                variant.name: variant.conversion.kept_inputs
+                for variant in VARIANTS
+                if isinstance(variant.conversion, FloatConversion)
+            } == {"float16": LENGTHS_KEPT_IN_FLOAT32, "bfloat16": LENGTHS_KEPT_IN_FLOAT32}
 
         def test_should_convert_to_8_bit_blocks_once(self) -> None:
             assert [

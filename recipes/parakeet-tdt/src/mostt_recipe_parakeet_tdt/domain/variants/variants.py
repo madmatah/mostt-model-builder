@@ -19,6 +19,13 @@ QUANTIZED_PRODUCT_COUNT = 265
 # A converted encoder is a single file of 1.24 GB in float16 and bfloat16 and 692 MB in 8-bit
 # blocks, under the 2 GiB that a protobuf may hold.
 CONVERTED_ENCODER_MAX_SIZE_BYTES = 2 * 2**30
+# The encoder's input lengths count frames of 10 ms, about 4 340 for the bench's longest recording,
+# 43.4 s, and float16 holds every integer only up to 2 048, bfloat16 up to 256: the computation
+# that flows from them, the output lengths and the intermediate ones cast to int64, stays in
+# float32, as the export computes it. The export step names the same input; sharing the name would
+# put this module in its closure, or its module in the transcriptions', and the conversion refuses
+# an input that the graph lacks.
+FEATURE_LENGTHS_INPUT = "length"
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,12 +42,20 @@ VARIANTS = (
     Variant(
         FLOAT16_VARIANT,
         (Device.GPU,),
-        FloatConversion(ConversionKind.FLOAT16, name_encoder_file(FLOAT16_VARIANT)),
+        FloatConversion(
+            ConversionKind.FLOAT16,
+            name_encoder_file(FLOAT16_VARIANT),
+            kept_inputs=(FEATURE_LENGTHS_INPUT,),
+        ),
     ),
     Variant(
         BFLOAT16_VARIANT,
         (Device.GPU,),
-        FloatConversion(ConversionKind.BFLOAT16, name_encoder_file(BFLOAT16_VARIANT)),
+        FloatConversion(
+            ConversionKind.BFLOAT16,
+            name_encoder_file(BFLOAT16_VARIANT),
+            kept_inputs=(FEATURE_LENGTHS_INPUT,),
+        ),
     ),
     Variant(
         EIGHT_BIT_BLOCKS_VARIANT,
