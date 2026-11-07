@@ -10,10 +10,14 @@ MODEL_CARD_FILE_NAME = "README.md"
 PUBLICATION_REQUEST_FILE_NAME = "publication-request.json"
 PUBLICATION_REQUEST_MAX_SIZE_BYTES = 64 * 1024
 REQUEST_ENCODING = "ascii"
-MAX_COMMIT_MESSAGE_CHARACTERS = 200
+MAX_COMMIT_TITLE_CHARACTERS = 200
+MAX_COMMIT_DESCRIPTION_CHARACTERS = 4096
+COMMIT_MESSAGE_CHARACTERS = frozenset(map(chr, range(0x20, 0x7F))) | {"\n"}
 MAX_PUBLISHED_FILE_COUNT = 256
 MAX_PUBLISHED_SIZE_BYTES = 2**36
-REQUEST_KEYS = frozenset({"repository", "commit_message", "candidate", "card"})
+REQUEST_KEYS = frozenset(
+    {"repository", "commit_message", "commit_description", "candidate", "card"}
+)
 FILE_KEYS = frozenset({"name", "size_bytes", "sha256"})
 
 
@@ -34,13 +38,14 @@ class PublicationRequest:
     commit_message: str
     candidate: tuple[PublishedFile, ...]
     card: PublishedFile
+    commit_description: str = ""
 
     @property
     def files(self) -> tuple[PublishedFile, ...]:
         return (*self.candidate, self.card)
 
 
-def describe_commit_message(card_title: str) -> str:
+def describe_commit_title(card_title: str) -> str:
     return f"Publish {card_title}"
 
 
@@ -56,6 +61,7 @@ def render_publication_request(request: PublicationRequest) -> bytes:
     document = {
         "repository": request.repository,
         "commit_message": request.commit_message,
+        "commit_description": request.commit_description,
         "candidate": [render_published_file(published) for published in request.candidate],
         "card": render_published_file(request.card),
     }
@@ -72,11 +78,12 @@ def parse_publication_request(content: bytes) -> PublicationRequest:
         )
     request = PublicationRequest(
         repository=parse_repository(fields["repository"], "the request"),
-        commit_message=parse_commit_message(fields["commit_message"]),
+        commit_message=parse_commit_title(fields["commit_message"]),
         candidate=tuple(
             parse_published_file(entry, "the request's candidate") for entry in entries
         ),
         card=parse_published_file(fields["card"], "the request's card"),
+        commit_description=parse_commit_description(fields["commit_description"]),
     )
     if request.card.name != MODEL_CARD_FILE_NAME:
         raise PublicationRequestError(f"the request's card is not named {MODEL_CARD_FILE_NAME}")
@@ -117,14 +124,27 @@ def parse_repository(field: object, what: str) -> str:
     return field
 
 
-def parse_commit_message(field: object) -> str:
+def parse_commit_title(field: object) -> str:
     if (
         not isinstance(field, str)
         or not field
-        or len(field) > MAX_COMMIT_MESSAGE_CHARACTERS
+        or len(field) > MAX_COMMIT_TITLE_CHARACTERS
         or not field.isprintable()
     ):
         raise PublicationRequestError(f"the request's commit message is {field!a}")
+    return field
+
+
+def parse_commit_description(field: object) -> str:
+    if (
+        not isinstance(field, str)
+        or len(field) > MAX_COMMIT_DESCRIPTION_CHARACTERS
+        or not COMMIT_MESSAGE_CHARACTERS.issuperset(field)
+    ):
+        raise PublicationRequestError(
+            "the request's commit description is not a text of at most "
+            f"{MAX_COMMIT_DESCRIPTION_CHARACTERS} printable ASCII characters and line feeds"
+        )
     return field
 
 
