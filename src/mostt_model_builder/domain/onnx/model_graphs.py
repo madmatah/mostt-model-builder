@@ -3,6 +3,14 @@ from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
+from mostt_model_builder.domain.onnx.element_types import ElementType
+from mostt_model_builder.domain.onnx.graph_paths import (
+    ONNX_DOMAINS,
+    accumulate_path_labels,
+    holds_subgraph,
+    index_graph_paths,
+    list_attribute_graphs,
+)
 from mostt_model_builder.domain.onnx.inspection_report import (
     CONSTANT_PRODUCERS,
     MAX_TRACE_LENGTH,
@@ -10,15 +18,14 @@ from mostt_model_builder.domain.onnx.inspection_report import (
     MatrixProduct,
     NodeCount,
     NodeScope,
+    TensorComputation,
     WeightSource,
 )
 
 # The values of AttributeProto.AttributeType and of TensorProto.DataLocation, and the keys of a
 # tensor's external_data, as onnx/onnx.proto defines them: the messages carry them as plain values.
 TENSOR_ATTRIBUTE = 4
-GRAPH_ATTRIBUTE = 5
 TENSORS_ATTRIBUTE = 9
-GRAPHS_ATTRIBUTE = 10
 SPARSE_TENSOR_ATTRIBUTE = 11
 SPARSE_TENSORS_ATTRIBUTE = 12
 EXTERNAL_DATA_LOCATION = 1
@@ -28,6 +35,8 @@ EXTERNAL_LENGTH_KEY = "length"
 # A TrainingInfoProto of onnx/onnx.proto holds two graphs, its initialization and its algorithm.
 GRAPHS_PER_TRAINING_INFO = 2
 MATRIX_PRODUCTS = frozenset({"MatMul", "Gemm"})
+CAST_OPERATOR = "Cast"
+CAST_TARGET_ATTRIBUTE = "to"
 WEIGHT_INPUT_INDEX = 1
 
 
@@ -66,6 +75,12 @@ class OnnxAttribute(Protocol):
     def type(self) -> int: ...
 
     @property
+    def name(self) -> str: ...
+
+    @property
+    def i(self) -> int: ...
+
+    @property
     def t(self) -> OnnxTensor: ...
 
     @property
@@ -82,6 +97,24 @@ class OnnxAttribute(Protocol):
 
     @property
     def graphs(self) -> Sequence["OnnxGraph"]: ...
+
+
+class OnnxTensorType(Protocol):
+    @property
+    def elem_type(self) -> int: ...
+
+
+class OnnxType(Protocol):
+    @property
+    def tensor_type(self) -> OnnxTensorType: ...
+
+
+class OnnxValueInfo(Protocol):
+    @property
+    def name(self) -> str: ...
+
+    @property
+    def type(self) -> OnnxType: ...
 
 
 class OnnxNode(Protocol):
@@ -114,8 +147,23 @@ class OnnxGraph(Protocol):
     @property
     def sparse_initializer(self) -> Sequence[OnnxSparseTensor]: ...
 
+    @property
+    def input(self) -> Sequence[OnnxValueInfo]: ...
+
+    @property
+    def output(self) -> Sequence[OnnxValueInfo]: ...
+
+    @property
+    def value_info(self) -> Sequence[OnnxValueInfo]: ...
+
 
 class OnnxFunction(Protocol):
+    @property
+    def domain(self) -> str: ...
+
+    @property
+    def name(self) -> str: ...
+
     @property
     def node(self) -> Sequence[OnnxNode]: ...
 
@@ -179,14 +227,6 @@ def walk_subgraphs(
 
 def list_attributes(nodes: Sequence[OnnxNode]) -> list[OnnxAttribute]:
     return [attribute for node in nodes for attribute in node.attribute]
-
-
-def list_attribute_graphs(attribute: OnnxAttribute) -> Sequence[OnnxGraph]:
-    if attribute.type == GRAPH_ATTRIBUTE:
-        return (attribute.g,)
-    if attribute.type == GRAPHS_ATTRIBUTE:
-        return attribute.graphs
-    return ()
 
 
 def list_attribute_tensors(attribute: OnnxAttribute) -> list[OnnxTensor]:
@@ -297,3 +337,89 @@ def trace_weight(
     return MatrixProduct(
         graph.scope, product.op_type, tuple(trace), WeightSource.INITIALIZER, ranks[name]
     )
+
+
+@dataclass(frozen=True, slots=True)
+class MainGraphIndex:
+    graph: OnnxGraph
+    computation_types: Mapping[str, tuple[ElementType, ...]]
+
+
+def index_main_graph(model: OnnxModel) -> MainGraphIndex:
+    graph = model.graph
+    initializer_names = {initializer.name for initializer in graph.initializer}
+    source_names = [
+        value_info.name for value_info in graph.input if value_info.name not in initializer_names
+    ]
+    declared_types = collect_declared_types(graph)
+    functions = frozenset((function.domain, function.name) for function in model.functions)
+    accumulated_types = accumulate_path_labels(
+        index_graph_paths(graph.node, source_names),
+        [list_written_types(node, declared_types, functions) for node in graph.node],
+    )
+    return MainGraphIndex(
+        graph=graph,
+        computation_types={
+            name: tuple(ElementType(element_type) for element_type in sorted(element_types))
+            for name, element_types in accumulated_types.items()
+        },
+    )
+
+
+def list_output_computations(main_graph: MainGraphIndex) -> tuple[TensorComputation, ...]:
+    return tuple(
+        TensorComputation(
+            name=output.name,
+            element_type=ElementType(output.type.tensor_type.elem_type),
+            computation_types=main_graph.computation_types.get(output.name, ()),
+        )
+        for output in main_graph.graph.output
+    )
+
+
+def list_cast_computations(main_graph: MainGraphIndex) -> tuple[TensorComputation, ...]:
+    return tuple(
+        describe_cast(main_graph, node)
+        for node in main_graph.graph.node
+        if node.domain in ONNX_DOMAINS and node.op_type == CAST_OPERATOR
+    )
+
+
+def describe_cast(main_graph: MainGraphIndex, cast: OnnxNode) -> TensorComputation:
+    output_name = cast.output[0] if cast.output else ""
+    return TensorComputation(
+        name=output_name,
+        element_type=read_cast_target(cast),
+        computation_types=main_graph.computation_types.get(output_name, ()),
+    )
+
+
+def read_cast_target(cast: OnnxNode) -> ElementType:
+    for attribute in cast.attribute:
+        if attribute.name == CAST_TARGET_ATTRIBUTE:
+            return ElementType(attribute.i)
+    return ElementType.UNDEFINED
+
+
+# onnxconverter-common can leave two declarations of one tensor, so each counts.
+def collect_declared_types(graph: OnnxGraph) -> dict[str, set[int]]:
+    declared_types: dict[str, set[int]] = {}
+    for value_info in (*graph.value_info, *graph.output, *graph.input):
+        declared_types.setdefault(value_info.name, set()).add(value_info.type.tensor_type.elem_type)
+    return declared_types
+
+
+# A tensor without a declared type, or a node whose computation lies in a subgraph or a function,
+# counts as a type the inspection cannot tell, so that the host refuses what it cannot judge.
+def list_written_types(
+    node: OnnxNode,
+    declared_types: Mapping[str, set[int]],
+    functions: frozenset[tuple[str, str]],
+) -> frozenset[int]:
+    element_types: set[int] = set()
+    if holds_subgraph(node) or (node.domain, node.op_type) in functions:
+        element_types.add(ElementType.UNDEFINED)
+    for name in node.output:
+        if name:
+            element_types.update(declared_types.get(name, {ElementType.UNDEFINED}))
+    return frozenset(element_types)

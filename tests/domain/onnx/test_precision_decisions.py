@@ -1,17 +1,17 @@
 import pytest
 
 from mostt_model_builder.domain.onnx.conversion_request import ConversionKind
+from mostt_model_builder.domain.onnx.element_types import ElementType
 from mostt_model_builder.domain.onnx.precision_decisions import (
     CORE_FLOAT32_OPERATORS_IN_BFLOAT16,
     MAX_FINITE_VALUE,
     MIN_POSITIVE_VALUE,
-    ElementType,
     list_kept_float32_operators,
     realign_cast_target,
     retype_for_bfloat16,
 )
 
-INT64 = 7
+INT64 = ElementType.INT64
 KEPT_OPERATORS = {
     "float16 keeps no operator of the core": (ConversionKind.FLOAT16, (), ()),
     "float16 keeps the operators its recipe adds": (

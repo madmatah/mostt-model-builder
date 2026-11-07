@@ -73,6 +73,8 @@ ACCEPTED_INSPECTION = FileInspection(
     ),
     training_graph_count=0,
     sparse_initializer_count=0,
+    outputs=(),
+    casts=(),
 )
 WHERE = "the graph of encoder.onnx"
 DECLARED_BLOCK_PRODUCT_COUNT = 4

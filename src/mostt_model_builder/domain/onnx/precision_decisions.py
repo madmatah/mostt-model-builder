@@ -1,7 +1,7 @@
 from collections.abc import Sequence
-from enum import IntEnum
 
 from mostt_model_builder.domain.onnx.conversion_request import ConversionKind
+from mostt_model_builder.domain.onnx.element_types import ElementType
 
 # ONNX Runtime 1.31's CUDA provider has no bfloat16 kernel for these operators, and refuses the
 # whole graph when one of them is left in bfloat16; the Floor comes from torch 2.15's export.
@@ -10,12 +10,6 @@ CORE_FLOAT32_OPERATORS_IN_BFLOAT16 = ("Pad", "Tile", "Floor")
 # and each such value is counted.
 MIN_POSITIVE_VALUE = 1e-7
 MAX_FINITE_VALUE = 1e4
-
-
-class ElementType(IntEnum):
-    FLOAT = 1
-    FLOAT16 = 10
-    BFLOAT16 = 16
 
 
 def list_kept_float32_operators(

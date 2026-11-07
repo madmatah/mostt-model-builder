@@ -201,6 +201,8 @@ INSPECTION_REPORT = InspectionReport(
             external_tensors=(),
             training_graph_count=0,
             sparse_initializer_count=0,
+            outputs=(),
+            casts=(),
         ),
     )
 )
