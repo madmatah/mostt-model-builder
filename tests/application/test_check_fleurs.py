@@ -21,12 +21,14 @@ from mostt_model_builder.application.check_fleurs import (
     check_fleurs_bench,
 )
 from mostt_model_builder.application.run_step import HostIdentity, ImageFacts
+from mostt_model_builder.domain.bench.bench_languages import BENCH_LANGUAGES
 from mostt_model_builder.domain.bench.fleurs_check_report import (
     FleursCheckReport,
     LanguageCheck,
     RecordingDuration,
     render_fleurs_check_report,
 )
+from mostt_model_builder.domain.bench.fleurs_index import locate_bench_files
 from mostt_model_builder.domain.containers.account_ranges import HostAccounts
 from mostt_model_builder.domain.containers.container_steps import FLEURS_CHECK_ROW, ContainerRun
 from mostt_model_builder.domain.containers.step_peaks import (
@@ -42,12 +44,8 @@ KEY = "7b1e04c9a2f3" + "0" * 52
 HEAD_TREE = "3f1d1ffe79bc3336eb583331cfbf9b189fd45f01"
 REVISION = "70bb2e84b976b7e960aa89f1c648e09c59f894dd"
 IMAGE_ID = "sha256:" + "f" * 64
-BENCH_PATHS = (
-    "data/fr_fr/test.tsv",
-    "data/fr_fr/audio/test.tar.gz",
-    "data/en_us/test.tsv",
-    "data/en_us/audio/test.tar.gz",
-)
+BENCH_PATHS = tuple(path for language in BENCH_LANGUAGES for path in locate_bench_files(language))
+ENGLISH_AUDIO_PATH = "data/en_us/audio/test.tar.gz"
 PINS = tuple(
     SourcePin(RepositoryType.DATASET, "google/fleurs", REVISION, path, 1, "0" * 64)
     for path in BENCH_PATHS
@@ -55,9 +53,9 @@ PINS = tuple(
 SOURCES = PurePosixPath(f"sources/google/fleurs/{REVISION}")
 HOST = HostIdentity(USER_ID, GROUP_ID, 20, HostAccounts(False, (), ()))
 REPORT = FleursCheckReport(
-    (
-        LanguageCheck("fr_fr", (RecordingDuration("7105.wav", 150_720),)),
-        LanguageCheck("en_us", (RecordingDuration("1274.wav", 202_240),)),
+    tuple(
+        LanguageCheck(language, (RecordingDuration("7105.wav", 150_720),))
+        for language in BENCH_LANGUAGES
     )
 )
 PEAKS = StepPeaks(memory_peak_bytes=21 * 2**20, process_count_peak=6)
@@ -112,11 +110,11 @@ class TestTheCheckFleurs:
                             "index": f"/{SOURCES}/data/{language}/test.tsv",
                             "archive": f"/{SOURCES}/data/{language}/audio/test.tar.gz",
                         }
-                        for language in ("fr_fr", "en_us")
+                        for language in BENCH_LANGUAGES
                     ]
                 }
 
-            def test_should_bind_the_four_files_of_the_bench_each_by_itself(
+            def test_should_bind_every_file_of_the_bench_each_by_itself(
                 self, check_record: CheckRecord
             ) -> None:
                 assert [
@@ -133,8 +131,14 @@ class TestTheCheckFleurs:
             @pytest.fixture
             def check_act(self) -> Callable[[], FleursCheckOutcome]:
                 files = build_files()
+                pins_without_the_english_audio = tuple(
+                    pin for pin in PINS if pin.path != ENGLISH_AUDIO_PATH
+                )
                 return partial(
-                    check_fleurs_bench, replace(RUN, pins=PINS[:3]), build_engine(files), files
+                    check_fleurs_bench,
+                    replace(RUN, pins=pins_without_the_english_audio),
+                    build_engine(files),
+                    files,
                 )
 
             def test_should_refuse_the_step(
@@ -142,6 +146,6 @@ class TestTheCheckFleurs:
             ) -> None:
                 with pytest.raises(
                     WorkDirectoryError,
-                    match=re.escape("no pin gives data/en_us/audio/test.tar.gz of google/fleurs"),
+                    match=re.escape(f"no pin gives {ENGLISH_AUDIO_PATH} of google/fleurs"),
                 ):
                     check_act()

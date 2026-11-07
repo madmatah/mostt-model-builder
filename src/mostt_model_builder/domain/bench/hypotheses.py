@@ -8,7 +8,7 @@ from mostt_model_builder.domain.bench.fleurs_index import RECORDING_NAME_GRAMMAR
 from mostt_model_builder.domain.bench.run_lines import RUN_LINES_MAX_SIZE_BYTES
 from mostt_model_builder.domain.json_documents.json_depth import MAX_JSON_DEPTH, refuse_deep_json
 
-# A run writes one line per utterance of FLEURS's test sets, under 700 per language, each a few
+# A run writes one line per utterance of FLEURS's test sets, under 1 000 per language, each a few
 # hundred bytes; the bounds only refuse lines that no run of the bench could write.
 MAX_LINE_COUNT = 20_000
 MAX_LINE_SIZE_BYTES = 64 * 1024

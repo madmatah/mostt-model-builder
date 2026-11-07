@@ -676,8 +676,8 @@ REFUSED_CONTRACTS = {
         "its run 'float32-cpu' reads no language",
     ),
     "a run that reads a language outside the bench": (
-        change_run(0, languages=("de_de",)),
-        "its run 'float32-cpu' reads 'de_de', which is not a language of the bench",
+        change_run(0, languages=("it_it",)),
+        "its run 'float32-cpu' reads 'it_it', which is not a language of the bench",
     ),
     "a run that names a language twice": (
         change_run(0, languages=("fr_fr", "fr_fr")),

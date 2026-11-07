@@ -31,3 +31,51 @@ revision = "70bb2e84b976b7e960aa89f1c648e09c59f894dd"
 path = "data/en_us/audio/test.tar.gz"
 size_bytes = 289851356
 sha256 = "d9c2e37b41aacd41bc283554a0a82b5476b36887049774ecb2819dcaaa55a356"
+
+[[sources]]
+repository_type = "dataset"
+repository = "google/fleurs"
+revision = "70bb2e84b976b7e960aa89f1c648e09c59f894dd"
+path = "data/es_419/test.tsv"
+size_bytes = 599882
+sha256 = "d107a93a4f54a18ac25cd470bb4cdadce14fb075b0c1d1542258e274d209ec09"
+
+[[sources]]
+repository_type = "dataset"
+repository = "google/fleurs"
+revision = "70bb2e84b976b7e960aa89f1c648e09c59f894dd"
+path = "data/es_419/audio/test.tar.gz"
+size_bytes = 582112372
+sha256 = "981802f6c828fd214fcf8bfc1036d80c9184b6eeb5650b3f7882f8affec046c9"
+
+[[sources]]
+repository_type = "dataset"
+repository = "google/fleurs"
+revision = "70bb2e84b976b7e960aa89f1c648e09c59f894dd"
+path = "data/pt_br/test.tsv"
+size_bytes = 563257
+sha256 = "4a7b8ae8ce07c355dcd2cf087a6486c7c3ab931d751b9a9218a9ee0cd798964b"
+
+[[sources]]
+repository_type = "dataset"
+repository = "google/fleurs"
+revision = "70bb2e84b976b7e960aa89f1c648e09c59f894dd"
+path = "data/pt_br/audio/test.tar.gz"
+size_bytes = 621291324
+sha256 = "968d1b68a90132ca1f044f664866418b0db0351a93601a671d5637016da4f49b"
+
+[[sources]]
+repository_type = "dataset"
+repository = "google/fleurs"
+revision = "70bb2e84b976b7e960aa89f1c648e09c59f894dd"
+path = "data/de_de/test.tsv"
+size_bytes = 559542
+sha256 = "82fab72c58a347345675c238f2492bb997105a4ab45d69e2a2b34ed29082fa97"
+
+[[sources]]
+repository_type = "dataset"
+repository = "google/fleurs"
+revision = "70bb2e84b976b7e960aa89f1c648e09c59f894dd"
+path = "data/de_de/audio/test.tar.gz"
+size_bytes = 568734559
+sha256 = "e86b42dfcdef749926cd92135045f87c25966c09e50d01c401adb04ee7d8628f"

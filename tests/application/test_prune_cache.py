@@ -8,7 +8,7 @@ import pytest
 from cache_arrangement import (
     ENCODER,
     HARDWARE_WITHOUT_GPU,
-    LANGUAGES,
+    LANGUAGES_OF_THE_RUNS,
     TREE_FILES,
     VOCABULARY,
     WORK_ROOT,
@@ -26,7 +26,7 @@ CHANGED_TREE = {**TREE_FILES, TRANSCRIBE_READER: b"READ = 2\n"}
 TRANSCRIBE_ROWS = sorted(
     f"transcribe-float32-{device}-{language}-0"
     for device in ("cpu", "gpu")
-    for language in LANGUAGES
+    for language in LANGUAGES_OF_THE_RUNS
 )
 UNREADABLE_RECORD = b"{not json"
 CACHE_DIRECTORY = WORK_ROOT / "cache/family"

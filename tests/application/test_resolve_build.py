@@ -10,7 +10,7 @@ from cache_arrangement import (
     EXPORT_MODULE,
     GPU_HARDWARE,
     HARDWARE_WITHOUT_GPU,
-    LANGUAGES,
+    LANGUAGES_OF_THE_RUNS,
     TRANSCRIBE_MODULE,
     TREE_FILES,
     VOCABULARY,
@@ -53,8 +53,8 @@ from mostt_model_builder.domain.contract.shard_request import (
     parse_shard_request,
 )
 
-CPU_ROWS = [f"transcribe-float32-cpu-{language}-0" for language in LANGUAGES]
-GPU_ROWS = [f"transcribe-float32-gpu-{language}-0" for language in LANGUAGES]
+CPU_ROWS = [f"transcribe-float32-cpu-{language}-0" for language in LANGUAGES_OF_THE_RUNS]
+GPU_ROWS = [f"transcribe-float32-gpu-{language}-0" for language in LANGUAGES_OF_THE_RUNS]
 EVERY_ROW = ["fleurs-check", "export", "inspect", *CPU_ROWS, *GPU_ROWS]
 EVERY_ENTRY = ["fleurs-check", "export", "candidate", "inspect", *CPU_ROWS, *GPU_ROWS]
 TRANSCRIBE_READER = PurePosixPath("recipes/family/src/mostt_recipe_family/domain/reader.py")

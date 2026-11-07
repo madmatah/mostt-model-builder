@@ -99,7 +99,7 @@ class TestTheBuildVerification:
                 assert [
                     (measure.language, measure.identical_count, measure.compared_count)
                     for measure in verification.verified.verification.comparisons
-                ] == [("fr_fr", 1, 2), ("en_us", 2, 2)]
+                ] == [("en_us", 2, 2), ("fr_fr", 1, 2)]
 
             def test_should_hold_each_parity_of_the_recipe(
                 self, verification: CompletedVerification

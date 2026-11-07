@@ -120,9 +120,9 @@ PARITIES = [
     ("transformers-reference", "transformers-encoder-parity.json", 1.5e-5),
     ("transformers-reference", "transformers-joint-parity.json", 5.3e-4),
 ]
-BOTH_LANGUAGES = ("fr_fr", "en_us")
+MEASURED_LANGUAGES = ("en_us", "es_419", "fr_fr", "pt_br", "de_de")
 RUNS = [
-    ("nemo", "reference", "cpu", "reference", BOTH_LANGUAGES, 1, read_token_id_lines),
+    ("nemo", "reference", "cpu", "reference", MEASURED_LANGUAGES, 1, read_token_id_lines),
     (
         "transformers",
         "transformers-reference",
@@ -132,16 +132,16 @@ RUNS = [
         1,
         read_token_id_lines,
     ),
-    ("float32-cpu", "transcribe", "cpu", "float32", BOTH_LANGUAGES, 4, read_onnx_asr_lines),
-    ("float32-gpu", "transcribe", "gpu", "float32", BOTH_LANGUAGES, 1, read_onnx_asr_lines),
-    ("float16-gpu", "transcribe", "gpu", "float16", BOTH_LANGUAGES, 1, read_onnx_asr_lines),
-    ("bfloat16-gpu", "transcribe", "gpu", "bfloat16", BOTH_LANGUAGES, 1, read_onnx_asr_lines),
+    ("float32-cpu", "transcribe", "cpu", "float32", MEASURED_LANGUAGES, 4, read_onnx_asr_lines),
+    ("float32-gpu", "transcribe", "gpu", "float32", MEASURED_LANGUAGES, 1, read_onnx_asr_lines),
+    ("float16-gpu", "transcribe", "gpu", "float16", MEASURED_LANGUAGES, 1, read_onnx_asr_lines),
+    ("bfloat16-gpu", "transcribe", "gpu", "bfloat16", MEASURED_LANGUAGES, 1, read_onnx_asr_lines),
     (
         "eight-bit-blocks-gpu",
         "transcribe",
         "gpu",
         "eight-bit-blocks",
-        BOTH_LANGUAGES,
+        MEASURED_LANGUAGES,
         1,
         read_onnx_asr_lines,
     ),
@@ -150,15 +150,14 @@ RUNS = [
         "transcribe",
         "cpu",
         "eight-bit-blocks",
-        BOTH_LANGUAGES,
+        MEASURED_LANGUAGES,
         4,
         read_onnx_asr_lines,
     ),
 ]
 TRANSCRIPTION_SHARD_COUNTS = {"cpu": 4, "gpu": 1}
 DERIVED_ROW_NAMES = [
-    "reference-nemo-fr_fr-0",
-    "reference-nemo-en_us-0",
+    *(f"reference-nemo-{language}-0" for language in MEASURED_LANGUAGES),
     "transformers-reference-transformers-fr_fr-0",
     *(
         f"transcribe-{run}-{language}-{shard}"
@@ -170,7 +169,7 @@ DERIVED_ROW_NAMES = [
             ("eight-bit-blocks-gpu", "gpu"),
             ("eight-bit-blocks-cpu", "cpu"),
         )
-        for language in BOTH_LANGUAGES
+        for language in MEASURED_LANGUAGES
         for shard in range(TRANSCRIPTION_SHARD_COUNTS[device])
     ),
 ]

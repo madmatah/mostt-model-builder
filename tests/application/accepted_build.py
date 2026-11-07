@@ -23,6 +23,7 @@ from mostt_model_builder.domain.acceptance.parity_reports import (
     ParityReport,
     render_parity_report,
 )
+from mostt_model_builder.domain.bench.bench_languages import BENCH_LANGUAGES
 from mostt_model_builder.domain.bench.hypotheses import Hypothesis, parse_run_lines
 from mostt_model_builder.domain.bench.run_lines import RUN_LINES_FILE_NAME, RUN_LINES_MAX_SIZE_BYTES
 from mostt_model_builder.domain.containers.account_ranges import HostAccounts
@@ -108,10 +109,15 @@ INSPECTION_REPORT = InspectionReport((ENCODER_INSPECTION,))
 REFUSED_INSPECTION_REPORT = InspectionReport(
     (replace(ENCODER_INSPECTION, metadata_props_node_count=3),)
 )
-INDEXES = {
+INDEXES_OF_THE_RUNS = {
     "fr_fr": b"1\t1.wav\tLe chat dort.\tle chat dort\tx\t16000\tF\n"
     b"2\t2.wav\tIci.\tici\tx\t16000\tM\n",
     "en_us": b"3\t3.wav\tThe cat.\tthe cat\tx\t16000\tF\n4\t4.wav\tHere.\there\tx\t16000\tM\n",
+}
+INDEX_THAT_NO_RUN_READS = b"5\t5.wav\tUnread.\tunread\tx\t16000\tF\n"
+INDEXES = {
+    language: INDEXES_OF_THE_RUNS.get(language, INDEX_THAT_NO_RUN_READS)
+    for language in BENCH_LANGUAGES
 }
 PARITY_OUTPUT = DeclaredOutput("encoder-parity.json", 4096)
 ENCODER_PARITY = Parity("encoder-against-reference", "export", PARITY_OUTPUT.name, 5e-5)
