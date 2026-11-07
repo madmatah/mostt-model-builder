@@ -1,5 +1,6 @@
 import contextlib
 import hashlib
+import json
 import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
@@ -19,6 +20,8 @@ from accepted_build import (
 from card_arrangement import CARD_PATH, FakeClone, build_card_request
 from run_step_fakes import FakeContainerEngine, FakeStepFiles, build_file_facts, build_step_output
 
+from mostt_model_builder.application.check_published import RefusedListingError
+from mostt_model_builder.application.fetch_sources import DownloadError
 from mostt_model_builder.application.prepare_publication import (
     PublicationError,
     prepare_publication,
@@ -26,13 +29,19 @@ from mostt_model_builder.application.prepare_publication import (
 )
 from mostt_model_builder.application.publish_candidate import (
     CandidatePublication,
+    DryRunEnded,
+    PublicationEvent,
+    PublicationSummary,
     PublishedCandidate,
+    SummarizedFile,
+    SummaryUnavailable,
     publish_candidate,
 )
 from mostt_model_builder.application.run_step import ImageFacts
 from mostt_model_builder.application.verify_build import BuildRejectedError
 from mostt_model_builder.domain.containers.container_steps import HUB_IMAGE
 from mostt_model_builder.domain.containers.step_peaks import PEAKS_FILE_NAME
+from mostt_model_builder.domain.publication.git_blobs import compute_git_blob_id
 from mostt_model_builder.domain.publication.hub_token import HubToken, parse_hub_token
 from mostt_model_builder.domain.publication.publication_report import (
     PublicationReport,
@@ -40,6 +49,7 @@ from mostt_model_builder.domain.publication.publication_report import (
     ReportedFile,
     render_publication_report,
 )
+from mostt_model_builder.domain.publication.published_tree import PublishedTreeError
 from mostt_model_builder.domain.publication.repository_files import RepositoryFilesError
 
 REPOSITORY = "example-user/parakeet-ultra-onnx"
@@ -59,10 +69,35 @@ ENCODER_LINE = (
 )
 
 
+UNREACHABLE_HUB = "curl exited with the status 28 while reading the listing: timed out"
+
+
+@dataclass
+class FakeListing:
+    content: bytes | None = None
+    urls: list[str] = field(default_factory=list)
+    is_reachable: bool = True
+
+    def read_listing(self, url: str, max_size_bytes: int) -> bytes:
+        self.urls.append(url)
+        if not self.is_reachable:
+            raise DownloadError(UNREACHABLE_HUB)
+        if self.content is None:
+            raise RefusedListingError(f"curl exited with the status 22 while reading {url}")
+        if len(self.content) > max_size_bytes:
+            raise LookupError(f"the fake listing holds more than {max_size_bytes} bytes")
+        return self.content
+
+
 @dataclass
 class FakePrompt:
     typed_repository: str = REPOSITORY
     events: list[str] = field(default_factory=list)
+    publication_events: list[PublicationEvent] = field(default_factory=list)
+
+    def record(self, event: PublicationEvent) -> None:
+        self.events.append(type(event).__name__)
+        self.publication_events.append(event)
 
     def announce(self, lines: Sequence[str]) -> None:
         self.events.extend(lines)
@@ -82,6 +117,33 @@ class Publication:
     engine: FakeContainerEngine
     files: FakeStepFiles
     prompt: FakePrompt
+
+
+def publish_with(
+    publication: CandidatePublication,
+    prompt: FakePrompt,
+    listing: FakeListing,
+    engine: FakeContainerEngine,
+    files: FakeStepFiles,
+) -> PublishedCandidate | None:
+    return publish_candidate(
+        publication, FakeClone(), prompt, listing, engine, files, prompt.record
+    )
+
+
+def publish_for_real(
+    publication: CandidatePublication,
+    clone: FakeClone,
+    prompt: FakePrompt,
+    engine: FakeContainerEngine,
+    files: FakeStepFiles,
+) -> PublishedCandidate:
+    published = publish_candidate(
+        publication, clone, prompt, FakeListing(), engine, files, prompt.record
+    )
+    if published is None:
+        raise LookupError("the publication stopped before its container")
+    return published
 
 
 def describe(name: str, content: bytes, is_uploaded: bool = True) -> ReportedFile:
@@ -131,10 +193,49 @@ def publish_reviewed_card(
     files, card = build_reviewed_files()
     engine = build_engine(files, build_report(card, encoder, is_uploaded, revision))
     prompt = prompt or FakePrompt()
-    published = publish_candidate(
+    published = publish_for_real(
         CandidatePublication(build_card_request(), REPOSITORY), FakeClone(), prompt, engine, files
     )
     return Publication(published, engine, files, prompt)
+
+
+def render_head_listing(*entries: dict[str, object]) -> bytes:
+    return json.dumps(
+        [{"type": "file", "path": ".gitattributes", "size": 1519, "oid": "f" * 40}, *entries]
+    ).encode()
+
+
+def list_file(name: str, content: bytes) -> dict[str, object]:
+    return {"type": "file", "path": name, "size": len(content), "oid": compute_git_blob_id(content)}
+
+
+@dataclass(frozen=True)
+class SummarizedPublication:
+    published: PublishedCandidate | None
+    prompt: FakePrompt
+    listing: FakeListing
+    engine: FakeContainerEngine
+    files: FakeStepFiles
+
+
+def summarize_beside(listing: FakeListing, is_dry_run: bool = False) -> SummarizedPublication:
+    files, card = build_reviewed_files()
+    engine = build_engine(files, build_report(card))
+    prompt = FakePrompt()
+    published = publish_with(
+        CandidatePublication(build_card_request(), REPOSITORY, is_dry_run),
+        prompt,
+        listing,
+        engine,
+        files,
+    )
+    return SummarizedPublication(published, prompt, listing, engine, files)
+
+
+OTHER_VOCABULARY = VOCABULARY.replace(b"chat", b"chut")
+ALIKE_AND_CHANGED_LISTING = render_head_listing(
+    list_file(ENCODER_NAME, ENCODER), list_file("vocab.txt", OTHER_VOCABULARY)
+)
 
 
 class TestTheCandidatePublication:
@@ -196,7 +297,7 @@ class TestTheCandidatePublication:
                 files, card = build_reviewed_files()
                 files.add_directory(PUBLICATIONS_DIRECTORY / "1")
                 engine = build_engine(files, build_report(card))
-                published = publish_candidate(
+                published = publish_for_real(
                     CandidatePublication(build_card_request(), REPOSITORY),
                     FakeClone(),
                     FakePrompt(),
@@ -290,7 +391,7 @@ class TestTheCandidatePublication:
             def publish_act(self) -> Callable[[], PublishedCandidate]:
                 files = build_files()
                 return partial(
-                    publish_candidate,
+                    publish_for_real,
                     CandidatePublication(build_card_request(), REPOSITORY),
                     FakeClone(),
                     FakePrompt(),
@@ -316,7 +417,7 @@ class TestTheCandidatePublication:
                 files = build_files()
                 files.add_file(CARD_PATH, build_file_facts(8, 0o444), b"# other\n")
                 return partial(
-                    publish_candidate,
+                    publish_for_real,
                     CandidatePublication(build_card_request(), REPOSITORY),
                     FakeClone(),
                     FakePrompt(),
@@ -336,7 +437,7 @@ class TestTheCandidatePublication:
             def publish_act(self) -> Callable[[], PublishedCandidate]:
                 files = build_files()
                 return partial(
-                    publish_candidate,
+                    publish_for_real,
                     CandidatePublication(build_card_request(model=None), REPOSITORY),
                     FakeClone(),
                     FakePrompt(),
@@ -353,7 +454,7 @@ class TestTheCandidatePublication:
             def publish_act(self) -> Callable[[], PublishedCandidate]:
                 files = build_files()
                 return partial(
-                    publish_candidate,
+                    publish_for_real,
                     CandidatePublication(build_card_request(is_rejected=True), REPOSITORY),
                     FakeClone(),
                     FakePrompt(),
@@ -370,7 +471,7 @@ class TestTheCandidatePublication:
             def publish_act(self) -> Callable[[], PublishedCandidate]:
                 files = build_files()
                 return partial(
-                    publish_candidate,
+                    publish_for_real,
                     replace(
                         CandidatePublication(build_card_request(), REPOSITORY),
                         repository="<user>/parakeet-ultra-onnx",
@@ -386,3 +487,176 @@ class TestTheCandidatePublication:
             ) -> None:
                 with pytest.raises(RepositoryFilesError, match="'<user>/parakeet-ultra-onnx'"):
                     publish_act()
+
+        class TestWhenTheHubListsTheHeadWithoutAToken:
+            @pytest.fixture
+            def summarized(self) -> SummarizedPublication:
+                return summarize_beside(FakeListing(ALIKE_AND_CHANGED_LISTING))
+
+            def test_should_read_the_listing_of_the_main_branch(
+                self, summarized: SummarizedPublication
+            ) -> None:
+                assert summarized.listing.urls == [
+                    f"https://huggingface.co/api/models/{REPOSITORY}/tree/main"
+                ]
+
+            def test_should_show_the_summary_after_the_files_and_before_the_repository(
+                self, summarized: SummarizedPublication
+            ) -> None:
+                ordered_events = (ENCODER_LINE, "PublicationSummary", REPOSITORY_ASKED)
+                assert [
+                    event for event in summarized.prompt.events if event in ordered_events
+                ] == list(ordered_events)
+
+            def test_should_keep_a_file_whose_blob_id_is_the_builds_and_send_the_others(
+                self, summarized: SummarizedPublication
+            ) -> None:
+                summary = summarized.prompt.publication_events[0]
+                card_size = len(summarized.files.contents[CARD_PATH])
+                assert summary == PublicationSummary(
+                    REPOSITORY,
+                    (
+                        SummarizedFile(ENCODER_NAME, len(ENCODER), is_kept=True),
+                        SummarizedFile("vocab.txt", len(VOCABULARY), is_kept=False),
+                        SummarizedFile("README.md", card_size, is_kept=False),
+                    ),
+                )
+
+            def test_should_go_on_to_the_token_and_the_container(
+                self, summarized: SummarizedPublication
+            ) -> None:
+                assert (TOKEN_ASKED in summarized.prompt.events, len(summarized.engine.runs)) == (
+                    True,
+                    1,
+                )
+
+        class TestWhenItIsADryRun:
+            @pytest.fixture
+            def summarized(self) -> SummarizedPublication:
+                return summarize_beside(FakeListing(ALIKE_AND_CHANGED_LISTING), is_dry_run=True)
+
+            def test_should_show_the_summary_then_say_nothing_was_published(
+                self, summarized: SummarizedPublication
+            ) -> None:
+                assert summarized.prompt.events[-2:] == ["PublicationSummary", "DryRunEnded"]
+
+            def test_should_ask_neither_the_repository_nor_the_token(
+                self, summarized: SummarizedPublication
+            ) -> None:
+                assert {REPOSITORY_ASKED, TOKEN_ASKED} & set(summarized.prompt.events) == set()
+
+            def test_should_run_no_container_and_write_no_publication(
+                self, summarized: SummarizedPublication
+            ) -> None:
+                assert (
+                    summarized.published,
+                    summarized.engine.runs,
+                    PUBLICATIONS_DIRECTORY in summarized.files.entries,
+                ) == (None, [], False)
+
+            def test_should_name_the_repository_in_its_last_line(
+                self, summarized: SummarizedPublication
+            ) -> None:
+                assert summarized.prompt.publication_events[-1] == DryRunEnded(REPOSITORY)
+
+        class TestWhenTheHubGivesNoListingWithoutAToken:
+            @pytest.fixture
+            def summarized(self) -> SummarizedPublication:
+                return summarize_beside(FakeListing(None))
+
+            def test_should_say_there_is_no_summary(
+                self, summarized: SummarizedPublication
+            ) -> None:
+                assert summarized.prompt.publication_events == [SummaryUnavailable(REPOSITORY)]
+
+            def test_should_still_ask_the_token_and_run_the_container(
+                self, summarized: SummarizedPublication
+            ) -> None:
+                assert (TOKEN_ASKED in summarized.prompt.events, len(summarized.engine.runs)) == (
+                    True,
+                    1,
+                )
+
+        class TestWhenItIsADryRunAndTheHubGivesNoListing:
+            @pytest.fixture
+            def summarized(self) -> SummarizedPublication:
+                return summarize_beside(FakeListing(None), is_dry_run=True)
+
+            def test_should_say_why_there_is_no_summary_then_that_nothing_was_published(
+                self, summarized: SummarizedPublication
+            ) -> None:
+                assert summarized.prompt.publication_events == [
+                    SummaryUnavailable(REPOSITORY),
+                    DryRunEnded(REPOSITORY),
+                ]
+
+        class TestWhenTheListingNeverArrives:
+            @pytest.fixture
+            def refused(self) -> tuple[Callable[[], object], FakePrompt]:
+                files, card = build_reviewed_files()
+                prompt = FakePrompt()
+                return (
+                    partial(
+                        publish_with,
+                        CandidatePublication(build_card_request(), REPOSITORY),
+                        prompt,
+                        FakeListing(is_reachable=False),
+                        build_engine(files, build_report(card)),
+                        files,
+                    ),
+                    prompt,
+                )
+
+            def test_should_fail_with_curls_message_before_it_asks_for_the_token(
+                self, refused: tuple[Callable[[], object], FakePrompt]
+            ) -> None:
+                publish_act, prompt = refused
+                with pytest.raises(DownloadError, match=re.escape(UNREACHABLE_HUB)):
+                    publish_act()
+                assert TOKEN_ASKED not in prompt.events
+
+        @pytest.mark.parametrize(
+            ("listing", "error", "reason"),
+            [
+                pytest.param(
+                    render_head_listing({"type": "directory", "path": "onnx", "size": 0}),
+                    PublishedTreeError,
+                    "the revision holds the directory onnx",
+                    id="a-directory",
+                ),
+                pytest.param(
+                    render_head_listing(list_file("model.safetensors", b"weights")),
+                    RepositoryFilesError,
+                    "'model.safetensors'",
+                    id="a-file-of-no-build",
+                ),
+                pytest.param(b"[{", PublishedTreeError, "not a JSON document", id="malformed"),
+            ],
+        )
+        class TestWhenTheListingIsRefused:
+            @pytest.fixture
+            def refused(self, listing: bytes) -> tuple[Callable[[], object], FakePrompt]:
+                files, card = build_reviewed_files()
+                prompt = FakePrompt()
+                return (
+                    partial(
+                        publish_with,
+                        CandidatePublication(build_card_request(), REPOSITORY),
+                        prompt,
+                        FakeListing(listing),
+                        build_engine(files, build_report(card)),
+                        files,
+                    ),
+                    prompt,
+                )
+
+            def test_should_fail_before_it_asks_for_the_token(
+                self,
+                refused: tuple[Callable[[], object], FakePrompt],
+                error: type[Exception],
+                reason: str,
+            ) -> None:
+                publish_act, prompt = refused
+                with pytest.raises(error, match=re.escape(reason)):
+                    publish_act()
+                assert TOKEN_ASKED not in prompt.events

@@ -6,6 +6,11 @@ import pytest
 
 from mostt_model_builder.application.clean_run import BuildFile, BuildFileCleaned, CleanOutcome
 from mostt_model_builder.application.prune_cache import PrunedEntry
+from mostt_model_builder.application.publish_candidate import (
+    DryRunEnded,
+    SummarizedFile,
+    SummaryUnavailable,
+)
 from mostt_model_builder.application.resolve_lock import LockResolution
 from mostt_model_builder.domain.cache.hardware_facts import NO_GPU_REASON
 from mostt_model_builder.domain.containers.step_peaks import StepPeaks
@@ -22,6 +27,7 @@ from mostt_model_builder.domain.publication.publication_report import (
 from mostt_model_builder.host_main import (
     describe_clean_event,
     describe_cleaned_entry,
+    describe_dry_run,
     describe_lock_resolution,
     describe_prune_total,
     describe_pruned_entry,
@@ -30,6 +36,8 @@ from mostt_model_builder.host_main import (
     describe_reported_file,
     describe_reused_entry,
     describe_skipped_entry,
+    describe_summarized_file,
+    describe_unavailable_summary,
     is_card_template_present,
 )
 
@@ -500,3 +508,44 @@ class TestTheHostMain:
                     "the build at the revision 5e1f0c2a9b8d7e6f5a4b3c2d1e0f9a8b7c6d5e4f; the "
                     "repository is private"
                 )
+
+    class TestTheDescribeSummarizedFileFunction:
+        @pytest.fixture
+        def lines(self) -> list[str]:
+            return [
+                describe_summarized_file(summarized)
+                for summarized in (
+                    SummarizedFile("encoder-model.onnx", 902417, is_kept=True),
+                    SummarizedFile("README.md", 9412, is_kept=False),
+                )
+            ]
+
+        def test_should_say_whether_each_file_would_be_kept_or_uploaded(
+            self, lines: list[str]
+        ) -> None:
+            assert lines == [
+                "kept encoder-model.onnx, already on the Hub with its sha256",
+                "would upload README.md, 9412 bytes",
+            ]
+
+    class TestTheDescribeDryRunFunction:
+        @pytest.fixture
+        def line(self) -> str:
+            return describe_dry_run(DryRunEnded(HUB_REPOSITORY))
+
+        def test_should_say_nothing_was_published(self, line: str) -> None:
+            assert line == "dry run: nothing was published to <user>/parakeet-ultra-onnx"
+
+    class TestTheDescribeUnavailableSummaryFunction:
+        @pytest.fixture
+        def line(self) -> str:
+            return describe_unavailable_summary(SummaryUnavailable(HUB_REPOSITORY))
+
+        def test_should_say_why_there_is_no_summary_and_that_the_upload_still_compares(
+            self, line: str
+        ) -> None:
+            assert line == (
+                "no summary: the Hub gave no listing of <user>/parakeet-ultra-onnx without a "
+                "token (curl exited with the status 22), as for a private repository; the upload "
+                "still compares each file before it commits"
+            )

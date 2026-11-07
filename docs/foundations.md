@@ -27,7 +27,7 @@ These constraints drive the choices in this document:
 | mypy | 2.4.1 | Type checker, in strict mode |
 | pytest | 9.2.0 | Test runner |
 | import-linter | 2.15 | Checks the imports between the layers (`lint-imports`) |
-| curl | — | Downloads the pinned sources on the host, and reads and downloads a published revision to check it, over HTTPS alone |
+| curl | — | Downloads the pinned sources on the host, reads a repository's head before a publication, without a token, and reads and downloads a published revision to check it, over HTTPS alone |
 | Docker | — | Runs each step of a build in a confined container, and builds their images with BuildKit |
 | GitHub CLI (`gh`) | — | Opens and updates the pull requests |
 

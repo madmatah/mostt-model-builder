@@ -1,4 +1,5 @@
 import json
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -18,7 +19,7 @@ from mostt_model_builder.domain.sources.source_pins import (
 PUBLISHED_LISTING_MAX_SIZE_BYTES = 2**20
 MAX_LISTING_ENTRY_COUNT = 1024
 # A listing nests an entry's object in the top-level array, and the Hub adds objects of its own
-# to an entry, such as `lfs`, which the parser skips.
+# to an entry, such as `lfs`, whose `oid` alone the parser reads.
 MAX_LISTING_DEPTH = 8
 MAX_PATH_CHARACTERS = 512
 MAX_LISTED_SIZE_BYTES = 2**40
@@ -28,6 +29,12 @@ DIRECTORY_ENTRY_TYPE = "directory"
 ENTRY_TYPES = frozenset({FILE_ENTRY_TYPE, DIRECTORY_ENTRY_TYPE})
 # The Hub writes this file into every repository it creates, and it is none of the build's.
 HUB_ATTRIBUTES_FILE_NAME = ".gitattributes"
+BLOB_ID_GRAMMAR = re.compile(r"[0-9a-f]{40}")
+LARGE_FILE_STORAGE_SHA256_GRAMMAR = re.compile(r"[0-9a-f]{64}")
+# The Hub's own names: `oid` is a file's git blob id, and `lfs` holds the SHA-256 of a file in its
+# large file storage as its own `oid`.
+BLOB_ID_FIELD = "oid"
+LARGE_FILE_STORAGE_FIELD = "lfs"
 
 
 class PublishedTreeError(ValueError):
@@ -39,6 +46,8 @@ class ListedEntry:
     entry_type: str
     path: str
     size_bytes: int
+    blob_id: str | None = None
+    large_file_storage_sha256: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,7 +108,42 @@ def parse_listed_entry(entry: object) -> ListedEntry:
         or not 0 <= size_bytes <= MAX_LISTED_SIZE_BYTES
     ):
         raise PublishedTreeError(f"the entry {path} of the listing has the size {size_bytes!a}")
-    return ListedEntry(str(entry_type), path, size_bytes)
+    if entry_type == DIRECTORY_ENTRY_TYPE:
+        return ListedEntry(str(entry_type), path, size_bytes)
+    blob_id = entry.get(BLOB_ID_FIELD)
+    if not isinstance(blob_id, str) or not BLOB_ID_GRAMMAR.fullmatch(blob_id):
+        raise PublishedTreeError(
+            f"the entry {path} of the listing has the blob id {blob_id!a}, not 40 hexadecimal "
+            "digits"
+        )
+    return ListedEntry(
+        str(entry_type), path, size_bytes, blob_id, parse_large_file_storage(entry, path)
+    )
+
+
+def parse_large_file_storage(entry: dict[str, object], path: str) -> str | None:
+    if LARGE_FILE_STORAGE_FIELD not in entry:
+        return None
+    large_file_storage = entry[LARGE_FILE_STORAGE_FIELD]
+    if not isinstance(large_file_storage, dict):
+        raise PublishedTreeError(
+            f"the entry {path} of the listing has a large file storage that is not an object"
+        )
+    sha256 = large_file_storage.get(BLOB_ID_FIELD)
+    if not isinstance(sha256, str) or not LARGE_FILE_STORAGE_SHA256_GRAMMAR.fullmatch(sha256):
+        raise PublishedTreeError(
+            f"the entry {path} of the listing has the large-file-storage SHA-256 {sha256!a}, "
+            "not 64 hexadecimal digits"
+        )
+    return sha256
+
+
+def refuse_listed_directories(entries: Sequence[ListedEntry]) -> None:
+    for entry in entries:
+        if entry.entry_type == DIRECTORY_ENTRY_TYPE:
+            raise PublishedTreeError(
+                f"the revision holds the directory {entry.path}, which the build never publishes"
+            )
 
 
 def judge_published_listing(
@@ -109,11 +153,8 @@ def judge_published_listing(
     listed_paths = [entry.path for entry in entries]
     if len(set(listed_paths)) != len(listed_paths):
         raise PublishedTreeError("the listing names one path twice")
+    refuse_listed_directories(entries)
     for entry in entries:
-        if entry.entry_type == DIRECTORY_ENTRY_TYPE:
-            raise PublishedTreeError(
-                f"the revision holds the directory {entry.path}, which the build never publishes"
-            )
         if entry.path == HUB_ATTRIBUTES_FILE_NAME:
             continue
         if entry.path not in expected_sizes:
