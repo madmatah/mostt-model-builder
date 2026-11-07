@@ -1,9 +1,6 @@
 import json
 from dataclasses import dataclass
 
-from mostt_model_builder.domain.containers.container_steps import (
-    PUBLICATION_REPORT_MAX_SIZE_BYTES,
-)
 from mostt_model_builder.domain.publication.publication_request import (
     PublicationRequest,
     PublicationRequestError,
@@ -20,6 +17,8 @@ from mostt_model_builder.domain.publication.requested_files import (
 )
 from mostt_model_builder.domain.sources.source_pins import REVISION_GRAMMAR
 
+PUBLICATION_REPORT_FILE_NAME = "publication.json"
+PUBLICATION_REPORT_MAX_SIZE_BYTES = 64 * 1024
 REPORT_ENCODING = "ascii"
 REPORT_KEYS = frozenset({"repository", "is_private", "parent_revision", "revision", "files"})
 MAX_REPORTED_FILE_COUNT = 256

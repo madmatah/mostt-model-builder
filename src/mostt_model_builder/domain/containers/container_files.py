@@ -5,10 +5,8 @@ from enum import Enum, auto
 from pathlib import PurePosixPath
 
 from mostt_model_builder.domain.containers.container_steps import INSPECT_STEP_NAME
+from mostt_model_builder.domain.containers.written_files import WRITTEN_FILE_MODE
 
-# Every step leaves its outputs in this mode, readable by the user's group, which the host
-# runs as, since onnx writes its external data in 0600.
-WRITTEN_FILE_MODE = 0o640
 CANDIDATE_FILE_MODE = 0o444
 SINGLE_LINK_COUNT = 1
 

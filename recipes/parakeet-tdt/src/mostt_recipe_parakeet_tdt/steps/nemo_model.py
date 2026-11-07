@@ -8,7 +8,7 @@ import torch
 from nemo.collections.asr.models import ASRModel, EncDecRNNTBPEModel
 from safetensors import safe_open
 
-from mostt_model_builder.domain.containers.container_steps import (
+from mostt_model_builder.domain.containers.container_paths import (
     TEMPORARY_DIRECTORY_IN_THE_CONTAINER,
 )
 from mostt_recipe_parakeet_tdt.domain.export.nemo_configuration import (

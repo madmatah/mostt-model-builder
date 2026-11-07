@@ -23,25 +23,24 @@ from mostt_model_builder.domain.acceptance.parity_reports import (
     ParityReport,
     render_parity_report,
 )
-from mostt_model_builder.domain.bench.hypotheses import (
-    RUN_LINES_FILE_NAME,
-    RUN_LINES_MAX_SIZE_BYTES,
-    Hypothesis,
-    parse_run_lines,
-)
+from mostt_model_builder.domain.bench.hypotheses import Hypothesis, parse_run_lines
+from mostt_model_builder.domain.bench.run_lines import RUN_LINES_FILE_NAME, RUN_LINES_MAX_SIZE_BYTES
 from mostt_model_builder.domain.containers.account_ranges import HostAccounts
 from mostt_model_builder.domain.containers.base_images import ENVIRONMENT_PYTHON
 from mostt_model_builder.domain.containers.container_steps import (
     INSPECT_STEP_NAME,
-    PEAKS_FILE_NAME,
     PEAKS_OUTPUT,
     ContainerImage,
     DeclaredOutput,
-    Device,
     StepLimits,
     StepRow,
 )
-from mostt_model_builder.domain.containers.step_peaks import StepPeaks, render_step_peaks
+from mostt_model_builder.domain.containers.devices import Device
+from mostt_model_builder.domain.containers.step_peaks import (
+    PEAKS_FILE_NAME,
+    StepPeaks,
+    render_step_peaks,
+)
 from mostt_model_builder.domain.contract.derived_rows import (
     DeviceRow,
     ShardedRun,

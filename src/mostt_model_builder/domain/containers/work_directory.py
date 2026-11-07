@@ -10,6 +10,7 @@ from mostt_model_builder.domain.containers.container_steps import (
     SourceReference,
     StepPlacement,
 )
+from mostt_model_builder.domain.publication.publication_request import MODEL_CARD_FILE_NAME
 from mostt_model_builder.domain.sources.source_pins import SourcePin
 
 WORK_DIRECTORY_GRAMMAR = re.compile(r"/[A-Za-z0-9._/-]+")
@@ -20,7 +21,6 @@ REQUESTS_DIRECTORY_NAME = "requests"
 LOGS_DIRECTORY_NAME = "logs"
 CANDIDATE_DIRECTORY_NAME = "candidate"
 # The name under which a Hugging Face repository takes its model card.
-MODEL_CARD_FILE_NAME = "README.md"
 LOCK_DIRECTORY_NAME = "lock"
 LOCK_REQUEST_DIRECTORY_NAME = "request"
 LOCK_OUTPUT_DIRECTORY_NAME = "output"

@@ -18,12 +18,12 @@ from mostt_model_builder.application.resolve_lock import LockRequest, LockResolu
 from mostt_model_builder.application.run_step import HostIdentity, ImageFacts
 from mostt_model_builder.domain.containers.account_ranges import HostAccounts
 from mostt_model_builder.domain.containers.container_files import ContainerFileError
-from mostt_model_builder.domain.containers.container_steps import (
-    LOCK_ROW,
+from mostt_model_builder.domain.containers.container_steps import LOCK_ROW, ContainerRun
+from mostt_model_builder.domain.containers.step_peaks import (
     PEAKS_FILE_NAME,
-    ContainerRun,
+    StepPeaks,
+    render_step_peaks,
 )
-from mostt_model_builder.domain.containers.step_peaks import StepPeaks, render_step_peaks
 from mostt_model_builder.domain.lock.lock_check import LockedPackage, LockError
 from mostt_model_builder.domain.lock.lock_freshness import LockFreshnessError
 

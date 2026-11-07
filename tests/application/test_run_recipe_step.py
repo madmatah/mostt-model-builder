@@ -29,44 +29,44 @@ from mostt_model_builder.domain.acceptance.parity_reports import (
     ParityReportError,
     render_parity_report,
 )
-from mostt_model_builder.domain.bench.hypotheses import (
-    RUN_LINES_FILE_NAME,
-    RUN_LINES_MAX_SIZE_BYTES,
-    Hypothesis,
-    HypothesisError,
-    parse_run_lines,
-)
+from mostt_model_builder.domain.bench.hypotheses import Hypothesis, HypothesisError, parse_run_lines
+from mostt_model_builder.domain.bench.run_lines import RUN_LINES_FILE_NAME, RUN_LINES_MAX_SIZE_BYTES
 from mostt_model_builder.domain.containers.account_ranges import HostAccounts
 from mostt_model_builder.domain.containers.base_images import ENVIRONMENT_PYTHON
 from mostt_model_builder.domain.containers.container_files import ContainerFileError
 from mostt_model_builder.domain.containers.container_steps import (
     INSPECT_STEP_NAME,
-    PEAKS_FILE_NAME,
     PEAKS_OUTPUT,
     BindMount,
     ContainerImage,
     ContainerRun,
     DeclaredOutput,
-    Device,
     EarlierOutput,
     SourceReference,
     StepLimits,
     StepRow,
 )
-from mostt_model_builder.domain.containers.step_peaks import StepPeaks, render_step_peaks
+from mostt_model_builder.domain.containers.devices import Device
+from mostt_model_builder.domain.containers.step_peaks import (
+    PEAKS_FILE_NAME,
+    StepPeaks,
+    render_step_peaks,
+)
 from mostt_model_builder.domain.containers.work_directory import WorkDirectoryError
 from mostt_model_builder.domain.contract.derived_rows import (
-    SHARD_REQUEST_FILE_NAME,
     DeviceRow,
     ShardedRun,
     StepTemplate,
     derive_rows,
-    render_shard_request,
 )
 from mostt_model_builder.domain.contract.recipe_contract import (
     JudgedCandidateFile,
     Parity,
     StepOutputOrigin,
+)
+from mostt_model_builder.domain.contract.shard_request import (
+    SHARD_REQUEST_FILE_NAME,
+    render_shard_request,
 )
 from mostt_model_builder.domain.formats.file_formats import FileFormat
 from mostt_model_builder.domain.onnx.graph_rules import GraphRuleError

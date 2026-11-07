@@ -16,24 +16,21 @@ from mostt_model_builder.application.prepare_publication import (
 )
 from mostt_model_builder.application.run_step import ContainerEngine, StepRunRequest, run_step
 from mostt_model_builder.application.verify_build import VerificationFiles
-from mostt_model_builder.domain.containers.container_steps import (
-    PUBLICATION_REPORT_FILE_NAME,
-    PUBLISH_ROW,
-    StepPlacement,
-)
+from mostt_model_builder.domain.containers.container_steps import PUBLISH_ROW, StepPlacement
 from mostt_model_builder.domain.containers.work_directory import (
-    MODEL_CARD_FILE_NAME,
     find_next_run_number,
     locate_publications,
     place_publication,
 )
 from mostt_model_builder.domain.publication.hub_token import HubToken
 from mostt_model_builder.domain.publication.publication_report import (
+    PUBLICATION_REPORT_FILE_NAME,
     PublicationReport,
     judge_publication_report,
     parse_publication_report,
 )
 from mostt_model_builder.domain.publication.publication_request import (
+    MODEL_CARD_FILE_NAME,
     PUBLICATION_REQUEST_FILE_NAME,
     PublicationRequest,
     PublishedFile,

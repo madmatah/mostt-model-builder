@@ -7,12 +7,12 @@ import torch
 from omegaconf import open_dict
 from safetensors.torch import save_file
 
-from mostt_model_builder.domain.bench.hypotheses import RUN_LINES_FILE_NAME
-from mostt_model_builder.domain.containers.container_steps import (
+from mostt_model_builder.domain.bench.run_lines import RUN_LINES_FILE_NAME
+from mostt_model_builder.domain.containers.container_paths import (
     OUTPUT_IN_THE_CONTAINER,
     REQUEST_IN_THE_CONTAINER,
 )
-from mostt_model_builder.domain.contract.derived_rows import (
+from mostt_model_builder.domain.contract.shard_request import (
     SHARD_REQUEST_FILE_NAME,
     parse_shard_request,
 )

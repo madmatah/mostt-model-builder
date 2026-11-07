@@ -44,10 +44,8 @@ from mostt_model_builder.domain.containers.container_files import (
     FileFacts,
     FileKind,
 )
-from mostt_model_builder.domain.containers.container_steps import (
-    INSPECT_STEP_NAME,
-    PEAKS_FILE_NAME,
-)
+from mostt_model_builder.domain.containers.container_steps import INSPECT_STEP_NAME
+from mostt_model_builder.domain.containers.step_peaks import PEAKS_FILE_NAME
 from mostt_model_builder.domain.formats.file_formats import FileFormat
 from mostt_model_builder.domain.onnx.graph_rules import GraphRuleError
 from mostt_model_builder.domain.onnx.node_placement import (

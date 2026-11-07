@@ -28,12 +28,12 @@ from mostt_model_builder.domain.bench.fleurs_check_report import (
     render_fleurs_check_report,
 )
 from mostt_model_builder.domain.containers.account_ranges import HostAccounts
-from mostt_model_builder.domain.containers.container_steps import (
-    FLEURS_CHECK_ROW,
+from mostt_model_builder.domain.containers.container_steps import FLEURS_CHECK_ROW, ContainerRun
+from mostt_model_builder.domain.containers.step_peaks import (
     PEAKS_FILE_NAME,
-    ContainerRun,
+    StepPeaks,
+    render_step_peaks,
 )
-from mostt_model_builder.domain.containers.step_peaks import StepPeaks, render_step_peaks
 from mostt_model_builder.domain.containers.work_directory import WorkDirectoryError
 from mostt_model_builder.domain.sources.source_pins import RepositoryType, SourcePin
 

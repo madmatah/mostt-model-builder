@@ -1,15 +1,41 @@
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
-from enum import StrEnum
 from pathlib import PurePosixPath
 
 from mostt_model_builder.domain.bench.fleurs_check_report import (
     FLEURS_CHECK_REPORT_FILE_NAME,
     FLEURS_CHECK_REPORT_MAX_SIZE_BYTES,
 )
-from mostt_model_builder.domain.bench.fleurs_index import BENCH_LANGUAGES, locate_bench_files
+from mostt_model_builder.domain.bench.fleurs_index import (
+    BENCH_LANGUAGES,
+    FLEURS_REPOSITORY,
+    locate_bench_files,
+)
 from mostt_model_builder.domain.containers.base_images import BASE_PYTHON, ENVIRONMENT_PYTHON
+from mostt_model_builder.domain.containers.container_paths import (
+    CANDIDATE_IN_THE_CONTAINER,
+    CONTAINER_ROOT,
+    INPUTS_IN_THE_CONTAINER,
+    OUTPUT_IN_THE_CONTAINER,
+    REQUEST_IN_THE_CONTAINER,
+    SCRATCH_IN_THE_CONTAINER,
+    TEMPORARY_DIRECTORY_IN_THE_CONTAINER,
+)
+from mostt_model_builder.domain.containers.devices import Device
+from mostt_model_builder.domain.containers.limit_bounds import (
+    MAX_CPU_COUNT,
+    MAX_MEMORY_MIB,
+    MAX_OUTPUT_SIZE_BYTES,
+    MAX_PROCESS_COUNT,
+    MAX_TEMPORARY_FILESYSTEM_MIB,
+    MIN_CPU_COUNT,
+    MIN_MEMORY_MIB,
+    MIN_OUTPUT_SIZE_BYTES,
+    MIN_PROCESS_COUNT,
+    MIN_TEMPORARY_FILESYSTEM_MIB,
+)
+from mostt_model_builder.domain.containers.step_peaks import PEAKS_FILE_NAME, PEAKS_MAX_SIZE_BYTES
 from mostt_model_builder.domain.formats.file_names import is_file_name
 from mostt_model_builder.domain.lock.lock_check import LOCK_FILE_NAME, LOCK_MAX_SIZE_BYTES
 from mostt_model_builder.domain.onnx.conversion_report import (
@@ -19,6 +45,10 @@ from mostt_model_builder.domain.onnx.conversion_report import (
 from mostt_model_builder.domain.onnx.inspection_report import (
     INSPECTION_REPORT_FILE_NAME,
     INSPECTION_REPORT_MAX_SIZE_BYTES,
+)
+from mostt_model_builder.domain.publication.publication_report import (
+    PUBLICATION_REPORT_FILE_NAME,
+    PUBLICATION_REPORT_MAX_SIZE_BYTES,
 )
 
 # Not 65532, the account of mostt's own runtimes, which may run on the same machine.
@@ -39,14 +69,6 @@ STEPS_PACKAGE_NAME = "steps"
 CORE_STEPS_PACKAGE = f"{CORE_PACKAGE}.{STEPS_PACKAGE_NAME}"
 IMAGE_ROOT = PurePosixPath("/opt/model-builder")
 BOOTSTRAP_IN_THE_IMAGE = IMAGE_ROOT / "src" / "mostt_model_builder" / "bootstrap.py"
-CONTAINER_ROOT = PurePosixPath("/")
-SOURCES_IN_THE_CONTAINER = CONTAINER_ROOT / "sources"
-REQUEST_IN_THE_CONTAINER = PurePosixPath("/request")
-OUTPUT_IN_THE_CONTAINER = PurePosixPath("/output")
-INPUTS_IN_THE_CONTAINER = PurePosixPath("/inputs")
-CANDIDATE_IN_THE_CONTAINER = PurePosixPath("/candidate")
-TEMPORARY_DIRECTORY_IN_THE_CONTAINER = PurePosixPath("/tmp")
-SCRATCH_IN_THE_CONTAINER = PurePosixPath("/scratch")
 ISOLATION_OPTIONS = ("-I", "-B")
 # The Docker CLI fills each of these, in both cases, from the `proxies` of the user's
 # `~/.docker/config.json` into every `docker run` and `docker build`, but only where the command
@@ -70,40 +92,18 @@ CONTAINER_ENVIRONMENT = (
 SCRATCH_ENVIRONMENT = (("TMPDIR", str(SCRATCH_IN_THE_CONTAINER)),)
 # The publication's container reaches the Hub, the one thing it is for, and prints no progress
 # bars, which would fill its log.
-PUBLICATION_REPORT_FILE_NAME = "publication.json"
-PUBLICATION_REPORT_MAX_SIZE_BYTES = 64 * 1024
 PUBLICATION_ENVIRONMENT = (("HF_HUB_OFFLINE", "0"), ("HF_HUB_DISABLE_PROGRESS_BARS", "1"))
 
-PEAKS_FILE_NAME = "peaks.json"
-PEAKS_MAX_SIZE_BYTES = 4096
 FLEURS_CHECK_STEP_NAME = "fleurs-check"
 CLEAN_STEP_NAME = "clean"
 LOCK_STEP_NAME = "lock"
 INSPECT_STEP_NAME = "inspect"
 CONVERT_STEP_NAME = "convert"
 PUBLISH_STEP_NAME = "publish"
-# Docker reads 0 or -1 as no limit, and refuses a memory limit under 6 MiB; the ceilings only
-# refuse a value that no step could mean on the machines a build runs on.
-MIN_MEMORY_MIB = 6
-MAX_MEMORY_MIB = 57_344
-MIN_PROCESS_COUNT = 1
-MAX_PROCESS_COUNT = 8192
-MIN_CPU_COUNT = 1
-MAX_CPU_COUNT = 64
-MIN_TEMPORARY_FILESYSTEM_MIB = 1
-MAX_TEMPORARY_FILESYSTEM_MIB = 16_384
-MIN_OUTPUT_SIZE_BYTES = 1
-MAX_OUTPUT_SIZE_BYTES = 8 * 2**30
-FLEURS_REPOSITORY = "google/fleurs"
 
 
 class StepTableError(ValueError):
     pass
-
-
-class Device(StrEnum):
-    CPU = "cpu"
-    GPU = "gpu"
 
 
 @dataclass(frozen=True, slots=True)

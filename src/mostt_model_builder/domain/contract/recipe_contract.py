@@ -11,7 +11,8 @@ from mostt_model_builder.domain.acceptance.acceptance import (
 )
 from mostt_model_builder.domain.acceptance.parity_reports import PARITY_NAME_GRAMMAR
 from mostt_model_builder.domain.bench.fleurs_index import BENCH_LANGUAGES
-from mostt_model_builder.domain.bench.hypotheses import RUN_LINES_FILE_NAME, RunReader
+from mostt_model_builder.domain.bench.hypotheses import RunReader
+from mostt_model_builder.domain.bench.run_lines import RUN_LINES_FILE_NAME
 from mostt_model_builder.domain.containers.base_images import BASE_PYTHON, ENVIRONMENT_PYTHON
 from mostt_model_builder.domain.containers.container_steps import (
     CLEAN_STEP_NAME,
@@ -23,13 +24,11 @@ from mostt_model_builder.domain.containers.container_steps import (
     FLEURS_CHECK_STEP_NAME,
     INSPECT_STEP_NAME,
     LOCK_STEP_NAME,
-    PEAKS_FILE_NAME,
     PUBLISH_STEP_NAME,
     RUNNABLE_CORE_ROWS,
     STEP_NAME_GRAMMAR,
     ContainerImage,
     DeclaredOutput,
-    Device,
     EarlierOutput,
     SourceReference,
     StepLimits,
@@ -39,17 +38,15 @@ from mostt_model_builder.domain.containers.container_steps import (
     find_package_of_owner,
     judge_row,
 )
+from mostt_model_builder.domain.containers.devices import Device
+from mostt_model_builder.domain.containers.step_peaks import PEAKS_FILE_NAME
 from mostt_model_builder.domain.containers.work_directory import (
     CANDIDATE_DIRECTORY_NAME,
     LOGS_DIRECTORY_NAME,
-    MODEL_CARD_FILE_NAME,
     PUBLICATIONS_DIRECTORY_NAME,
     REQUESTS_DIRECTORY_NAME,
 )
 from mostt_model_builder.domain.contract.derived_rows import (
-    MAX_SHARD_COUNT,
-    MIN_SHARD_COUNT,
-    RUN_NAME_GRAMMAR,
     DerivedRow,
     DeviceRow,
     ShardedRun,
@@ -57,6 +54,11 @@ from mostt_model_builder.domain.contract.derived_rows import (
     derive_rows,
 )
 from mostt_model_builder.domain.contract.model_description import ModelDescription
+from mostt_model_builder.domain.contract.shard_request import (
+    MAX_SHARD_COUNT,
+    MIN_SHARD_COUNT,
+    RUN_NAME_GRAMMAR,
+)
 from mostt_model_builder.domain.formats.file_formats import FileFormat
 from mostt_model_builder.domain.formats.file_names import (
     REFUSED_SUFFIXES,
@@ -72,6 +74,7 @@ from mostt_model_builder.domain.onnx.conversion_request import (
 )
 from mostt_model_builder.domain.onnx.graph_rules import EightBitBlocksOutput, GraphSource
 from mostt_model_builder.domain.onnx.node_placement import PLACEMENT_FILE_NAME
+from mostt_model_builder.domain.publication.publication_request import MODEL_CARD_FILE_NAME
 from mostt_model_builder.domain.sources.source_pins import (
     PATH_SEPARATOR,
     SourcePin,

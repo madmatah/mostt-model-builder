@@ -29,14 +29,17 @@ from mostt_model_builder.domain.containers.container_files import (
 from mostt_model_builder.domain.containers.container_steps import (
     CONTAINER_USER_ID,
     ONNX_CONVERT_IMAGE,
-    PEAKS_FILE_NAME,
     BindMount,
     ContainerRun,
     DeclaredOutput,
     EarlierOutput,
     build_convert_row,
 )
-from mostt_model_builder.domain.containers.step_peaks import StepPeaks, render_step_peaks
+from mostt_model_builder.domain.containers.step_peaks import (
+    PEAKS_FILE_NAME,
+    StepPeaks,
+    render_step_peaks,
+)
 from mostt_model_builder.domain.onnx.conversion_report import (
     CONVERSION_REPORT_FILE_NAME,
     ConversionReport,

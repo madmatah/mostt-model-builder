@@ -13,7 +13,6 @@ from mostt_model_builder.domain.bench.hypotheses import (
     MAX_TEXT_LENGTH,
     MAX_TOKEN_COUNT,
     MAX_TOKEN_ID,
-    RUN_LINES_MAX_SIZE_BYTES,
     Hypothesis,
     HypothesisError,
     RunLine,
@@ -21,6 +20,7 @@ from mostt_model_builder.domain.bench.hypotheses import (
     judge_hypothesis,
     parse_run_lines,
 )
+from mostt_model_builder.domain.bench.run_lines import RUN_LINES_MAX_SIZE_BYTES
 
 LANGUAGES = ("fr_fr", "en_us")
 FRENCH_HYPOTHESIS = Hypothesis(

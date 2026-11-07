@@ -2,7 +2,7 @@ import os
 import shutil
 from pathlib import Path
 
-from mostt_model_builder.domain.containers.container_steps import OUTPUT_IN_THE_CONTAINER
+from mostt_model_builder.domain.containers.container_paths import OUTPUT_IN_THE_CONTAINER
 
 REMOVABLE_DIRECTORY_MODE = 0o700
 

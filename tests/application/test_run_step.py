@@ -36,7 +36,6 @@ from mostt_model_builder.domain.containers.container_steps import (
     BOOTSTRAP_IN_THE_IMAGE,
     CONTAINER_USER_ID,
     LOCK_ROW,
-    PEAKS_FILE_NAME,
     BindMount,
     ContainerRun,
     DeclaredOutput,
@@ -45,7 +44,11 @@ from mostt_model_builder.domain.containers.container_steps import (
     StepPlacement,
 )
 from mostt_model_builder.domain.containers.provenance import ProvenanceError
-from mostt_model_builder.domain.containers.step_peaks import StepPeaks, render_step_peaks
+from mostt_model_builder.domain.containers.step_peaks import (
+    PEAKS_FILE_NAME,
+    StepPeaks,
+    render_step_peaks,
+)
 from mostt_model_builder.domain.lock.lock_check import LOCK_FILE_NAME, MANIFEST_FILE_NAME
 
 WORK_ROOT = PurePosixPath("/data/builds/work")

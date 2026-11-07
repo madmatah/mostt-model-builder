@@ -4,7 +4,7 @@ from string import Template
 
 from mostt_model_builder.domain.acceptance.verification import Verification
 from mostt_model_builder.domain.containers.container_files import FileFacts, FileKind
-from mostt_model_builder.domain.containers.container_steps import Device
+from mostt_model_builder.domain.containers.devices import Device
 from mostt_model_builder.domain.contract.model_description import ModelDescription
 from mostt_model_builder.domain.contract.recipe_contract import (
     REFERENCE_VARIANT,

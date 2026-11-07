@@ -8,16 +8,16 @@ from typing import Any
 import onnx_asr
 import onnxruntime
 
-from mostt_model_builder.domain.bench.hypotheses import RUN_LINES_FILE_NAME
+from mostt_model_builder.domain.bench.run_lines import RUN_LINES_FILE_NAME
 from mostt_model_builder.domain.bench.wav_format import SAMPLE_RATE_HZ
-from mostt_model_builder.domain.containers.container_steps import (
+from mostt_model_builder.domain.containers.container_paths import (
     CANDIDATE_IN_THE_CONTAINER,
     OUTPUT_IN_THE_CONTAINER,
     REQUEST_IN_THE_CONTAINER,
     TEMPORARY_DIRECTORY_IN_THE_CONTAINER,
-    Device,
 )
-from mostt_model_builder.domain.contract.derived_rows import (
+from mostt_model_builder.domain.containers.devices import Device
+from mostt_model_builder.domain.contract.shard_request import (
     SHARD_REQUEST_FILE_NAME,
     ShardRequest,
     parse_shard_request,

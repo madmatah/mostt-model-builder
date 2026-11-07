@@ -7,10 +7,16 @@ from pathlib import PurePosixPath
 import pytest
 
 from mostt_model_builder.domain.containers.base_images import BASE_PYTHON, ENVIRONMENT_PYTHON
+from mostt_model_builder.domain.containers.container_paths import (
+    CANDIDATE_IN_THE_CONTAINER,
+    OUTPUT_IN_THE_CONTAINER,
+    REQUEST_IN_THE_CONTAINER,
+    SCRATCH_IN_THE_CONTAINER,
+    TEMPORARY_DIRECTORY_IN_THE_CONTAINER,
+)
 from mostt_model_builder.domain.containers.container_steps import (
     BENCH_IMAGE,
     BOOTSTRAP_IN_THE_IMAGE,
-    CANDIDATE_IN_THE_CONTAINER,
     CLEAN_STEP_NAME,
     CONTAINER_USER_ID,
     CONVERT_STEP_NAME,
@@ -21,18 +27,12 @@ from mostt_model_builder.domain.containers.container_steps import (
     LOCK_STEP_NAME,
     ONNX_CONVERT_IMAGE,
     ONNX_INSPECT_IMAGE,
-    OUTPUT_IN_THE_CONTAINER,
-    PEAKS_FILE_NAME,
     PUBLISH_ROW,
-    REQUEST_IN_THE_CONTAINER,
-    SCRATCH_IN_THE_CONTAINER,
-    TEMPORARY_DIRECTORY_IN_THE_CONTAINER,
     UV_CONTAINER_IMAGE,
     BindMount,
     ContainerImage,
     ContainerRun,
     DeclaredOutput,
-    Device,
     EarlierOutput,
     SourceReference,
     StepLimits,
@@ -45,6 +45,8 @@ from mostt_model_builder.domain.containers.container_steps import (
     judge_row,
     plan_container_run,
 )
+from mostt_model_builder.domain.containers.devices import Device
+from mostt_model_builder.domain.containers.step_peaks import PEAKS_FILE_NAME
 from mostt_model_builder.domain.contract.recipe_contract import (
     RECIPES_DIRECTORY_NAME,
     JudgedRecipe,

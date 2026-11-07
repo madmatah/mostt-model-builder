@@ -5,12 +5,11 @@ from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 
 from mostt_model_builder.domain.bench.fleurs_index import RECORDING_NAME_GRAMMAR
+from mostt_model_builder.domain.bench.run_lines import RUN_LINES_MAX_SIZE_BYTES
 from mostt_model_builder.domain.json_documents.json_depth import MAX_JSON_DEPTH, refuse_deep_json
 
-RUN_LINES_FILE_NAME = "lines.jsonl"
 # A run writes one line per utterance of FLEURS's test sets, under 700 per language, each a few
 # hundred bytes; the bounds only refuse lines that no run of the bench could write.
-RUN_LINES_MAX_SIZE_BYTES = 16 * 2**20
 MAX_LINE_COUNT = 20_000
 MAX_LINE_SIZE_BYTES = 64 * 1024
 MAX_TEXT_LENGTH = 4096

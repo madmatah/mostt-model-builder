@@ -3,12 +3,13 @@ import pytest
 from mostt_model_builder.domain.containers.base_images import BASE_PYTHON, ENVIRONMENT_PYTHON
 from mostt_model_builder.domain.containers.container_steps import (
     ContainerImage,
-    Device,
     StepLimits,
     StepRow,
 )
-from mostt_model_builder.domain.contract.derived_rows import DerivedRow, ShardRequest
+from mostt_model_builder.domain.containers.devices import Device
+from mostt_model_builder.domain.contract.derived_rows import DerivedRow
 from mostt_model_builder.domain.contract.recipe_contract import REFERENCE_VARIANT
+from mostt_model_builder.domain.contract.shard_request import ShardRequest
 from mostt_model_builder.domain.lock.declared_requirements import DeclaredRequirement
 from mostt_model_builder.domain.publication.measuring_libraries import (
     MeasuringLibrary,

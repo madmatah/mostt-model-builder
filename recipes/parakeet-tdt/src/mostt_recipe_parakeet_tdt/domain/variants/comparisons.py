@@ -4,7 +4,7 @@ from mostt_model_builder.domain.acceptance.acceptance import (
     Equivalence,
     NonInferiority,
 )
-from mostt_model_builder.domain.containers.container_steps import Device
+from mostt_model_builder.domain.containers.devices import Device
 from mostt_recipe_parakeet_tdt.domain.variants.variants import FLOAT32_VARIANT, VARIANTS, name_run
 
 NEMO_RUN_NAME = "nemo"

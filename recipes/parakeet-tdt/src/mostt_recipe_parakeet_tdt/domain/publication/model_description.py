@@ -1,6 +1,6 @@
 from pathlib import PurePosixPath
 
-from mostt_model_builder.domain.containers.container_steps import FLEURS_REPOSITORY
+from mostt_model_builder.domain.bench.fleurs_index import FLEURS_REPOSITORY
 from mostt_model_builder.domain.contract.model_description import (
     ModelDescription,
     PinnedRevision,

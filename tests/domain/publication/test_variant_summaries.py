@@ -14,7 +14,7 @@ from mostt_model_builder.domain.acceptance.verification import (
     RunMeasure,
     Verification,
 )
-from mostt_model_builder.domain.containers.container_steps import Device
+from mostt_model_builder.domain.containers.devices import Device
 from mostt_model_builder.domain.contract.recipe_contract import REFERENCE_VARIANT, JudgedRun
 from mostt_model_builder.domain.formats.file_formats import FileFormat
 from mostt_model_builder.domain.publication.variant_summaries import (

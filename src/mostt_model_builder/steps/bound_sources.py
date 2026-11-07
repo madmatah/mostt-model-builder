@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from mostt_model_builder.domain.containers.container_steps import SOURCES_IN_THE_CONTAINER
+from mostt_model_builder.domain.containers.container_paths import SOURCES_IN_THE_CONTAINER
 
 # A step names a source by its repository and its path alone: only the host reads the revision
 # that the source's pin gives.

@@ -1,6 +1,7 @@
 import re
 from dataclasses import dataclass
 
+FLEURS_REPOSITORY = "google/fleurs"
 BENCH_LANGUAGES = ("fr_fr", "en_us")
 FIELD_SEPARATOR = "\t"
 LINE_SEPARATOR = "\n"
