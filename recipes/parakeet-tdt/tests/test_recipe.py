@@ -196,21 +196,21 @@ PUBLISHED_LAYOUT = [
         "encoder-model.fp16.onnx",
         "onnx",
         ("float16",),
-        StepOutputOrigin("convert", "encoder-model.fp16.onnx"),
+        StepOutputOrigin("convert-float16", "encoder-model.fp16.onnx"),
         None,
     ),
     (
         "encoder-model.bf16.onnx",
         "onnx",
         ("bfloat16",),
-        StepOutputOrigin("convert", "encoder-model.bf16.onnx"),
+        StepOutputOrigin("convert-bfloat16", "encoder-model.bf16.onnx"),
         None,
     ),
     (
         "encoder-model.int8.onnx",
         "onnx",
         ("eight-bit-blocks",),
-        StepOutputOrigin("convert", "encoder-model.int8.onnx"),
+        StepOutputOrigin("convert-eight-bit-blocks", "encoder-model.int8.onnx"),
         None,
     ),
     ("decoder_joint-model.onnx", "onnx", ("float32",), EXPORTED_DECODER, None),
@@ -505,15 +505,26 @@ class TestTheParakeetTdtRecipe:
                 "transcribe",
             )
 
-        def test_should_convert_the_exported_encoder_bound_beside_its_external_data(
+        def test_should_convert_the_exported_encoder_bound_beside_its_external_data_per_variant(
             self, judged_recipe: JudgedRecipe
         ) -> None:
             assert [
-                (earlier_output.step, earlier_output.output.name)
+                (
+                    row.name,
+                    [
+                        (earlier_output.step, earlier_output.output.name)
+                        for earlier_output in row.earlier_outputs
+                    ],
+                )
                 for row in judged_recipe.rows
-                if row.name == "convert"
-                for earlier_output in row.earlier_outputs
-            ] == [("export", "encoder-model.onnx"), ("export", "encoder-model.onnx.data")]
+                if row.name.startswith("convert")
+            ] == [
+                (
+                    f"convert-{variant}",
+                    [("export", "encoder-model.onnx"), ("export", "encoder-model.onnx.data")],
+                )
+                for variant in ("float16", "bfloat16", "eight-bit-blocks")
+            ]
 
         def test_should_bind_each_pinned_file_of_the_transformers_row_by_itself_and_no_nemo(
             self, judged_recipe: JudgedRecipe

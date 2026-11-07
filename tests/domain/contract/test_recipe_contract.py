@@ -46,11 +46,11 @@ from mostt_model_builder.domain.contract.recipe_contract import (
     SourceMount,
     StepOutputOrigin,
     VariantConversion,
-    build_conversion_request,
     find_candidate_file_max_size_bytes,
     find_graph_source,
     find_runnable_row,
     judge_recipe,
+    list_rows_of_step,
     locate_card_template,
     locate_entry_module_file,
 )
@@ -242,13 +242,13 @@ FLOAT16_FILE = CandidateFile(
     "encoder.fp16.onnx",
     "onnx",
     ("float16",),
-    StepOutputOrigin("convert", "encoder.fp16.onnx"),
+    StepOutputOrigin("convert-float16", "encoder.fp16.onnx"),
 )
 EIGHT_BIT_BLOCKS_FILE = CandidateFile(
     "encoder.int8.onnx",
     "onnx",
     ("eight-bit-blocks",),
-    StepOutputOrigin("convert", "encoder.int8.onnx"),
+    StepOutputOrigin("convert-eight-bit-blocks", "encoder.int8.onnx"),
 )
 CONVERSION_CONTRACT = RecipeContract(
     name=RECIPE_NAME,
@@ -842,6 +842,14 @@ REFUSED_CONTRACTS = {
         change_conversion(0, output="conversion-report.json"),
         "its output conversion-report.json is declared twice",
     ),
+    "a conversion whose row bears the name of a step of the recipe": (
+        replace(
+            CONVERSION_CONTRACT,
+            steps=(EXPORT_STEP, replace(EXPORT_STEP, name="convert-float16")),
+        ),
+        "its conversion to the variant float16 derives the row convert-float16, which another "
+        "row already holds",
+    ),
     "a conversion beyond the ceiling of an output": (
         change_variant_conversion(0, max_size_bytes=8 * 2**30 + 1),
         "the size bound of encoder.fp16.onnx in bytes, 8589934593, lies outside",
@@ -1123,26 +1131,59 @@ class TestTheRecipeContract:
             def judged_recipe(self) -> JudgedRecipe:
                 return judge_recipe(CONVERSION_CONTRACT, FACTS)
 
-            def test_should_add_the_cores_conversions_after_the_recipes_rows(
+            def test_should_add_a_row_per_conversion_after_the_recipes_rows(
                 self, judged_recipe: JudgedRecipe
             ) -> None:
-                assert [row.name for row in judged_recipe.rows] == ["export", "convert"]
+                assert [row.name for row in judged_recipe.rows] == [
+                    "export",
+                    "convert-float16",
+                    "convert-eight-bit-blocks",
+                ]
 
-            def test_should_bind_the_input_and_its_external_data_each_by_itself(
+            def test_should_bind_the_input_and_its_external_data_each_by_itself_in_each_row(
+                self, judged_recipe: JudgedRecipe
+            ) -> None:
+                assert {
+                    tuple(
+                        (earlier_output.step, earlier_output.output.name)
+                        for earlier_output in conversion_row.row.earlier_outputs
+                    )
+                    for conversion_row in judged_recipe.conversion_rows
+                } == {(("export", "encoder.onnx"), ("export", "encoder.onnx.data"))}
+
+            def test_should_declare_in_each_row_its_converted_file_with_its_size_bound(
                 self, judged_recipe: JudgedRecipe
             ) -> None:
                 assert [
-                    (earlier_output.step, earlier_output.output.name)
-                    for earlier_output in judged_recipe.rows[-1].earlier_outputs
-                ] == [("export", "encoder.onnx"), ("export", "encoder.onnx.data")]
+                    (conversion_row.variant, conversion_row.row.outputs[0])
+                    for conversion_row in judged_recipe.conversion_rows
+                ] == [
+                    ("float16", DeclaredOutput("encoder.fp16.onnx", CONVERTED_SIZE_BOUND_BYTES)),
+                    (
+                        "eight-bit-blocks",
+                        DeclaredOutput("encoder.int8.onnx", CONVERTED_SIZE_BOUND_BYTES),
+                    ),
+                ]
 
-            def test_should_declare_each_converted_file_with_its_size_bound(
+            def test_should_ask_each_row_for_its_variants_conversion_of_the_input_alone(
                 self, judged_recipe: JudgedRecipe
             ) -> None:
-                assert judged_recipe.rows[-1].outputs[:2] == (
-                    DeclaredOutput("encoder.fp16.onnx", CONVERTED_SIZE_BOUND_BYTES),
-                    DeclaredOutput("encoder.int8.onnx", CONVERTED_SIZE_BOUND_BYTES),
-                )
+                assert [
+                    conversion_row.request for conversion_row in judged_recipe.conversion_rows
+                ] == [
+                    ConversionRequest("export", "encoder.onnx", (FLOAT16_CONVERSION.conversion,)),
+                    ConversionRequest(
+                        "export", "encoder.onnx", (EIGHT_BIT_BLOCKS_CONVERSION.conversion,)
+                    ),
+                ]
+
+            def test_should_list_every_conversion_row_as_the_rows_of_the_cores_convert_step(
+                self, judged_recipe: JudgedRecipe
+            ) -> None:
+                assert [row.name for row in list_rows_of_step(judged_recipe, "convert")] == [
+                    "convert-float16",
+                    "convert-eight-bit-blocks",
+                ]
 
             def test_should_keep_the_conversions_in_their_order(
                 self, judged_recipe: JudgedRecipe
@@ -1286,35 +1327,6 @@ class TestTheRecipeContract:
                 with pytest.raises(RecipeContractError, match=re.escape(reason)):
                     judge_act()
 
-    class TestTheBuildConversionRequestFunction:
-        class TestWhenTheRecipeConvertsItsVariants:
-            @pytest.fixture
-            def conversion_request(self) -> ConversionRequest:
-                return build_conversion_request(judge_recipe(CONVERSION_CONTRACT, FACTS))
-
-            def test_should_ask_for_each_conversion_of_the_input_in_the_recipes_order(
-                self, conversion_request: ConversionRequest
-            ) -> None:
-                assert conversion_request == ConversionRequest(
-                    "export",
-                    "encoder.onnx",
-                    (FLOAT16_CONVERSION.conversion, EIGHT_BIT_BLOCKS_CONVERSION.conversion),
-                )
-
-        class TestWhenTheRecipeConvertsNothing:
-            @pytest.fixture
-            def build_act(self) -> Callable[[], ConversionRequest]:
-                return partial(build_conversion_request, judge_recipe(CONTRACT, FACTS))
-
-            def test_should_refuse_to_ask_for_a_conversion(
-                self, build_act: Callable[[], ConversionRequest]
-            ) -> None:
-                with pytest.raises(
-                    RecipeContractError,
-                    match=re.escape("the recipe family converts none of its variants"),
-                ):
-                    build_act()
-
     class TestTheFindGraphSourceFunction:
         @pytest.mark.parametrize(
             ("origin", "expected_source"),
@@ -1325,12 +1337,17 @@ class TestTheRecipeContract:
                     id="the exported encoder, the conversions' input",
                 ),
                 pytest.param(
-                    StepOutputOrigin("convert", "encoder.int8.onnx"),
+                    StepOutputOrigin("convert-eight-bit-blocks", "encoder.int8.onnx"),
                     EightBitBlocksOutput(265),
                     id="the 8-bit conversion's output, with the count of products it declares",
                 ),
                 pytest.param(
-                    StepOutputOrigin("convert", "encoder.fp16.onnx"),
+                    StepOutputOrigin("convert-float16", "encoder.int8.onnx"),
+                    GraphSource.OTHER,
+                    id="a file of that name from another variant's row",
+                ),
+                pytest.param(
+                    StepOutputOrigin("convert-float16", "encoder.fp16.onnx"),
                     GraphSource.OTHER,
                     id="the float16 conversion's output",
                 ),

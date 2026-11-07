@@ -287,7 +287,7 @@ PUBLISH_ROW = StepRow(
 RUNNABLE_CORE_ROWS = (FLEURS_CHECK_ROW, INSPECT_ROW)
 CLEAN_LIMITS = StepLimits(memory_mib=256, process_count=32, cpu_count=1, temporary_directory_mib=16)
 # The conversions of the encoder, its 2.4 GB of weights loaded whole for each variant, peaked at
-# 9.7 GiB and 41 processes.
+# 9.7 GiB and 41 processes, all of them in one container.
 CONVERT_LIMITS = StepLimits(
     memory_mib=13_312, process_count=64, cpu_count=4, temporary_directory_mib=256
 )
@@ -318,16 +318,20 @@ def build_clean_row(image: ContainerImage) -> StepRow:
     )
 
 
+def name_conversion_row(variant: str) -> str:
+    return f"{CONVERT_STEP_NAME}-{variant}"
+
+
 def build_convert_row(
-    inputs: tuple[EarlierOutput, ...], converted_outputs: tuple[DeclaredOutput, ...]
+    variant: str, inputs: tuple[EarlierOutput, ...], converted_output: DeclaredOutput
 ) -> StepRow:
     return StepRow(
-        name=CONVERT_STEP_NAME,
+        name=name_conversion_row(variant),
         image=ONNX_CONVERT_IMAGE,
         entry_module=f"{CORE_STEPS_PACKAGE}.onnx_conversion",
         sources=(),
         has_request=True,
-        outputs=(*converted_outputs, CONVERSION_REPORT_OUTPUT, PEAKS_OUTPUT),
+        outputs=(converted_output, CONVERSION_REPORT_OUTPUT, PEAKS_OUTPUT),
         limits=CONVERT_LIMITS,
         earlier_outputs=inputs,
     )

@@ -38,6 +38,7 @@ from mostt_model_builder.domain.containers.container_steps import (
     build_convert_row,
     find_package_of_owner,
     judge_row,
+    name_conversion_row,
 )
 from mostt_model_builder.domain.containers.devices import Device
 from mostt_model_builder.domain.containers.step_peaks import PEAKS_FILE_NAME
@@ -267,6 +268,13 @@ class JudgedRun:
 
 
 @dataclass(frozen=True, slots=True)
+class ConversionRow:
+    variant: str
+    row: StepRow
+    request: ConversionRequest
+
+
+@dataclass(frozen=True, slots=True)
 class JudgedRecipe:
     name: str
     pins: tuple[SourcePin, ...]
@@ -280,6 +288,7 @@ class JudgedRecipe:
     conversion_input: StepOutputOrigin | None = None
     build_order: tuple[str, ...] = ()
     conversions: tuple[VariantConversion, ...] = ()
+    conversion_rows: tuple[ConversionRow, ...] = ()
     comparisons: tuple[Comparison, ...] = ()
     model: ModelDescription | None = None
 
@@ -326,6 +335,8 @@ def find_runnable_row(recipe: JudgedRecipe, step_name: str) -> StepRow:
 
 
 def list_rows_of_step(recipe: JudgedRecipe, step_name: str) -> tuple[StepRow, ...]:
+    if step_name == CONVERT_STEP_NAME and recipe.conversion_rows:
+        return tuple(conversion_row.row for conversion_row in recipe.conversion_rows)
     derived = tuple(
         derived_row.row for derived_row in recipe.derived_rows if derived_row.step == step_name
     )
@@ -350,16 +361,6 @@ def find_candidate_file_max_size_bytes(
     )
 
 
-def build_conversion_request(recipe: JudgedRecipe) -> ConversionRequest:
-    if recipe.conversion_input is None or not recipe.conversions:
-        raise RecipeContractError(f"the recipe {recipe.name} converts none of its variants")
-    return ConversionRequest(
-        input_step=recipe.conversion_input.step,
-        input_name=recipe.conversion_input.output,
-        conversions=tuple(variant.conversion for variant in recipe.conversions),
-    )
-
-
 def find_graph_source(
     origin: StepOutputOrigin | HostContentOrigin,
     conversion_input: StepOutputOrigin | None,
@@ -370,7 +371,7 @@ def find_graph_source(
     for variant_conversion in conversions:
         conversion = variant_conversion.conversion
         if isinstance(conversion, EightBitBlocksConversion) and origin == StepOutputOrigin(
-            CONVERT_STEP_NAME, conversion.output
+            name_conversion_row(variant_conversion.variant), conversion.output
         ):
             return EightBitBlocksOutput(conversion.quantized_product_count)
     return GraphSource.OTHER
@@ -390,9 +391,8 @@ def judge_recipe(contract: RecipeContract, facts: RecipeFacts) -> JudgedRecipe:
     images = judge_images(contract, where)
     runs = judge_runs(contract, where)
     rows, derived_rows = judge_steps(contract, images, pins, facts, runs, where)
-    convert_row = judge_conversions_of_recipe(contract, rows, facts.host_cpu_count, where)
-    if convert_row is not None:
-        rows = (*rows, convert_row)
+    conversion_rows = judge_conversions_of_recipe(contract, rows, facts.host_cpu_count, where)
+    rows = (*rows, *(conversion_row.row for conversion_row in conversion_rows))
     candidate = judge_candidate(contract.candidate, rows, where)
     judge_converted_files(contract.conversions, candidate, where)
     return JudgedRecipe(
@@ -409,6 +409,7 @@ def judge_recipe(contract: RecipeContract, facts: RecipeFacts) -> JudgedRecipe:
             contract.build_order, contract.steps, bool(contract.conversions), where
         ),
         conversions=contract.conversions,
+        conversion_rows=conversion_rows,
         comparisons=judge_comparisons(contract.comparisons, runs, where),
         model=contract.model,
         card_template=judge_card_template(contract, facts.has_card_template, where),
@@ -951,9 +952,9 @@ def judge_conversion_input(
 
 def judge_conversions_of_recipe(
     contract: RecipeContract, rows: Sequence[StepRow], host_cpu_count: int, where: str
-) -> StepRow | None:
+) -> tuple[ConversionRow, ...]:
     if not contract.conversions:
-        return None
+        return ()
     conversion_input = contract.conversion_input
     if conversion_input is None:
         raise RecipeContractError(f"{where} converts its variants, and names no conversions' input")
@@ -1004,18 +1005,34 @@ def judge_conversions_of_recipe(
                 f"{where}: its conversions",
             )
         )
-    row = build_convert_row(
-        tuple(inputs),
-        tuple(
-            DeclaredOutput(variant.conversion.output, variant.max_size_bytes)
-            for variant in contract.conversions
-        ),
-    )
-    try:
-        judge_row(row, host_cpu_count)
-    except StepTableError as error:
-        raise RecipeContractError(f"{where}: {error}") from error
-    return row
+    conversion_rows = []
+    for variant_conversion in contract.conversions:
+        row = build_convert_row(
+            variant_conversion.variant,
+            tuple(inputs),
+            DeclaredOutput(variant_conversion.conversion.output, variant_conversion.max_size_bytes),
+        )
+        if row.name in earlier_rows:
+            raise RecipeContractError(
+                f"{where}: its conversion to the variant {variant_conversion.variant} derives the "
+                f"row {row.name}, which another row already holds"
+            )
+        try:
+            judge_row(row, host_cpu_count)
+        except StepTableError as error:
+            raise RecipeContractError(f"{where}: {error}") from error
+        conversion_rows.append(
+            ConversionRow(
+                variant=variant_conversion.variant,
+                row=row,
+                request=ConversionRequest(
+                    input_step=conversion_input.step,
+                    input_name=conversion_input.output,
+                    conversions=(variant_conversion.conversion,),
+                ),
+            )
+        )
+    return tuple(conversion_rows)
 
 
 def find_external_data_of_origin(
@@ -1038,7 +1055,9 @@ def judge_converted_files(
     where: str,
 ) -> None:
     for variant_conversion in conversions:
-        origin = StepOutputOrigin(CONVERT_STEP_NAME, variant_conversion.conversion.output)
+        origin = StepOutputOrigin(
+            name_conversion_row(variant_conversion.variant), variant_conversion.conversion.output
+        )
         if not any(
             candidate_file.origin == origin
             and candidate_file.file_format is FileFormat.ONNX

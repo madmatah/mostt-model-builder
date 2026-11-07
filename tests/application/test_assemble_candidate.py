@@ -227,7 +227,9 @@ EIGHT_BIT_DECODER_NAME = "decoder-model.int8.onnx"
 EIGHT_BIT_ENCODER = b"\x08\x09\x3a\x00"
 EIGHT_BIT_VARIANTS = ("eight-bit-blocks",)
 DECLARED_BLOCK_PRODUCT_COUNT = 2
-CONVERT_ROW = build_convert_row((), (DeclaredOutput(EIGHT_BIT_ENCODER_NAME, OUTPUT_BOUND_BYTES),))
+CONVERT_ROW = build_convert_row(
+    "eight-bit-blocks", (), DeclaredOutput(EIGHT_BIT_ENCODER_NAME, OUTPUT_BOUND_BYTES)
+)
 CONVERSION_CANDIDATE = (
     *CANDIDATE,
     JudgedCandidateFile(

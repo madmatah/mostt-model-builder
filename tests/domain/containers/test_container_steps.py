@@ -138,10 +138,7 @@ CONVERSION_INPUTS = (
     EarlierOutput("export", DeclaredOutput("encoder.onnx", 2**20), EXPORT_OUTPUT_NAMES),
     EarlierOutput("export", DeclaredOutput("encoder.onnx.data", 2**31), EXPORT_OUTPUT_NAMES),
 )
-CONVERTED_OUTPUTS = (
-    DeclaredOutput("encoder.fp16.onnx", 2**31),
-    DeclaredOutput("encoder.int8.onnx", 2**31),
-)
+CONVERTED_OUTPUT = DeclaredOutput("encoder.fp16.onnx", 2**31)
 SCRATCH_ROW = replace(FLEURS_CHECK_ROW, limits=replace(GOOD_LIMITS, scratch_mib=256))
 REFUSED_ROWS = {
     "a name outside the grammar": (
@@ -465,16 +462,16 @@ class TestTheContainerSteps:
             )
 
     class TestTheBuildConvertRowFunction:
-        class TestWhenTheConversionsReadAnEncoderAndItsExternalData:
+        class TestWhenAVariantsConversionReadsAnEncoderAndItsExternalData:
             @pytest.fixture
             def convert_row(self) -> StepRow:
-                return build_convert_row(CONVERSION_INPUTS, CONVERTED_OUTPUTS)
+                return build_convert_row("float16", CONVERSION_INPUTS, CONVERTED_OUTPUT)
 
-            def test_should_run_the_cores_conversion_in_the_conversions_image(
+            def test_should_run_the_cores_conversion_in_a_row_named_after_its_variant(
                 self, convert_row: StepRow
             ) -> None:
                 assert (convert_row.name, convert_row.image, convert_row.entry_module) == (
-                    CONVERT_STEP_NAME,
+                    f"{CONVERT_STEP_NAME}-float16",
                     ONNX_CONVERT_IMAGE,
                     "mostt_model_builder.steps.onnx_conversion",
                 )
@@ -490,11 +487,11 @@ class TestTheContainerSteps:
             def test_should_read_a_request_and_no_candidate(self, convert_row: StepRow) -> None:
                 assert (convert_row.has_request, convert_row.binds_candidate) == (True, False)
 
-            def test_should_write_each_converted_file_then_its_report_and_its_peaks(
+            def test_should_write_its_converted_file_then_its_report_and_its_peaks(
                 self, convert_row: StepRow
             ) -> None:
                 assert convert_row.outputs == (
-                    *CONVERTED_OUTPUTS,
+                    CONVERTED_OUTPUT,
                     DeclaredOutput("conversion-report.json", 64 * 1024),
                     DeclaredOutput(PEAKS_FILE_NAME, 4096),
                 )
