@@ -7,11 +7,11 @@ from functools import partial
 
 import pytest
 from accepted_build import (
+    BUILD_DIRECTORY,
     ENCODER,
     ENCODER_NAME,
     HEAD_TREE,
     PEAKS,
-    RUN_DIRECTORY,
     VOCABULARY,
     WORK_ROOT,
     build_files,
@@ -46,7 +46,7 @@ REPOSITORY = "example-user/parakeet-ultra-onnx"
 PARENT_REVISION = "0123456789abcdef0123456789abcdef01234567"
 REVISION = "89abcdef0123456789abcdef0123456789abcdef"
 TOKEN = parse_hub_token("hf_placeholder0123456789")
-PUBLICATIONS_DIRECTORY = WORK_ROOT / RUN_DIRECTORY / "publications"
+PUBLICATIONS_DIRECTORY = WORK_ROOT / BUILD_DIRECTORY / "publications"
 IMAGE_ID = "sha256:" + "e" * 64
 MISTYPED_REPOSITORY = "example-user/parakeet-ultra-onx"
 
@@ -202,7 +202,7 @@ class TestTheCandidatePublication:
 
             def test_should_number_the_new_one_after_it(self, publication: Publication) -> None:
                 assert publication.published.placement.output_directory == (
-                    RUN_DIRECTORY / "publications" / "2" / "output"
+                    BUILD_DIRECTORY / "publications" / "2" / "output"
                 )
 
         class TestWhenTheConfirmationDiffers:
@@ -256,7 +256,7 @@ class TestTheCandidatePublication:
                 with pytest.raises(
                     PublicationError,
                     match=re.escape(
-                        f"{RUN_DIRECTORY}/README.md is missing: write it with ./model-build.sh "
+                        f"{BUILD_DIRECTORY}/README.md is missing: write it with ./model-build.sh "
                         "--work <dir> --recipe <name> card"
                     ),
                 ):

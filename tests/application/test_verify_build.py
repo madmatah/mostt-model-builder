@@ -10,12 +10,12 @@ from accepted_build import (
     ENCODER,
     ENCODER_NAME,
     ENCODER_PARITY,
+    ENTRIES_DIRECTORY,
     FALLEN_BACK_PLACEMENT,
     FLEURS_REVISION,
     INDEXES,
     REFUSED_INSPECTION_REPORT,
     REPORT_PATH,
-    RUN_DIRECTORY,
     SAME_TOKENS_EVERYWHERE,
     SHARD_LINES,
     VOCABULARY,
@@ -65,7 +65,7 @@ class RefusedVerification:
     message: str
 
 
-CANDIDATE_DIRECTORY = WORK_ROOT / RUN_DIRECTORY / "candidate"
+CANDIDATE_DIRECTORY = WORK_ROOT / ENTRIES_DIRECTORY / "candidate"
 NOT_THE_HOSTS_COPY = (
     f"the candidate file {ENCODER_NAME} is not the host's own copy: a regular file of the user's, "
     "in mode 0444, with a single link, of at most 4096 bytes"
@@ -161,10 +161,10 @@ class TestTheBuildVerification:
                 self, verification: CompletedVerification
             ) -> None:
                 assert sorted(
-                    str(path.relative_to(WORK_ROOT / RUN_DIRECTORY))
+                    str(path.relative_to(WORK_ROOT / ENTRIES_DIRECTORY))
                     for path in verification.files.read_paths
                     if path.name != PEAKS_FILE_NAME
-                    and not path.is_relative_to(WORK_ROOT / RUN_DIRECTORY / "candidate")
+                    and not path.is_relative_to(WORK_ROOT / ENTRIES_DIRECTORY / "candidate")
                     and not path.is_relative_to(WORK_ROOT / "sources")
                 ) == [
                     "export/encoder-parity.json",
@@ -207,7 +207,7 @@ class TestTheBuildVerification:
             ) -> None:
                 with pytest.raises(
                     ContainerFileError,
-                    match=re.escape(f"{RUN_DIRECTORY}/{INSPECT_STEP_NAME} is missing"),
+                    match=re.escape(f"{ENTRIES_DIRECTORY}/{INSPECT_STEP_NAME} is missing"),
                 ):
                     verify_act()
 

@@ -52,7 +52,11 @@ from mostt_model_builder.domain.containers.step_peaks import (
     StepPeaks,
     render_step_peaks,
 )
-from mostt_model_builder.domain.containers.work_directory import WorkDirectoryError
+from mostt_model_builder.domain.containers.work_directory import (
+    WorkDirectoryError,
+    locate_candidate_files,
+    place_entry,
+)
 from mostt_model_builder.domain.contract.derived_rows import (
     DeviceRow,
     ShardedRun,
@@ -91,11 +95,11 @@ from mostt_model_builder.domain.sources.source_pins import RepositoryType, Sourc
 
 WORK_ROOT = PurePosixPath("/data/builds/work")
 HEAD_TREE = "3f1d1ffe79bc3336eb583331cfbf9b189fd45f01"
-COMMIT = "0123456789abcdef0123456789abcdef01234567"
+KEY = "3f2a9c1b07de" + "0" * 52
 REVISION = "73175eb7aeb0d82f1e2a6b53b3aabc10a90bcd0b"
 IMAGE_ID = "sha256:" + "e" * 64
 RECIPE_NAME = "family"
-RUN_DIRECTORY = PurePosixPath("runs/family", COMMIT)
+CANDIDATE_DIRECTORY = locate_candidate_files("family", KEY)
 EXPORT_IMAGE = ContainerImage(RECIPE_NAME, "export", Device.CPU, ENVIRONMENT_PYTHON)
 WEIGHTS = SourceReference("maker/weights", "model.safetensors")
 WEIGHTS_PIN = SourcePin(
@@ -123,11 +127,21 @@ EXPORT_ROW = StepRow(
     ),
 )
 HOST = HostIdentity(USER_ID, GROUP_ID, 20, HostAccounts(False, (), ()))
+
+
+def locate_entry_of(row_name: str) -> PurePosixPath:
+    return place_entry(RECIPE_NAME, row_name, KEY).output_directory.parent
+
+
+def locate_output(row_name: str) -> PurePosixPath:
+    return place_entry(RECIPE_NAME, row_name, KEY).output_directory
+
+
 RUN = RecipeStepRun(
     row=EXPORT_ROW,
-    recipe_name=RECIPE_NAME,
     pins=(WEIGHTS_PIN,),
-    commit=COMMIT,
+    placement=place_entry(RECIPE_NAME, EXPORT_ROW.name, KEY),
+    earlier_output_directories={"describe": locate_output("describe")},
     work_root=WORK_ROOT,
     head_tree=HEAD_TREE,
     host=HOST,
@@ -158,7 +172,7 @@ TRANSCRIBE_TEMPLATE = StepTemplate(
 )
 FLEURS_RUN = ShardedRun("fleurs", "int8", Device.GPU, ("fr_fr",), 2, ("encoder.onnx", "vocab.txt"))
 SHARD_ROW = derive_rows(TRANSCRIBE_TEMPLATE, (FLEURS_RUN,))[1]
-SHARD_DIRECTORY = WORK_ROOT / RUN_DIRECTORY / SHARD_ROW.row.name
+SHARD_DIRECTORY = WORK_ROOT / locate_output(SHARD_ROW.row.name)
 VOCABULARY_NAME = "vocab.txt"
 VOCABULARY = b"<blk>\nbon\njour\n"
 ENCODER_NAME = "encoder.onnx"
@@ -172,8 +186,6 @@ CANDIDATE_ROW = replace(
     ),
 )
 CANDIDATE_REQUEST = CandidateRequest(
-    recipe_name=RECIPE_NAME,
-    commit=COMMIT,
     work_root=WORK_ROOT,
     head_tree=HEAD_TREE,
     host=HOST,
@@ -190,6 +202,8 @@ CANDIDATE_REQUEST = CandidateRequest(
     ),
     rows=(CANDIDATE_ROW,),
     conversion_input=None,
+    candidate_directory=CANDIDATE_DIRECTORY,
+    inspection_directory=locate_output(INSPECT_STEP_NAME),
 )
 ENCODER_INSPECTION = FileInspection(
     name=ENCODER_NAME,
@@ -248,9 +262,9 @@ def read_tokens_through_the_vocabulary(
 
 SHARD_RUN = RecipeStepRun(
     row=SHARD_ROW.row,
-    recipe_name=RECIPE_NAME,
     pins=(),
-    commit=COMMIT,
+    placement=place_entry(RECIPE_NAME, SHARD_ROW.row.name, KEY, CANDIDATE_DIRECTORY),
+    earlier_output_directories={},
     work_root=WORK_ROOT,
     head_tree=HEAD_TREE,
     host=HOST,
@@ -280,7 +294,7 @@ def build_files() -> FakeStepFiles:
     files = FakeStepFiles()
     files.add_directory(WORK_ROOT)
     files.add_file(WORK_ROOT / WEIGHTS_PATH, build_file_facts(1, mode=0o444), b"x")
-    describe_directory = WORK_ROOT / RUN_DIRECTORY / "describe"
+    describe_directory = WORK_ROOT / locate_output("describe")
     files.add_directory(describe_directory, build_directory_facts(0o2770))
     for name, content in ((NAMES_OUTPUT.name, b"names\n"), (PEAKS_FILE_NAME, b"{}")):
         files.add_file(describe_directory / name, *build_step_output(content))
@@ -321,14 +335,14 @@ def build_inspected_files(
 ) -> FakeStepFiles:
     files = FakeStepFiles()
     files.add_directory(WORK_ROOT)
-    candidate_directory = WORK_ROOT / RUN_DIRECTORY / "candidate"
+    candidate_directory = WORK_ROOT / CANDIDATE_DIRECTORY
     files.add_directory(candidate_directory, build_directory_facts(0o750))
     for name, content in ((ENCODER_NAME, ENCODER), (VOCABULARY_NAME, VOCABULARY)):
         files.add_file(
             candidate_directory / name, build_file_facts(len(content), mode=0o444), content
         )
     if inspection_report is not None:
-        inspect_directory = WORK_ROOT / RUN_DIRECTORY / INSPECT_STEP_NAME
+        inspect_directory = WORK_ROOT / locate_output(INSPECT_STEP_NAME)
         files.add_directory(inspect_directory, build_directory_facts(0o2770))
         files.add_file(
             inspect_directory / INSPECTION_REPORT_FILE_NAME,
@@ -379,7 +393,7 @@ class TestTheRecipeStepRun:
                 self, recipe_step: CompletedRecipeStep
             ) -> None:
                 assert recipe_step.files.read_paths == [
-                    WORK_ROOT / RUN_DIRECTORY / "export" / PEAKS_FILE_NAME
+                    WORK_ROOT / locate_output("export") / PEAKS_FILE_NAME
                 ]
 
             def test_should_give_back_the_size_of_the_outputs_it_does_not_read(
@@ -397,17 +411,22 @@ class TestTheRecipeStepRun:
                     for run in recipe_step.runs
                     for mount in run.mounts
                     if not mount.is_read_only
-                ] == [RUN_DIRECTORY / "export"]
+                ] == [locate_output("export")]
 
             def test_should_log_beside_the_outputs_of_the_run(
                 self, recipe_step: CompletedRecipeStep
             ) -> None:
-                assert WORK_ROOT / RUN_DIRECTORY / "logs/export.log" in recipe_step.files.entries
+                assert (
+                    WORK_ROOT / locate_entry_of("export") / "step.log" in recipe_step.files.entries
+                )
 
             def test_should_write_no_request_since_its_row_has_none(
                 self, recipe_step: CompletedRecipeStep
             ) -> None:
-                assert WORK_ROOT / RUN_DIRECTORY / "requests" not in recipe_step.files.entries
+                assert (
+                    WORK_ROOT / locate_entry_of("export") / "request"
+                    not in recipe_step.files.entries
+                )
 
             def test_should_bind_each_source_at_the_layout_of_its_pin(
                 self, recipe_step: CompletedRecipeStep
@@ -420,7 +439,7 @@ class TestTheRecipeStepRun:
                 self, recipe_step: CompletedRecipeStep
             ) -> None:
                 assert BindMount(
-                    RUN_DIRECTORY / "describe/names",
+                    locate_output("describe") / "names",
                     PurePosixPath("/inputs/describe/names"),
                     is_read_only=True,
                     is_file=True,
@@ -446,8 +465,8 @@ class TestTheRecipeStepRun:
                 self, recipe_step: CompletedRecipeStep
             ) -> None:
                 assert recipe_step.files.read_paths == [
-                    WORK_ROOT / RUN_DIRECTORY / "export" / PARITY_OUTPUT.name,
-                    WORK_ROOT / RUN_DIRECTORY / "export" / PEAKS_FILE_NAME,
+                    WORK_ROOT / locate_output("export") / PARITY_OUTPUT.name,
+                    WORK_ROOT / locate_output("export") / PEAKS_FILE_NAME,
                 ]
 
         class TestWhenTheReportOfAParityNamesAnotherParity:
@@ -500,9 +519,8 @@ class TestTheRecipeStepRun:
             ) -> None:
                 assert recipe_step.files.contents[
                     WORK_ROOT
-                    / RUN_DIRECTORY
-                    / "requests"
-                    / SHARD_ROW.row.name
+                    / locate_entry_of(SHARD_ROW.row.name)
+                    / "request"
                     / SHARD_REQUEST_FILE_NAME
                 ] == render_shard_request(SHARD_ROW.request)
 
@@ -520,8 +538,8 @@ class TestTheRecipeStepRun:
                 self, recipe_step: CompletedRecipeStep
             ) -> None:
                 assert recipe_step.files.read_paths == [
-                    WORK_ROOT / RUN_DIRECTORY / INSPECT_STEP_NAME / INSPECTION_REPORT_FILE_NAME,
-                    WORK_ROOT / RUN_DIRECTORY / INSPECT_STEP_NAME / PEAKS_FILE_NAME,
+                    WORK_ROOT / locate_output(INSPECT_STEP_NAME) / INSPECTION_REPORT_FILE_NAME,
+                    WORK_ROOT / locate_output(INSPECT_STEP_NAME) / PEAKS_FILE_NAME,
                     SHARD_DIRECTORY / PLACEMENT_FILE_NAME,
                     SHARD_DIRECTORY / RUN_LINES_FILE_NAME,
                     SHARD_DIRECTORY / PEAKS_FILE_NAME,
@@ -588,7 +606,7 @@ class TestTheRecipeStepRun:
             ) -> None:
                 with pytest.raises(
                     ContainerFileError,
-                    match=re.escape(f"{RUN_DIRECTORY}/{INSPECT_STEP_NAME} is missing"),
+                    match=re.escape(f"cache/{RECIPE_NAME}/{INSPECT_STEP_NAME} is missing"),
                 ):
                     run_act()
 

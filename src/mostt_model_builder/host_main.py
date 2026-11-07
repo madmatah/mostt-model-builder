@@ -4,8 +4,7 @@ import pwd
 import stat
 import sys
 import tomllib
-from collections.abc import Mapping, Sequence
-from concurrent.futures import ThreadPoolExecutor
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
@@ -15,31 +14,29 @@ from mostt_model_builder.adapters.git_tree import GitError, GitTree
 from mostt_model_builder.adapters.terminal_prompt import TerminalError, TerminalPrompt
 from mostt_model_builder.adapters.work_files import WorkFiles
 from mostt_model_builder.application.assemble_candidate import (
+    CandidateCopy,
     CandidateError,
-    CandidateRequest,
-    assemble_candidate,
-    read_candidate_texts,
+    InspectionOutcome,
 )
 from mostt_model_builder.application.build_images import ImageBuildError, build_images
-from mostt_model_builder.application.check_fleurs import FleursCheckRun, check_fleurs_bench
+from mostt_model_builder.application.cache_entries import CacheEntryError
+from mostt_model_builder.application.check_fleurs import FleursCheckOutcome
 from mostt_model_builder.application.check_published import (
     PublishedCheckError,
     PublishedCheckRequest,
     check_published,
 )
 from mostt_model_builder.application.clean_run import (
+    BuildCleaning,
+    BuildFile,
+    BuildFileCleaned,
+    CleanEvent,
     CleanOutcome,
-    CleanRequest,
-    clean_step,
-    remove_candidate,
-    remove_model_card,
-    remove_verification_report,
+    EntryCleaned,
+    EntrySkipped,
+    clean_build,
 )
-from mostt_model_builder.application.convert_variants import (
-    ConversionOutcome,
-    ConversionRun,
-    convert_variants,
-)
+from mostt_model_builder.application.convert_variants import ConversionOutcome
 from mostt_model_builder.application.fetch_sources import (
     DownloadError,
     FetchError,
@@ -62,18 +59,28 @@ from mostt_model_builder.application.publish_candidate import (
     CandidatePublication,
     publish_candidate,
 )
+from mostt_model_builder.application.resolve_build import (
+    BuildEvent,
+    BuildResolutionRequest,
+    CandidateAssembled,
+    CandidateInspected,
+    EntryReused,
+    FleursChecked,
+    RecipeStepRan,
+    ResolvedBuild,
+    RunLanguageTranscribed,
+    StepBegun,
+    UnfinishedEntryRemoved,
+    VariantConverted,
+    locate_candidate,
+    resolve_build,
+)
 from mostt_model_builder.application.resolve_lock import (
     LockRequest,
     LockResolution,
     resolve_lock,
 )
-from mostt_model_builder.application.run_recipe_step import (
-    MeasuredParity,
-    RecipeStepOutcome,
-    RecipeStepRun,
-    RunShard,
-    run_recipe_step,
-)
+from mostt_model_builder.application.run_recipe_step import MeasuredParity, RecipeStepOutcome
 from mostt_model_builder.application.run_step import HostIdentity, StepError
 from mostt_model_builder.application.verify_build import (
     BuildRejectedError,
@@ -97,6 +104,29 @@ from mostt_model_builder.domain.bench.fleurs_check_report import FleursCheckRepo
 from mostt_model_builder.domain.bench.hypotheses import Hypothesis, HypothesisError
 from mostt_model_builder.domain.bench.run_coverage import RunCoverageError
 from mostt_model_builder.domain.bench.word_error_rate import WordErrorRateError
+from mostt_model_builder.domain.cache.build_units import (
+    BuildUnit,
+    BuildUnitError,
+    list_every_step,
+    plan_inspected_units,
+    plan_units,
+    select_units,
+)
+from mostt_model_builder.domain.cache.hardware_facts import (
+    CPU_INFORMATION_MAX_SIZE_BYTES,
+    DRIVER_VERSION_MAX_SIZE_BYTES,
+    GPU_INFORMATION_MAX_SIZE_BYTES,
+    HardwareFacts,
+    HardwareFactsError,
+    is_bus_address,
+    read_hardware_facts,
+)
+from mostt_model_builder.domain.cache.import_closure import (
+    KEYED_TREE_DIRECTORIES,
+    ImportClosureError,
+)
+from mostt_model_builder.domain.cache.output_keys import OutputKeyError
+from mostt_model_builder.domain.cache.output_records import show_key
 from mostt_model_builder.domain.containers.account_ranges import (
     AccountRangeError,
     HostAccounts,
@@ -108,8 +138,6 @@ from mostt_model_builder.domain.containers.container_steps import (
     CONTAINER_USER_ID,
     CONVERT_STEP_NAME,
     CORE_IMAGES,
-    FLEURS_CHECK_STEP_NAME,
-    INSPECT_STEP_NAME,
     LOCK_STEP_NAME,
     RUNNABLE_CORE_ROWS,
     StepRow,
@@ -118,23 +146,20 @@ from mostt_model_builder.domain.containers.container_steps import (
 from mostt_model_builder.domain.containers.provenance import ProvenanceError
 from mostt_model_builder.domain.containers.step_peaks import StepPeaks, StepPeaksError
 from mostt_model_builder.domain.containers.work_directory import (
+    CANDIDATE_ENTRY_NAME,
     WorkDirectory,
     WorkDirectoryError,
     locate_source,
+    locate_verification_report,
 )
-from mostt_model_builder.domain.contract.derived_rows import DerivedRow
 from mostt_model_builder.domain.contract.recipe_contract import (
     RECIPES_DIRECTORY_NAME,
     JudgedRecipe,
-    JudgedRun,
     RecipeContract,
     RecipeContractError,
     RecipeFacts,
-    find_runnable_row,
     judge_recipe,
     list_entry_modules,
-    list_rows_of_step,
-    list_runnable_rows,
     locate_card_template,
     locate_entry_module_file,
 )
@@ -178,6 +203,11 @@ SOURCES_FILE_NAME = "sources.toml"
 IMAGES_ENVIRONMENT_DIRECTORY = CLONE_ROOT / "images"
 SUBORDINATE_USER_IDS_PATH = Path("/etc/subuid")
 SUBORDINATE_GROUP_IDS_PATH = Path("/etc/subgid")
+CPU_INFORMATION_PATH = Path("/proc/cpuinfo")
+DRIVER_VERSION_PATH = Path("/proc/driver/nvidia/version")
+GPUS_DIRECTORY = Path("/proc/driver/nvidia/gpus")
+GPU_INFORMATION_FILE_NAME = "information"
+CANDIDATE_LABEL = "the candidate"
 FETCH_COMMAND = "fetch"
 IMAGES_COMMAND = "images"
 STEP_COMMAND = "step"
@@ -207,6 +237,10 @@ OUTCOME_WORDS = {FetchOutcome.FETCHED: "fetched", FetchOutcome.ALREADY_FETCHED: 
 CLEAN_OUTCOME_WORDS = {
     CleanOutcome.CLEANED: "cleaned",
     CleanOutcome.NOTHING_TO_CLEAN: "nothing to clean for",
+}
+BUILD_FILE_NAMES = {
+    BuildFile.VERIFICATION_REPORT: "the verification's report",
+    BuildFile.MODEL_CARD: "the model card",
 }
 COMMAND_ERRORS = (
     SourcePinError,
@@ -248,6 +282,11 @@ COMMAND_ERRORS = (
     HubTokenError,
     PublicationReportError,
     RepositoryFilesError,
+    CacheEntryError,
+    BuildUnitError,
+    HardwareFactsError,
+    ImportClosureError,
+    OutputKeyError,
     ValueError,
     OSError,
 )
@@ -350,7 +389,8 @@ def build_argument_parser() -> argparse.ArgumentParser:
     clean_parser = commands.add_parser(
         CLEAN_STEP_NAME,
         add_help=False,
-        help="remove the outputs, the request and the log of a step, or of every step",
+        help="remove the current build's cache entries of a step, or of every step, with the "
+        "verification's report and the model card",
     )
     clean_parser.add_argument(
         "step", nargs="?", choices=STEP_NAMES, metavar="<step>", help=", ".join(STEP_NAMES)
@@ -492,74 +532,95 @@ def build_container_images(
         print(f"built {image.tag}, {image.image_id}", flush=True)
 
 
-def check_fleurs(recipe: JudgedRecipe, work_directory: WorkDirectory, files: WorkFiles) -> None:
-    clone_root = PurePosixPath(CLONE_ROOT)
-    git_tree = GitTree(clone_root)
-    outcome = check_fleurs_bench(
-        FleursCheckRun(
-            pins=recipe.pins,
-            recipe_name=recipe.name,
-            commit=git_tree.find_head_commit(),
-            work_root=PurePosixPath(work_directory.path),
-            head_tree=git_tree.find_head_tree(),
-            host=read_host_identity(),
-        ),
-        DockerEngine(),
-        files,
-    )
-    for language in outcome.report.languages:
-        print(
-            f"{language.language}: {len(language.recordings)} recordings, "
-            f"{language.duration_s:.0f} s",
-            flush=True,
-        )
-    print(describe_peaks(outcome.peaks), flush=True)
+def read_bounded_file(path: Path, max_size_bytes: int) -> bytes | None:
+    try:
+        with path.open("rb") as stream:
+            return stream.read(max_size_bytes + 1)
+    except FileNotFoundError:
+        return None
+
+
+def read_hardware() -> HardwareFacts:
+    cpu_information = read_bounded_file(CPU_INFORMATION_PATH, CPU_INFORMATION_MAX_SIZE_BYTES)
+    if cpu_information is None:
+        raise HardwareFactsError(f"{CPU_INFORMATION_PATH} is missing")
+    driver_version = read_bounded_file(DRIVER_VERSION_PATH, DRIVER_VERSION_MAX_SIZE_BYTES)
+    gpu_information_contents = []
+    if driver_version is not None and GPUS_DIRECTORY.is_dir():
+        for gpu_directory in sorted(GPUS_DIRECTORY.iterdir()):
+            if not is_bus_address(gpu_directory.name):
+                continue
+            information = read_bounded_file(
+                gpu_directory / GPU_INFORMATION_FILE_NAME, GPU_INFORMATION_MAX_SIZE_BYTES
+            )
+            if information is not None:
+                gpu_information_contents.append(information)
+    return read_hardware_facts(cpu_information, driver_version, gpu_information_contents)
 
 
 @dataclass(frozen=True, slots=True)
 class BuildContext:
-    commit: str
     head_tree: str
     work_root: PurePosixPath
     host: HostIdentity
+    tree_files: Mapping[PurePosixPath, bytes]
+    hardware: HardwareFacts
 
 
 def read_build_context(work_directory: WorkDirectory) -> BuildContext:
     git_tree = GitTree(PurePosixPath(CLONE_ROOT))
+    head_tree = git_tree.find_head_tree()
     return BuildContext(
-        commit=git_tree.find_head_commit(),
-        head_tree=git_tree.find_head_tree(),
+        head_tree=head_tree,
         work_root=PurePosixPath(work_directory.path),
         host=read_host_identity(),
+        tree_files=git_tree.read_tree_files(head_tree, KEYED_TREE_DIRECTORIES),
+        hardware=read_hardware(),
     )
 
 
-def build_recipe_step_run(
-    recipe: JudgedRecipe, row: StepRow, context: BuildContext, shard: RunShard | None = None
-) -> RecipeStepRun:
-    return RecipeStepRun(
-        row=row,
-        recipe_name=recipe.name,
-        pins=recipe.pins,
-        commit=context.commit,
-        work_root=context.work_root,
-        head_tree=context.head_tree,
-        host=context.host,
-        parities=recipe.parities,
-        shard=shard,
-        candidate=build_candidate_request(recipe, context),
-    )
+def describe_entry_name(name: str) -> str:
+    return CANDIDATE_LABEL if name == CANDIDATE_ENTRY_NAME else name
 
 
-def describe_outcome(row: StepRow, outcome: RecipeStepOutcome) -> None:
-    print(f"{row.name}:", flush=True)
-    for name, size_bytes in sorted(outcome.outputs.sizes_bytes.items()):
-        print(f"  wrote {name}, {size_bytes} bytes", flush=True)
-    for parity in outcome.parities:
-        print(f"  {describe_parity(parity)}", flush=True)
-    if outcome.placement is not None:
-        print(f"  {describe_placement(outcome.placement)}", flush=True)
-    print(f"  {describe_peaks(outcome.outputs.peaks)}", flush=True)
+def describe_reused_entry(name: str, key: str) -> str:
+    return f"reused {describe_entry_name(name)}, key {show_key(key)}"
+
+
+def describe_removed_unfinished_entry(name: str, key: str) -> str:
+    return f"removed the unfinished entry of {describe_entry_name(name)}, key {show_key(key)}"
+
+
+def describe_cleaned_entry(name: str, key: str, outcome: CleanOutcome) -> str:
+    return f"{CLEAN_OUTCOME_WORDS[outcome]} {describe_entry_name(name)}, key {show_key(key)}"
+
+
+def describe_skipped_entry(name: str, reason: str) -> str:
+    return f"skipped {describe_entry_name(name)}: {reason}"
+
+
+def describe_fleurs_check(outcome: FleursCheckOutcome) -> list[str]:
+    return [
+        *(
+            f"{language.language}: {len(language.recordings)} recordings, "
+            f"{language.duration_s:.0f} s"
+            for language in outcome.report.languages
+        ),
+        describe_peaks(outcome.peaks),
+    ]
+
+
+def describe_outcome(row: StepRow, outcome: RecipeStepOutcome) -> list[str]:
+    return [
+        f"{row.name}:",
+        *(
+            f"  wrote {name}, {size_bytes} bytes"
+            for name, size_bytes in sorted(outcome.outputs.sizes_bytes.items())
+        ),
+        *(f"  {describe_parity(parity)}" for parity in outcome.parities),
+        *([f"  {describe_placement(outcome.placement)}"] if outcome.placement is not None else []),
+        f"  {describe_peaks(outcome.outputs.peaks)}",
+    ]
 
 
 def describe_placement(summary: PlacementSummary) -> str:
@@ -582,104 +643,32 @@ def describe_hypotheses(run_name: str, hypotheses: Sequence[Hypothesis]) -> list
     return lines
 
 
-def run_plain_step(
-    recipe: JudgedRecipe, row: StepRow, context: BuildContext, files: WorkFiles
-) -> None:
-    outcome = run_recipe_step(build_recipe_step_run(recipe, row, context), DockerEngine(), files)
-    describe_outcome(row, outcome)
-
-
-# The decoding times are read against the trial build's, which ran the shards of a run at the
-# same time, each on CPUs of its own; the languages of a run run one after the other.
-def run_sharded_rows(
-    recipe: JudgedRecipe,
-    run: JudgedRun,
-    derived_rows: Sequence[DerivedRow],
-    candidate_texts: Mapping[str, bytes],
-    context: BuildContext,
-    files: WorkFiles,
-) -> None:
-    engine = DockerEngine()
-    step_runs = [
-        build_recipe_step_run(
-            recipe,
-            derived_row.row,
-            context,
-            RunShard(derived_row.request, run.reader, candidate_texts),
-        )
-        for derived_row in derived_rows
+def describe_candidate_copies(copies: Sequence[CandidateCopy]) -> list[str]:
+    return [
+        f"candidate {copy.name}, {copy.file_format.value}, {copy.size_bytes} bytes, "
+        f"sha256 {copy.sha256}"
+        for copy in copies
     ]
-    with ThreadPoolExecutor(max_workers=len(step_runs)) as pool:
-        outcomes = list(
-            pool.map(lambda step_run: run_recipe_step(step_run, engine, files), step_runs)
-        )
-    for step_run, outcome in zip(step_runs, outcomes, strict=True):
-        describe_outcome(step_run.row, outcome)
-    hypotheses = [hypothesis for outcome in outcomes for hypothesis in outcome.hypotheses]
-    for line in describe_hypotheses(run.name, hypotheses):
-        print(line, flush=True)
 
 
-def build_candidate_request(recipe: JudgedRecipe, context: BuildContext) -> CandidateRequest:
-    return CandidateRequest(
-        recipe_name=recipe.name,
-        commit=context.commit,
-        work_root=context.work_root,
-        head_tree=context.head_tree,
-        host=context.host,
-        candidate=recipe.candidate,
-        rows=recipe.rows,
-        conversion_input=recipe.conversion_input,
-        conversions=recipe.conversions,
-    )
-
-
-def inspect_candidate(recipe: JudgedRecipe, context: BuildContext, files: WorkFiles) -> None:
-    assembled = assemble_candidate(build_candidate_request(recipe, context), DockerEngine(), files)
-    for copy in assembled.files:
-        print(
-            f"candidate {copy.name}, {copy.file_format.value}, {copy.size_bytes} bytes, "
-            f"sha256 {copy.sha256}",
-            flush=True,
-        )
-    for inspection in assembled.report.files:
+def describe_inspection(outcome: InspectionOutcome) -> list[str]:
+    lines = []
+    for inspection in outcome.report.files:
         counts = count_products(inspection)
-        print(
+        lines.append(
             f"inspected {inspection.name}: {sum(node.count for node in inspection.nodes)} nodes, "
             f"{counts.constant_weight_count} products of a constant weight, "
             f"{counts.plain_count} of them plain, "
             f"{count_eight_bit_block_products(inspection)} in 8-bit blocks, "
-            f"{len(inspection.external_tensors)} external tensors",
-            flush=True,
+            f"{len(inspection.external_tensors)} external tensors"
         )
-    print(describe_peaks(assembled.peaks), flush=True)
+    return [*lines, describe_peaks(outcome.peaks)]
 
 
-def convert(recipe: JudgedRecipe, context: BuildContext, files: WorkFiles) -> None:
-    if not recipe.conversion_rows:
-        raise RecipeContractError(f"the recipe {recipe.name} converts none of its variants")
-    engine = DockerEngine()
-    for conversion_row in recipe.conversion_rows:
-        outcome = convert_variants(
-            ConversionRun(
-                row=conversion_row.row,
-                request=conversion_row.request,
-                recipe_name=recipe.name,
-                commit=context.commit,
-                work_root=context.work_root,
-                head_tree=context.head_tree,
-                host=context.host,
-            ),
-            engine,
-            files,
-        )
-        describe_conversion(conversion_row.row, outcome)
-
-
-def describe_conversion(row: StepRow, outcome: ConversionOutcome) -> None:
-    print(f"{row.name}:", flush=True)
-    for converted in outcome.report.files:
-        print(
+def describe_conversion(row: StepRow, outcome: ConversionOutcome) -> list[str]:
+    return [
+        f"{row.name}:",
+        *(
             f"  wrote {converted.output}, {outcome.outputs.sizes_bytes[converted.output]} bytes, "
             f"{converted.kind.value}: {converted.node_count} nodes, "
             f"{converted.quantized_product_count} products in 8-bit blocks, "
@@ -687,62 +676,141 @@ def describe_conversion(row: StepRow, outcome: ConversionOutcome) -> None:
             f"{converted.below_min_positive_count} values raised to the minimum and "
             f"{converted.above_max_finite_count} lowered to the maximum in "
             f"{converted.clamped_initializer_count} initializers, "
-            f"{converted.realigned_cast_count} Cast nodes realigned",
-            flush=True,
-        )
-    print(f"  {describe_peaks(outcome.outputs.peaks)}", flush=True)
+            f"{converted.realigned_cast_count} Cast nodes realigned"
+            for converted in outcome.report.files
+        ),
+        f"  {describe_peaks(outcome.outputs.peaks)}",
+    ]
+
+
+def describe_build_event(event: BuildEvent) -> list[str]:
+    match event:
+        case StepBegun(step):
+            return [f"== {step}"]
+        case EntryReused(name, key):
+            return [describe_reused_entry(name, key)]
+        case UnfinishedEntryRemoved(name, key):
+            return [describe_removed_unfinished_entry(name, key)]
+        case FleursChecked(outcome):
+            return describe_fleurs_check(outcome)
+        case VariantConverted(row, outcome):
+            return describe_conversion(row, outcome)
+        case CandidateAssembled(copies):
+            return describe_candidate_copies(copies)
+        case CandidateInspected(outcome):
+            return describe_inspection(outcome)
+        case RecipeStepRan(row, outcome):
+            return describe_outcome(row, outcome)
+        case RunLanguageTranscribed(run, hypotheses):
+            return describe_hypotheses(run, hypotheses)
+
+
+def print_lines(lines: Sequence[str]) -> None:
+    for line in lines:
+        print(line, flush=True)
+
+
+def print_build_event(event: BuildEvent) -> None:
+    print_lines(describe_build_event(event))
+
+
+def ignore_build_event(event: BuildEvent) -> None:
+    del event
+
+
+def resolve(
+    recipe: JudgedRecipe,
+    context: BuildContext,
+    units: Sequence[BuildUnit],
+    running_steps: frozenset[str],
+    files: WorkFiles,
+    report: Callable[[BuildEvent], None],
+) -> ResolvedBuild:
+    return resolve_build(
+        BuildResolutionRequest(
+            recipe=recipe,
+            units=units,
+            running_steps=running_steps,
+            work_root=context.work_root,
+            head_tree=context.head_tree,
+            host=context.host,
+            tree_files=context.tree_files,
+            hardware=context.hardware,
+        ),
+        DockerEngine(),
+        files,
+        report,
+    )
+
+
+def resolve_built(recipe: JudgedRecipe, context: BuildContext, files: WorkFiles) -> ResolvedBuild:
+    return resolve(
+        recipe,
+        context,
+        plan_units(recipe, recipe.build_order),
+        frozenset(),
+        files,
+        ignore_build_event,
+    )
 
 
 def run_named_step(
     recipe: JudgedRecipe, step_name: str, work_directory: WorkDirectory, files: WorkFiles
 ) -> None:
-    if step_name == FLEURS_CHECK_STEP_NAME:
-        check_fleurs(recipe, work_directory, files)
-        return
     context = read_build_context(work_directory)
-    if step_name == INSPECT_STEP_NAME:
-        inspect_candidate(recipe, context, files)
-        return
-    if step_name == CONVERT_STEP_NAME:
-        convert(recipe, context, files)
-        return
-    runs = [run for run in recipe.runs if run.step == step_name]
-    if not runs:
-        run_plain_step(recipe, find_runnable_row(recipe, step_name), context, files)
-        return
-    candidate_texts = read_candidate_texts(build_candidate_request(recipe, context), files)
-    for run in runs:
-        for language in run.languages:
-            derived_rows = [
-                derived_row
-                for derived_row in recipe.derived_rows
-                if derived_row.run == run.name and derived_row.language == language
-            ]
-            run_sharded_rows(recipe, run, derived_rows, candidate_texts, context, files)
+    steps = list_every_step(recipe)
+    if step_name not in steps:
+        steps = (*steps, step_name)
+    resolve(
+        recipe,
+        context,
+        select_units(plan_units(recipe, steps), (step_name,)),
+        frozenset({step_name}),
+        files,
+        print_build_event,
+    )
 
 
 def build(recipe: JudgedRecipe, work_directory: WorkDirectory, files: WorkFiles) -> None:
-    for step_name in recipe.build_order:
-        print(f"== {step_name}", flush=True)
-        run_named_step(recipe, step_name, work_directory, files)
+    context = read_build_context(work_directory)
+    resolved = resolve(
+        recipe,
+        context,
+        plan_units(recipe, recipe.build_order),
+        frozenset(recipe.build_order),
+        files,
+        print_build_event,
+    )
     print(f"== {VERIFY_COMMAND}", flush=True)
-    verify(recipe, work_directory, files)
+    verify_resolved(recipe, context, resolved, files)
 
 
-def build_verification_request(recipe: JudgedRecipe, context: BuildContext) -> VerificationRequest:
+def build_verification_request(
+    recipe: JudgedRecipe, context: BuildContext, resolved: ResolvedBuild
+) -> VerificationRequest:
     return VerificationRequest(
-        candidate=build_candidate_request(recipe, context),
+        candidate=locate_candidate(
+            recipe, resolved, context.work_root, context.head_tree, context.host
+        ),
         pins=recipe.pins,
         runs=recipe.runs,
         derived_rows=recipe.derived_rows,
         parities=recipe.parities,
         comparisons=recipe.comparisons,
+        output_directories=resolved.output_directories,
+        report_path=locate_verification_report(recipe.name),
     )
 
 
 def verify(recipe: JudgedRecipe, work_directory: WorkDirectory, files: WorkFiles) -> None:
     context = read_build_context(work_directory)
-    verified = verify_build(build_verification_request(recipe, context), files)
+    verify_resolved(recipe, context, resolve_built(recipe, context, files), files)
+
+
+def verify_resolved(
+    recipe: JudgedRecipe, context: BuildContext, resolved: ResolvedBuild, files: WorkFiles
+) -> None:
+    verified = verify_build(build_verification_request(recipe, context, resolved), files)
     for line in describe_verification(verified.verification):
         print(line, flush=True)
     for digest in verified.verification.candidate:
@@ -770,9 +838,12 @@ def read_card_template(recipe: JudgedRecipe) -> str | None:
     return (CLONE_ROOT / recipe.card_template).read_text(encoding=TEXT_ENCODING)
 
 
-def build_card_request(recipe: JudgedRecipe, context: BuildContext) -> CardRequest:
+def build_card_request(
+    recipe: JudgedRecipe, context: BuildContext, resolved: ResolvedBuild
+) -> CardRequest:
     return CardRequest(
-        verification=build_verification_request(recipe, context),
+        recipe_name=recipe.name,
+        verification=build_verification_request(recipe, context, resolved),
         model=recipe.model,
         template=read_card_template(recipe),
         conversions=recipe.conversions,
@@ -782,8 +853,9 @@ def build_card_request(recipe: JudgedRecipe, context: BuildContext) -> CardReque
 
 def write_card(recipe: JudgedRecipe, work_directory: WorkDirectory, files: WorkFiles) -> None:
     context = read_build_context(work_directory)
+    resolved = resolve_built(recipe, context, files)
     prepared = prepare_publication(
-        build_card_request(recipe, context), GitTree(PurePosixPath(CLONE_ROOT)), files
+        build_card_request(recipe, context, resolved), GitTree(PurePosixPath(CLONE_ROOT)), files
     )
     outcome = write_model_card(prepared, context.work_root, files)
     print(
@@ -796,8 +868,9 @@ def publish(
     recipe: JudgedRecipe, repository: str, work_directory: WorkDirectory, files: WorkFiles
 ) -> None:
     context = read_build_context(work_directory)
+    resolved = resolve_built(recipe, context, files)
     published = publish_candidate(
-        CandidatePublication(build_card_request(recipe, context), repository),
+        CandidatePublication(build_card_request(recipe, context, resolved), repository),
         GitTree(PurePosixPath(CLONE_ROOT)),
         TerminalPrompt(STANDARD_INPUT_DESCRIPTOR, sys.stdout),
         DockerEngine(),
@@ -826,12 +899,18 @@ def check_published_revision(
     files: WorkFiles,
 ) -> None:
     context = read_build_context(work_directory)
+    resolved = resolve(
+        recipe, context, plan_inspected_units(recipe), frozenset(), files, ignore_build_event
+    )
     downloader = CurlDownloader()
     checked_files = check_published(
         PublishedCheckRequest(
+            recipe_name=recipe.name,
             repository=repository,
             revision=revision,
-            candidate=build_candidate_request(recipe, context),
+            candidate=locate_candidate(
+                recipe, resolved, context.work_root, context.head_tree, context.host
+            ),
             model=recipe.model,
         ),
         downloader,
@@ -887,36 +966,42 @@ def describe_comparison_measure(measure: ComparisonMeasure) -> str:
     )
 
 
+def describe_clean_event(event: CleanEvent) -> str:
+    match event:
+        case BuildFileCleaned(build_file, outcome):
+            return f"{CLEAN_OUTCOME_WORDS[outcome]} {BUILD_FILE_NAMES[build_file]}"
+        case EntryCleaned(name, key, outcome):
+            return describe_cleaned_entry(name, key, outcome)
+        case EntrySkipped(name, reason):
+            return describe_skipped_entry(name, reason)
+
+
+def print_clean_event(event: CleanEvent) -> None:
+    print(describe_clean_event(event), flush=True)
+
+
 def clean(
     recipe: JudgedRecipe, step_name: str | None, work_directory: WorkDirectory, files: WorkFiles
 ) -> None:
-    clone_root = PurePosixPath(CLONE_ROOT)
-    git_tree = GitTree(clone_root)
-    commit = git_tree.find_head_commit()
-    head_tree = git_tree.find_head_tree()
-    host = read_host_identity()
-    rows = list_runnable_rows(recipe) if step_name is None else list_rows_of_step(recipe, step_name)
-    requests = [
-        CleanRequest(
-            row=row,
-            recipe_name=recipe.name,
-            commit=commit,
-            work_root=PurePosixPath(work_directory.path),
-            head_tree=head_tree,
-            host=host,
-        )
-        for row in rows
-    ]
-    report_outcome = remove_verification_report(requests[0], files)
-    print(f"{CLEAN_OUTCOME_WORDS[report_outcome]} the verification's report", flush=True)
-    card_outcome = remove_model_card(requests[0], files)
-    print(f"{CLEAN_OUTCOME_WORDS[card_outcome]} the model card", flush=True)
-    for request in requests:
-        outcome = clean_step(request, DockerEngine(), files)
-        print(f"{CLEAN_OUTCOME_WORDS[outcome]} {request.row.name}", flush=True)
-        if request.row.name == INSPECT_STEP_NAME:
-            candidate_outcome = remove_candidate(request, files)
-            print(f"{CLEAN_OUTCOME_WORDS[candidate_outcome]} the candidate", flush=True)
+    context = read_build_context(work_directory)
+    steps = list_every_step(recipe)
+    if step_name is not None and step_name not in steps:
+        steps = (*steps, step_name)
+    clean_build(
+        BuildCleaning(
+            recipe=recipe,
+            units=plan_units(recipe, steps),
+            steps=None if step_name is None else frozenset({step_name}),
+            work_root=context.work_root,
+            head_tree=context.head_tree,
+            host=context.host,
+            tree_files=context.tree_files,
+            hardware=context.hardware,
+        ),
+        DockerEngine(),
+        files,
+        print_clean_event,
+    )
 
 
 def lock(work_directory: WorkDirectory, files: WorkFiles) -> None:

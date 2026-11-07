@@ -197,6 +197,34 @@ class WorkFiles:
                 return HashedFile(facts, None)
             return hash_stream(stream, facts, max_size_bytes)
 
+    def stream_host_file(
+        self,
+        directory: PurePosixPath,
+        name: str,
+        max_size_bytes: int,
+        observe_chunk: Callable[[bytes], None],
+    ) -> FileFacts:
+        directory_descriptor = os.open(directory, OPEN_DIRECTORY_WITHOUT_FOLLOWING)
+        try:
+            entry_facts, descriptor = open_regular_entry(directory_descriptor, name)
+        except FileNotFoundError:
+            return NO_FACTS
+        finally:
+            os.close(directory_descriptor)
+        if descriptor is None:
+            return entry_facts
+        with os.fdopen(descriptor, "rb") as stream:
+            facts = describe_status(os.fstat(stream.fileno()))
+            if facts.kind is not FileKind.REGULAR or facts.size_bytes > max_size_bytes:
+                return facts
+            streamed_bytes = 0
+            while chunk := stream.read(COPY_CHUNK_BYTES):
+                streamed_bytes += len(chunk)
+                if streamed_bytes > max_size_bytes:
+                    break
+                observe_chunk(chunk)
+        return replace(facts, size_bytes=streamed_bytes)
+
     def list_entry_names(self, directory: PurePosixPath) -> tuple[str, ...]:
         directory_descriptor = os.open(directory, OPEN_DIRECTORY_WITHOUT_FOLLOWING)
         try:
@@ -222,6 +250,21 @@ class WorkFiles:
                 os.unlink(replacement)
             raise
 
+    # A reader finds the file whole or not at all, since the rename that names it is atomic.
+    def write_new_file_atomically(self, path: PurePosixPath, content: bytes, mode: int) -> None:
+        replacement = path.with_name(path.name + REPLACEMENT_SUFFIX)
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(replacement)
+        try:
+            self.write_new_file(replacement, content, mode)
+            if os.path.lexists(path):
+                raise FileExistsError(errno.EEXIST, "File exists", str(path))
+            os.rename(replacement, path)
+        except BaseException:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(replacement)
+            raise
+
     def remove_empty_directory(self, path: PurePosixPath) -> None:
         os.rmdir(path)
 
@@ -240,6 +283,9 @@ class WorkFiles:
         except FileNotFoundError:
             return False
         return True
+
+    def remove_replacement_if_present(self, path: PurePosixPath) -> bool:
+        return self.remove_file_if_present(path.with_name(path.name + REPLACEMENT_SUFFIX))
 
 
 def describe_status(entry_status: os.stat_result) -> FileFacts:

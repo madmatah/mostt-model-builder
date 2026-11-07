@@ -109,33 +109,23 @@ class ArchivedTree:
 
 @dataclass(frozen=True)
 class CloneFacts:
-    head_commit: str
     head_tree: str
-    expected_commit: str
     expected_tree: str
 
 
 class TestTheGitTree:
-    class TestTheFindHeadMethods:
+    class TestTheFindHeadTreeMethod:
         class TestWhenTheCloneHasACommit:
             @pytest.fixture
             def clone_facts(self, tmp_path: Path) -> CloneFacts:
                 build_repository(tmp_path)
-                git_tree = GitTree(PurePosixPath(tmp_path))
                 return CloneFacts(
-                    git_tree.find_head_commit(),
-                    git_tree.find_head_tree(),
-                    run_git(tmp_path, "rev-parse", "HEAD"),
+                    GitTree(PurePosixPath(tmp_path)).find_head_tree(),
                     run_git(tmp_path, "rev-parse", "HEAD^{tree}"),
                 )
 
-            def test_should_name_the_commit_and_the_tree_of_head(
-                self, clone_facts: CloneFacts
-            ) -> None:
-                assert (clone_facts.head_commit, clone_facts.head_tree) == (
-                    clone_facts.expected_commit,
-                    clone_facts.expected_tree,
-                )
+            def test_should_name_the_tree_of_head(self, clone_facts: CloneFacts) -> None:
+                assert clone_facts.head_tree == clone_facts.expected_tree
 
     class TestTheListChangesMethod:
         class TestWhenTheCloneIsClean:

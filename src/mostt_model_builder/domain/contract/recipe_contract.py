@@ -42,12 +42,7 @@ from mostt_model_builder.domain.containers.container_steps import (
 )
 from mostt_model_builder.domain.containers.devices import Device
 from mostt_model_builder.domain.containers.step_peaks import PEAKS_FILE_NAME
-from mostt_model_builder.domain.containers.work_directory import (
-    CANDIDATE_DIRECTORY_NAME,
-    LOGS_DIRECTORY_NAME,
-    PUBLICATIONS_DIRECTORY_NAME,
-    REQUESTS_DIRECTORY_NAME,
-)
+from mostt_model_builder.domain.containers.work_directory import CANDIDATE_ENTRY_NAME
 from mostt_model_builder.domain.contract.derived_rows import (
     DerivedRow,
     DeviceRow,
@@ -102,16 +97,8 @@ CORE_STEP_NAMES = frozenset(
         PUBLISH_STEP_NAME,
     }
 )
-# A step's outputs live beside the run's requests, logs and candidate, under the same commit.
-RESERVED_STEP_NAMES = frozenset(
-    {
-        *CORE_STEP_NAMES,
-        REQUESTS_DIRECTORY_NAME,
-        LOGS_DIRECTORY_NAME,
-        CANDIDATE_DIRECTORY_NAME,
-        PUBLICATIONS_DIRECTORY_NAME,
-    }
-)
+# The entries of a row's outputs live in the cache beside the candidate's.
+RESERVED_STEP_NAMES = frozenset({*CORE_STEP_NAMES, CANDIDATE_ENTRY_NAME})
 BUILT_CORE_STEP_NAMES = (FLEURS_CHECK_STEP_NAME, INSPECT_STEP_NAME)
 REFERENCE_VARIANT = "reference"
 CORE_IMAGES_BY_NAME = {image.name: image for image in CORE_IMAGES}
@@ -334,15 +321,12 @@ def find_runnable_row(recipe: JudgedRecipe, step_name: str) -> StepRow:
     )
 
 
-def list_rows_of_step(recipe: JudgedRecipe, step_name: str) -> tuple[StepRow, ...]:
-    if step_name == CONVERT_STEP_NAME and recipe.conversion_rows:
-        return tuple(conversion_row.row for conversion_row in recipe.conversion_rows)
-    derived = tuple(
-        derived_row.row for derived_row in recipe.derived_rows if derived_row.step == step_name
-    )
-    if derived:
-        return derived
-    return (find_runnable_row(recipe, step_name),)
+def list_onnx_names(candidate: Sequence[JudgedCandidateFile]) -> list[str]:
+    return [
+        candidate_file.name
+        for candidate_file in candidate
+        if candidate_file.file_format is FileFormat.ONNX
+    ]
 
 
 def find_candidate_file_max_size_bytes(
@@ -405,8 +389,12 @@ def judge_recipe(contract: RecipeContract, facts: RecipeFacts) -> JudgedRecipe:
         runs=runs,
         derived_rows=derived_rows,
         conversion_input=judge_conversion_input(contract.conversion_input, candidate, where),
-        build_order=judge_build_order(
-            contract.build_order, contract.steps, bool(contract.conversions), where
+        build_order=judge_measured_steps(
+            judge_build_order(
+                contract.build_order, contract.steps, bool(contract.conversions), where
+            ),
+            contract,
+            where,
         ),
         conversions=contract.conversions,
         conversion_rows=conversion_rows,
@@ -563,7 +551,8 @@ def judge_steps(
             )
         if step.name in RESERVED_STEP_NAMES:
             raise RecipeContractError(
-                f"{step_where} bears the name of a step of the core or of a directory of its run"
+                f"{step_where} bears the name of a step of the core or of the candidate's entry "
+                "in the cache"
             )
         if step.name in step_names:
             raise RecipeContractError(f"{step_where} is declared twice")
@@ -1086,6 +1075,23 @@ def judge_build_order(
     if len(set(build_order)) != len(build_order):
         raise RecipeContractError(f"{where}: its build runs a step twice")
     return tuple(build_order)
+
+
+# The verification reads the outputs of every run and every parity from the build, so a step that
+# one of them reads and the build leaves out would leave it nothing to measure.
+def judge_measured_steps(
+    build_order: tuple[str, ...], contract: RecipeContract, where: str
+) -> tuple[str, ...]:
+    measured = [
+        *((f"its run {run.name!a}", run.step) for run in contract.runs),
+        *((f"its parity {parity.name!a}", parity.step) for parity in contract.parities),
+    ]
+    for measure, step_name in measured:
+        if step_name not in build_order:
+            raise RecipeContractError(
+                f"{where}: {measure} reads the outputs of {step_name!a}, which its build leaves out"
+            )
+    return build_order
 
 
 def judge_candidate_name(name: str, where: str) -> None:

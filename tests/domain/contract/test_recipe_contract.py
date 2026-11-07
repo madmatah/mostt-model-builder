@@ -50,7 +50,6 @@ from mostt_model_builder.domain.contract.recipe_contract import (
     find_graph_source,
     find_runnable_row,
     judge_recipe,
-    list_rows_of_step,
     locate_card_template,
     locate_entry_module_file,
 )
@@ -119,6 +118,7 @@ CONTRACT = RecipeContract(
     steps=(DESCRIBE_STEP, TRANSCRIBE_STEP),
     candidate=(NAMES_FILE, CONFIGURATION_FILE),
     parities=(NAMES_PARITY,),
+    build_order=("describe",),
 )
 FACTS = RecipeFacts(
     core_pins=(BENCH_PIN,),
@@ -354,13 +354,10 @@ REFUSED_CONTRACTS = {
         replace(CONTRACT, model=replace(MODEL, template_path=PurePosixPath(".model-card.md"))),
         "its card template '.model-card.md' is not a file name in the recipe's directory",
     ),
-    "a step named like the directory of the publications": (
-        change_step(0, name="publications"),
-        "its step 'publications' bears the name of a step of the core or of a directory of its run",
-    ),
     "a step named like the core's publication": (
         change_step(0, name="publish"),
-        "its step 'publish' bears the name of a step of the core or of a directory of its run",
+        "its step 'publish' bears the name of a step of the core or of the candidate's entry in "
+        "the cache",
     ),
     "a candidate file named like the model card, in any case": (
         change_candidate(name="readme.MD"),
@@ -591,9 +588,10 @@ REFUSED_CONTRACTS = {
         change_parity(absolute_difference_tolerance=True),
         "has the tolerance True, not a finite number above 0",
     ),
-    "a step named like a directory of its run": (
+    "a step named like the candidate's entry in the cache": (
         change_step(0, name="candidate"),
-        "its step 'candidate' bears the name of a step of the core or of a directory of its run",
+        "its step 'candidate' bears the name of a step of the core or of the candidate's entry in "
+        "the cache",
     ),
     "a run outside the grammar": (
         change_run(0, name="Float32-cpu"),
@@ -748,6 +746,16 @@ REFUSED_CONTRACTS = {
     "a build that runs an unknown step": (
         replace(RUN_CONTRACT, build_order=("fleurs-check", "publish")),
         "its build runs 'publish', which neither the core nor the recipe builds with",
+    ),
+    "a run whose step the build leaves out": (
+        replace(RUN_CONTRACT, build_order=("fleurs-check", "describe", "inspect")),
+        "its run 'float32-cpu' reads the outputs of 'transcribe-variants', which its build "
+        "leaves out",
+    ),
+    "a parity whose step the build leaves out": (
+        replace(RUN_CONTRACT, build_order=("fleurs-check", "inspect", "transcribe-variants")),
+        "its parity 'names-against-reference' reads the outputs of 'describe', which its build "
+        "leaves out",
     ),
     "a build that runs a step twice": (
         replace(RUN_CONTRACT, build_order=("describe", "describe")),
@@ -1177,14 +1185,6 @@ class TestTheRecipeContract:
                     ),
                 ]
 
-            def test_should_list_every_conversion_row_as_the_rows_of_the_cores_convert_step(
-                self, judged_recipe: JudgedRecipe
-            ) -> None:
-                assert [row.name for row in list_rows_of_step(judged_recipe, "convert")] == [
-                    "convert-float16",
-                    "convert-eight-bit-blocks",
-                ]
-
             def test_should_keep_the_conversions_in_their_order(
                 self, judged_recipe: JudgedRecipe
             ) -> None:
@@ -1288,6 +1288,7 @@ class TestTheRecipeContract:
                         ),
                         candidate=(),
                         parities=(),
+                        build_order=("bench-probe",),
                     ),
                     FACTS,
                 )

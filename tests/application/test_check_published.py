@@ -9,9 +9,10 @@ from pathlib import PurePosixPath
 
 import pytest
 from accepted_build import (
+    BUILD_DIRECTORY,
     ENCODER,
     ENCODER_NAME,
-    RUN_DIRECTORY,
+    RECIPE_NAME,
     VOCABULARY,
     WORK_ROOT,
     build_files,
@@ -39,7 +40,7 @@ from mostt_model_builder.domain.publication.published_tree import (
 REPOSITORY = "example-user/parakeet-ultra-onnx"
 REVISION = "0123456789abcdef0123456789abcdef01234567"
 CARD = b'---\nlicense: "cc-by-4.0"\n---\n# Weights in ONNX\n'
-CARD_PATH = WORK_ROOT / RUN_DIRECTORY / "README.md"
+CARD_PATH = WORK_ROOT / BUILD_DIRECTORY / "README.md"
 TREE_URL = f"https://huggingface.co/api/models/{REPOSITORY}/tree/{REVISION}"
 PUBLISHED = {"README.md": CARD, ENCODER_NAME: ENCODER, "vocab.txt": VOCABULARY}
 MODEL = ModelDescription(
@@ -101,7 +102,9 @@ def build_check_files(card: bytes | None = CARD) -> FakeStepFiles:
 def build_check_request(
     repository: str = REPOSITORY, revision: str = REVISION, model: ModelDescription | None = MODEL
 ) -> PublishedCheckRequest:
-    return PublishedCheckRequest(repository, revision, build_request().candidate, model)
+    return PublishedCheckRequest(
+        RECIPE_NAME, repository, revision, build_request().candidate, model
+    )
 
 
 def run_check(
@@ -292,7 +295,7 @@ class TestThePublishedCheck:
                 with pytest.raises(
                     PublishedCheckError,
                     match=re.escape(
-                        f"{RUN_DIRECTORY}/README.md is missing, or is not the card that card "
+                        f"{BUILD_DIRECTORY}/README.md is missing, or is not the card that card "
                         "writes: write it with ./model-build.sh --work <dir> --recipe <name> card"
                     ),
                 ):

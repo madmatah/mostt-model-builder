@@ -40,6 +40,7 @@ from mostt_model_builder.domain.containers.step_peaks import (
     StepPeaks,
     render_step_peaks,
 )
+from mostt_model_builder.domain.containers.work_directory import place_entry
 from mostt_model_builder.domain.onnx.conversion_report import (
     CONVERSION_REPORT_FILE_NAME,
     ConversionReport,
@@ -57,11 +58,11 @@ from mostt_model_builder.domain.onnx.conversion_request import (
 
 WORK_ROOT = PurePosixPath("/data/builds/work")
 HEAD_TREE = "3f1d1ffe79bc3336eb583331cfbf9b189fd45f01"
-COMMIT = "0123456789abcdef0123456789abcdef01234567"
+KEY = "0c9d2e7f4a18" + "0" * 52
 IMAGE_ID = "sha256:" + "c" * 64
 RECIPE_NAME = "family"
-RUN_DIRECTORY = PurePosixPath("runs/family", COMMIT)
-EXPORT_DIRECTORY = WORK_ROOT / RUN_DIRECTORY / "export"
+EXPORT_OUTPUT_DIRECTORY = place_entry("family", "export", KEY).output_directory
+EXPORT_DIRECTORY = WORK_ROOT / EXPORT_OUTPUT_DIRECTORY
 ENCODER_NAME = "encoder-model.onnx"
 ENCODER_DATA_NAME = "encoder-model.onnx.data"
 FLOAT16_NAME = "encoder-model.fp16.onnx"
@@ -118,14 +119,17 @@ HOST = HostIdentity(USER_ID, GROUP_ID, 20, HostAccounts(False, (), ()))
 RUN = ConversionRun(
     row=CONVERT_ROW,
     request=REQUEST,
-    recipe_name=RECIPE_NAME,
-    commit=COMMIT,
+    placement=place_entry(RECIPE_NAME, CONVERT_ROW.name, KEY),
+    earlier_output_directories={"export": EXPORT_OUTPUT_DIRECTORY},
     work_root=WORK_ROOT,
     head_tree=HEAD_TREE,
     host=HOST,
 )
 REQUEST_PATH = (
-    WORK_ROOT / RUN_DIRECTORY / "requests/convert-eight-bit-blocks" / CONVERSION_REQUEST_FILE_NAME
+    WORK_ROOT
+    / place_entry(RECIPE_NAME, CONVERT_ROW.name, KEY).output_directory.parent
+    / "request"
+    / CONVERSION_REQUEST_FILE_NAME
 )
 
 
@@ -188,7 +192,7 @@ class TestTheConversionOfTheVariants:
                     if mount.is_written_by_a_step
                 ] == [
                     BindMount(
-                        RUN_DIRECTORY / "export" / name,
+                        EXPORT_OUTPUT_DIRECTORY / name,
                         PurePosixPath("/inputs/export") / name,
                         is_read_only=True,
                         is_file=True,

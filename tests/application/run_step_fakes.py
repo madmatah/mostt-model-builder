@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 
 from mostt_model_builder.adapters.docker_engine import ContainerEngineError, build_run_arguments
+from mostt_model_builder.adapters.work_files import REPLACEMENT_SUFFIX
 from mostt_model_builder.application.assemble_candidate import HashedFile
 from mostt_model_builder.application.fetch_sources import SourceFileError
 from mostt_model_builder.application.run_step import (
@@ -169,6 +170,27 @@ class FakeStepFiles:
         self.read_paths.append(directory / name)
         return WrittenFile(facts, self.contents.get(directory / name, b""))
 
+    def stream_host_file(
+        self,
+        directory: PurePosixPath,
+        name: str,
+        max_size_bytes: int,
+        observe_chunk: Callable[[bytes], None],
+    ) -> FileFacts:
+        self.require_directory(directory)
+        path = directory / name
+        facts = self.hashing_facts.get(path, self.entries.get(path, MISSING))
+        if facts.kind is not FileKind.REGULAR or facts.size_bytes > max_size_bytes:
+            return facts
+        content = self.contents.get(path, b"")
+        for start in range(0, len(content), COPY_CHUNK_BYTES):
+            observe_chunk(content[start : start + COPY_CHUNK_BYTES])
+        self.digested_paths.append(path)
+        return facts
+
+    def write_new_file_atomically(self, path: PurePosixPath, content: bytes, mode: int) -> None:
+        self.write_new_file(path, content, mode)
+
     def digest_host_file(
         self, directory: PurePosixPath, name: str, max_size_bytes: int
     ) -> HashedFile:
@@ -209,12 +231,19 @@ class FakeStepFiles:
         self.contents.pop(path, None)
         return True
 
+    def remove_replacement_if_present(self, path: PurePosixPath) -> bool:
+        return self.remove_file_if_present(path.with_name(path.name + REPLACEMENT_SUFFIX))
+
+
+type WrittenByRun = Callable[[ContainerRun, FakeStepFiles], dict[str, tuple[FileFacts, bytes]]]
+
 
 @dataclass
 class FakeContainerEngine:
     files: FakeStepFiles
     images: dict[str, ImageFacts]
     step_outputs: dict[str, tuple[FileFacts, bytes]] = field(default_factory=dict)
+    outputs_by_entry_module: dict[str, WrittenByRun] = field(default_factory=dict)
     status: int = 0
     log_tail: bytes = b""
     runs: list[ContainerRun] = field(default_factory=list)
@@ -239,14 +268,16 @@ class FakeContainerEngine:
         self.files.add_file(log_path, build_file_facts(len(self.log_tail), 0o600), self.log_tail)
         for mount in run.mounts:
             if not mount.is_read_only:
-                self.write_into(run.work_root / mount.host_path, run.entry_module)
+                self.write_into(run.work_root / mount.host_path, run)
         return ContainerExit(self.status, self.log_tail)
 
-    def write_into(self, output_directory: PurePosixPath, entry_module: str) -> None:
-        if entry_module == CLEAN_ENTRY_MODULE:
+    def write_into(self, output_directory: PurePosixPath, run: ContainerRun) -> None:
+        if run.entry_module == CLEAN_ENTRY_MODULE:
             for name in self.files.list_children(output_directory):
                 del self.files.entries[output_directory / name]
                 self.files.contents.pop(output_directory / name, None)
             return
-        for name, (facts, content) in self.step_outputs.items():
+        write_outputs = self.outputs_by_entry_module.get(run.entry_module)
+        outputs = self.step_outputs if write_outputs is None else write_outputs(run, self.files)
+        for name, (facts, content) in outputs.items():
             self.files.add_file(output_directory / name, facts, content)

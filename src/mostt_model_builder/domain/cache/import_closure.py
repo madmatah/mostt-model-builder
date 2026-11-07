@@ -4,6 +4,7 @@ from pathlib import PurePosixPath
 
 from mostt_model_builder.domain.containers.container_steps import (
     CORE_PACKAGE,
+    IMAGES_DIRECTORY_NAME,
     RECIPE_PACKAGE_PREFIX,
 )
 
@@ -13,6 +14,11 @@ PACKAGE_FILE_NAME = "__init__.py"
 SOURCE_DIRECTORY_NAME = "src"
 RECIPES_DIRECTORY_NAME = "recipes"
 BOOTSTRAP_PATH = PurePosixPath(SOURCE_DIRECTORY_NAME, CORE_PACKAGE, "bootstrap.py")
+# The code that a step runs and the files that its image is built from live under these directories
+# of the tree, so the keys read HEAD's tree there alone.
+KEYED_TREE_DIRECTORIES = frozenset(
+    {SOURCE_DIRECTORY_NAME, RECIPES_DIRECTORY_NAME, IMAGES_DIRECTORY_NAME}
+)
 
 
 class ImportClosureError(ValueError):
@@ -116,3 +122,9 @@ def close_imports(
                     seen.add(parent)
                     pending.append(parent)
     return tuple(sorted(closure))
+
+
+def collect_code_files(
+    entry_module: str, files: Mapping[PurePosixPath, bytes]
+) -> dict[PurePosixPath, bytes]:
+    return {path: files[path] for path in close_imports(entry_module, files)}

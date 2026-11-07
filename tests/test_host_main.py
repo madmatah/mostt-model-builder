@@ -4,7 +4,9 @@ from pathlib import Path, PurePosixPath
 
 import pytest
 
+from mostt_model_builder.application.clean_run import BuildFile, BuildFileCleaned, CleanOutcome
 from mostt_model_builder.application.resolve_lock import LockResolution
+from mostt_model_builder.domain.cache.hardware_facts import NO_GPU_REASON
 from mostt_model_builder.domain.containers.step_peaks import StepPeaks
 from mostt_model_builder.domain.contract.model_description import ModelDescription
 from mostt_model_builder.domain.contract.recipe_contract import (
@@ -12,7 +14,15 @@ from mostt_model_builder.domain.contract.recipe_contract import (
     RecipeContract,
 )
 from mostt_model_builder.domain.lock.lock_check import CheckedLock, LockedPackage
-from mostt_model_builder.host_main import describe_lock_resolution, is_card_template_present
+from mostt_model_builder.host_main import (
+    describe_clean_event,
+    describe_cleaned_entry,
+    describe_lock_resolution,
+    describe_removed_unfinished_entry,
+    describe_reused_entry,
+    describe_skipped_entry,
+    is_card_template_present,
+)
 
 BOOTSTRAP_PATH = (
     Path(__file__).resolve().parent.parent / "src" / "mostt_model_builder" / "bootstrap.py"
@@ -56,6 +66,11 @@ LOCK_RESOLUTION = LockResolution(
     peaks=StepPeaks(memory_peak_bytes=0, process_count_peak=0),
 )
 TEMPLATE_RECIPE_NAME = "family"
+# The keys of the mock of the commands' lines, each completed to its 64 hexadecimal digits.
+FLEURS_CHECK_KEY = "7b1e04c9a2f3" + "0" * 52
+CANDIDATE_KEY = "91aa3c0e7d45" + "1" * 52
+UNFINISHED_KEY = "6a0f3e81c9d4" + "2" * 52
+CLEANED_KEY = "9e41c2d07a3b" + "3" * 52
 CARD_TEMPLATE_NAME = "card-template.md"
 CARD_TEMPLATE_TEXT = "# {title}\n"
 CONTRACT_WITHOUT_MODEL = RecipeContract(
@@ -314,3 +329,77 @@ class TestTheHostMain:
 
             def test_should_find_no_template_since_no_card_is_built(self, is_present: bool) -> None:
                 assert not is_present
+
+    class TestTheDescribeReusedEntryFunction:
+        class TestWhenARowIsReused:
+            @pytest.fixture
+            def line(self) -> str:
+                return describe_reused_entry("fleurs-check", FLEURS_CHECK_KEY)
+
+            def test_should_name_the_row_and_the_start_of_its_key(self, line: str) -> None:
+                assert line == "reused fleurs-check, key 7b1e04c9a2f3"
+
+        class TestWhenTheCandidateIsReused:
+            @pytest.fixture
+            def line(self) -> str:
+                return describe_reused_entry("candidate", CANDIDATE_KEY)
+
+            def test_should_call_it_the_candidate(self, line: str) -> None:
+                assert line == "reused the candidate, key 91aa3c0e7d45"
+
+    class TestTheDescribeRemovedUnfinishedEntryFunction:
+        @pytest.fixture
+        def line(self) -> str:
+            return describe_removed_unfinished_entry(
+                "transcribe-float32-cpu-fr_fr-2", UNFINISHED_KEY
+            )
+
+        def test_should_name_the_row_and_the_start_of_its_key(self, line: str) -> None:
+            assert line == (
+                "removed the unfinished entry of transcribe-float32-cpu-fr_fr-2, key 6a0f3e81c9d4"
+            )
+
+    class TestTheDescribeCleanedEntryFunction:
+        @pytest.fixture
+        def line(self) -> str:
+            return describe_cleaned_entry(
+                "transcribe-float32-cpu-fr_fr-0", CLEANED_KEY, CleanOutcome.CLEANED
+            )
+
+        def test_should_name_the_row_and_the_start_of_its_key(self, line: str) -> None:
+            assert line == "cleaned transcribe-float32-cpu-fr_fr-0, key 9e41c2d07a3b"
+
+    class TestTheDescribeSkippedEntryFunction:
+        @pytest.fixture
+        def line(self) -> str:
+            return describe_skipped_entry("transcribe-float16-gpu-fr_fr-0", NO_GPU_REASON)
+
+        def test_should_name_the_row_and_the_reason_it_has_no_key(self, line: str) -> None:
+            assert line == (
+                "skipped transcribe-float16-gpu-fr_fr-0: /proc/driver/nvidia holds no GPU, which "
+                "the key of a run on the GPU needs"
+            )
+
+    class TestTheDescribeCleanEventFunction:
+        @pytest.mark.parametrize(
+            ("event", "expected_line"),
+            [
+                pytest.param(
+                    BuildFileCleaned(BuildFile.VERIFICATION_REPORT, CleanOutcome.CLEANED),
+                    "cleaned the verification's report",
+                    id="the-report",
+                ),
+                pytest.param(
+                    BuildFileCleaned(BuildFile.MODEL_CARD, CleanOutcome.CLEANED),
+                    "cleaned the model card",
+                    id="the-card",
+                ),
+            ],
+        )
+        class TestWhenAFileOfTheBuildIsCleaned:
+            @pytest.fixture
+            def line(self, event: BuildFileCleaned) -> str:
+                return describe_clean_event(event)
+
+            def test_should_name_it(self, line: str, expected_line: str) -> None:
+                assert line == expected_line

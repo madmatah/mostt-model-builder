@@ -11,7 +11,16 @@ from mostt_model_builder.domain.containers.base_images import ENVIRONMENT_PYTHON
 from mostt_model_builder.domain.containers.container_steps import (
     ContainerImage,
     ContainerRun,
+    StepPlacement,
     StepRow,
+    plan_container_run,
+)
+from mostt_model_builder.domain.containers.work_directory import (
+    CANDIDATE_FILES_DIRECTORY_NAME,
+    ENTRY_LOG_NAME,
+    ENTRY_OUTPUT_DIRECTORY_NAME,
+    ENTRY_REQUEST_DIRECTORY_NAME,
+    locate_referenced_sources,
 )
 from mostt_model_builder.domain.contract.recipe_contract import (
     HostContentOrigin,
@@ -24,6 +33,18 @@ from mostt_model_builder.domain.sources.source_pins import SourcePin
 # reused under a key that meant something else.
 KEY_FORMAT = 1
 OUTPUT_SEPARATOR = "/"
+
+# The run a key describes leaves out every host path, the image's ID and the user's ids, so it is
+# planned on stand-ins for them.
+KEYING_PLACEMENT = StepPlacement(
+    output_directory=PurePosixPath(ENTRY_OUTPUT_DIRECTORY_NAME),
+    request_directory=PurePosixPath(ENTRY_REQUEST_DIRECTORY_NAME),
+    log_path=PurePosixPath(ENTRY_LOG_NAME),
+    candidate_directory=PurePosixPath(CANDIDATE_FILES_DIRECTORY_NAME),
+)
+KEYING_IMAGE_ID = ""
+KEYING_WORK_ROOT = PurePosixPath("/")
+KEYING_GROUP_ID = 0
 
 type PlainData = bool | int | float | str | list[PlainData] | dict[str, PlainData] | None
 
@@ -119,6 +140,21 @@ def describe_planned_run(planned_run: ContainerRun) -> dict[str, PlainData]:
     }
 
 
+def plan_keyed_run(row: StepRow, pins: Sequence[SourcePin]) -> ContainerRun:
+    return plan_container_run(
+        row,
+        KEYING_IMAGE_ID,
+        KEYING_PLACEMENT,
+        locate_referenced_sources(row.sources, pins),
+        KEYING_WORK_ROOT,
+        KEYING_GROUP_ID,
+        {
+            earlier_output.step: PurePosixPath(earlier_output.step)
+            for earlier_output in row.earlier_outputs
+        },
+    )
+
+
 def describe_source_pins(row: StepRow, pins: Sequence[SourcePin]) -> list[PlainData]:
     pins_by_file = {(pin.repository, pin.path): pin for pin in pins}
     described: list[PlainData] = []
@@ -144,8 +180,12 @@ def select_digests(
     return {name: digests[name] for name in names}
 
 
+def lacks_gpu_for_key(row: StepRow, hardware: HardwareFacts | None) -> bool:
+    return row.uses_gpu and (hardware is None or not hardware.has_gpu)
+
+
 def describe_hardware(row: StepRow, hardware: HardwareFacts | None) -> dict[str, PlainData] | None:
-    if row.uses_gpu and (hardware is None or not hardware.has_gpu):
+    if lacks_gpu_for_key(row, hardware):
         raise OutputKeyError(f"{row.name}: {NO_GPU_REASON}")
     if hardware is None:
         return None

@@ -2,7 +2,8 @@ from dataclasses import dataclass, replace
 from pathlib import PurePosixPath
 
 from accepted_build import (
-    RUN_DIRECTORY,
+    BUILD_DIRECTORY,
+    RECIPE_NAME,
     SAME_TOKENS_EVERYWHERE,
     WORK_ROOT,
     build_request,
@@ -16,7 +17,7 @@ from mostt_model_builder.domain.contract.model_description import (
 from mostt_model_builder.domain.lock.declared_requirements import DeclaredRequirement
 from mostt_model_builder.domain.sources.source_pins import RepositoryType, SourcePin
 
-CARD_PATH = WORK_ROOT / RUN_DIRECTORY / "README.md"
+CARD_PATH = WORK_ROOT / BUILD_DIRECTORY / "README.md"
 WEIGHTS_PIN = SourcePin(
     RepositoryType.MODEL,
     "maker/weights",
@@ -53,6 +54,7 @@ def build_card_request(
 ) -> CardRequest:
     verification = build_request(SAME_TOKENS_EVERYWHERE) if is_rejected else build_request()
     return CardRequest(
+        recipe_name=RECIPE_NAME,
         verification=replace(verification, pins=(*verification.pins, WEIGHTS_PIN)),
         model=model,
         template=None if model is None else TEMPLATE,
