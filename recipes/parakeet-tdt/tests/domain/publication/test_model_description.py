@@ -16,13 +16,14 @@ from mostt_model_builder.domain.onnx.precision_decisions import list_kept_float3
 from mostt_model_builder.domain.publication.model_card import join_words
 from mostt_recipe_parakeet_tdt.domain.publication.model_description import MODEL_DESCRIPTION
 from mostt_recipe_parakeet_tdt.domain.variants.comparisons import VARIANT_NON_INFERIORITY
-from mostt_recipe_parakeet_tdt.domain.variants.variants import VARIANTS
+from mostt_recipe_parakeet_tdt.domain.variants.variants import FEATURE_LENGTHS_INPUT, VARIANTS
 
 RECIPE_DIRECTORY = Path(__file__).resolve().parents[3]
 CONVERTED_VARIANTS = tuple(
     (variant.name, variant.conversion) for variant in VARIANTS if variant.conversion is not None
 )
 INTERVAL_COVERAGE_PERCENT = (INTERVAL_HIGH_INDEX - INTERVAL_LOW_INDEX + 1) * 100 / RESAMPLE_COUNT
+KEPT_INPUT_PHRASES = {FEATURE_LENGTHS_INPUT: "the computation of its lengths"}
 ROLE_LINES = {
     description.variant: description.role_line for description in MODEL_DESCRIPTION.variants
 }
@@ -35,12 +36,13 @@ def describe_conversion(conversion: Conversion) -> str:
     if isinstance(conversion, EightBitBlocksConversion):
         symmetry = "symmetric" if conversion.is_symmetric else "asymmetric"
         return f"8-bit blocks of {conversion.block_size} {symmetry} weights"
-    kept_operators = list_kept_float32_operators(
-        conversion.kind, conversion.added_float32_operators
+    kept_parts = (
+        *list_kept_float32_operators(conversion.kind, conversion.added_float32_operators),
+        *(KEPT_INPUT_PHRASES[kept_input] for kept_input in conversion.kept_inputs),
     )
-    if not kept_operators:
+    if not kept_parts:
         return conversion.kind.value
-    return f"{conversion.kind.value}, with {join_words(kept_operators)} kept in float32"
+    return f"{conversion.kind.value}, with {join_words(kept_parts)} kept in float32"
 
 
 def state_the_conversions(phrases: Sequence[str]) -> str:

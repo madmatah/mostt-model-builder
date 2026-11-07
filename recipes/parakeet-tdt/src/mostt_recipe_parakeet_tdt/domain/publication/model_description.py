@@ -34,15 +34,16 @@ MODEL_DESCRIPTION = ModelDescription(
         VariantDescription(
             FLOAT16_VARIANT,
             "float16",
-            "The encoder converted to float16, for the GPU.",
+            "The encoder converted to float16, with the computation of its lengths kept in "
+            "float32, for the GPU.",
             note=GPU_NOTE,
             abbreviation="FP16",
         ),
         VariantDescription(
             BFLOAT16_VARIANT,
             "bfloat16",
-            "The encoder converted to bfloat16, with Pad, Tile and Floor kept in float32, for the "
-            "GPU.",
+            "The encoder converted to bfloat16, with Pad, Tile, Floor and the computation of its "
+            "lengths kept in float32, for the GPU.",
             note=GPU_NOTE,
             abbreviation="BF16",
         ),
