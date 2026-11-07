@@ -55,6 +55,8 @@ The record holds the key, the row's name, the key's document, so that a person c
 
 `./model-build.sh --work <dir> --recipe <name> clean [<step>]` removes the entries of the current build, the build order's and those of the steps it leaves out, or those of one step, the candidate's with `inspect`, and always the verification's report and the card. It keys each entry from the records of the entries before it, never from their outputs, and judges and hashes nothing it removes, so that a corrupted entry, and every entry after it, stays removable. It computes every key before it removes anything, and skips, with a line that gives the reason, an entry whose key it cannot compute: the record of an entry it draws on is missing or refused, or no GPU is readable for a step on the GPU. An entry whose record it refuses is removed under its key all the same. A container empties each entry's outputs, as [The containers](#the-containers) says, and the host removes what it wrote itself: the request, the log, the record, the candidate's copies and the entry.
 
+`./model-build.sh --work <dir> --recipe <name> prune` keeps the entries of the current build, the build order's and those of the steps it leaves out whose keys it can compute, and removes every other entry under `cache/<recipe>/`, each through the same cleaning, printing each with its row, its key and its bytes, the sizes of its files from their facts alone, then the count and the bytes freed, `application/prune_cache.py`. It keys the entries from their records, as `clean` does, and refuses, removing nothing, a build that lacks a complete entry, naming `build`, since an entry that the build lacks could come back with the same bytes and make the old entries after it current again, a build with an entry whose record it refuses, naming `clean` and the entry's step, and a build with steps on the GPU while no GPU is readable, since it could not tell their entries from old ones. It refuses, before it removes anything, a name in the cache that is neither a row's entry nor the log of a cleaning, and never touches the publications, `lock/` or `sources/`.
+
 ### The sources
 
 A build reads only files that it pins. The core pins its own in `sources.toml`, at the root of the clone: the FLEURS test sets of French (`fr_fr`) and English (`en_us`), each as its index, `test.tsv`, and its audio, `audio/test.tar.gz`, from the dataset `google/fleurs` at its commit `70bb2e84b976b7e960aa89f1c648e09c59f894dd`. A recipe pins its own the same way, in `recipes/<family>/sources.toml`, and a build reads the core's pins and its recipe's together, which may not pin the same file twice.
@@ -104,7 +106,7 @@ The core's rows:
 | Row | Image | Memory MiB | Processes | CPUs | `/tmp` MiB | Reason of the limits |
 |---|---|---|---|---|---|---|
 | `fleurs-check` | `bench` | 1 024 | 8 | 2 | 64 | it reads the archives member by member, and peaked at 24 MiB and 6 processes |
-| `clean` | the image of the step it cleans | 256 | 32 | 1 | 16 | the core's own value: it only removes files |
+| `clean` | `bench` | 256 | 32 | 1 | 16 | the core's own value: it only removes files |
 | `lock` | `uv` | 4 096 | 256 | 8 | 3 072 | limits that a resolution of every image's libraries stays well within, uv's cache in `/tmp` included |
 | `inspect` | `onnx-inspect` | 3 072 | 32 | 2 | 64 | the inspection of the graphs, without their weights, peaked at 2.4 GiB and 20 processes |
 | `convert-<variant>` | `onnx-convert` | 13 312 | 64 | 4 | 256 | the conversions of the encoder, its weights loaded whole for each variant, peaked at 9.7 GiB and 41 processes, all of them in one container |
@@ -122,7 +124,7 @@ A run of a step:
 
 Every step ends through the core's shared step modules: it writes its control group's `memory.peak` and `pids.peak` into `peaks.json`, read inside the container at its exit, since the host's polling misses a short container, then sets each of its outputs to mode 0640, since some libraries write theirs readable by their owner alone, which the host is not.
 
-Cleaning an entry ([The cache](#the-cache)) goes through a container of the step's image, with the core's entry module even in a recipe's image, which empties the output directory, mounting it alone, since a directory that a step made there belongs to the container user; the host then removes the empty directory, the request, the log, the record and the entry.
+Cleaning an entry ([The cache](#the-cache)) goes through a container of the core's `bench` image, which holds no library, whatever the step, since a pruned entry may name a row, and an image, that the recipe no longer declares; it empties the output directory, mounting it alone, since a directory that a step made there belongs to the container user; the host then removes the empty directory, the request, the log, the record and the entry.
 
 ## The images
 

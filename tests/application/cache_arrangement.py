@@ -15,6 +15,7 @@ from run_step_fakes import (
 )
 
 from mostt_model_builder.application.clean_run import BuildCleaning, CleanEvent, clean_build
+from mostt_model_builder.application.prune_cache import CachePruning, PrunedEntry, prune_cache
 from mostt_model_builder.application.resolve_build import (
     BuildEvent,
     BuildResolutionRequest,
@@ -487,3 +488,29 @@ def list_entries(files: FakeStepFiles) -> list[PurePosixPath]:
         if path.is_relative_to(cache_directory)
         and len(path.relative_to(cache_directory).parts) == 2
     )
+
+
+def prune_built_cache(
+    cache: CacheBuild,
+    tree_files: Mapping[PurePosixPath, bytes] = TREE_FILES,
+    hardware: HardwareFacts | None = GPU_HARDWARE,
+) -> tuple[PrunedEntry, ...]:
+    recipe = build_recipe()
+    return prune_cache(
+        CachePruning(
+            recipe=recipe,
+            units=plan_units(recipe, recipe.build_order),
+            work_root=WORK_ROOT,
+            head_tree=HEAD_TREE,
+            host=HOST,
+            tree_files=tree_files,
+            hardware=hardware,
+        ),
+        build_engine(cache.files),
+        cache.files,
+        ignore_pruned_entry,
+    )
+
+
+def ignore_pruned_entry(entry: PrunedEntry) -> None:
+    del entry

@@ -55,6 +55,7 @@ from mostt_model_builder.application.prepare_publication import (
     prepare_publication,
     write_model_card,
 )
+from mostt_model_builder.application.prune_cache import CachePruning, PrunedEntry, prune_cache
 from mostt_model_builder.application.publish_candidate import (
     CandidatePublication,
     publish_candidate,
@@ -216,6 +217,7 @@ VERIFY_COMMAND = "verify"
 CARD_COMMAND = "card"
 CHECK_PUBLISHED_COMMAND = "check-published"
 PUBLISH_COMMAND = "publish"
+PRUNE_COMMAND = "prune"
 STANDARD_INPUT_DESCRIPTOR = 0
 CPU_PROVIDER = "CPUExecutionProvider"
 CUDA_PROVIDER = "CUDAExecutionProvider"
@@ -394,6 +396,12 @@ def build_argument_parser() -> argparse.ArgumentParser:
     )
     clean_parser.add_argument(
         "step", nargs="?", choices=STEP_NAMES, metavar="<step>", help=", ".join(STEP_NAMES)
+    )
+    commands.add_parser(
+        PRUNE_COMMAND,
+        add_help=False,
+        help="remove every entry of the recipe's cache that its complete current build does not "
+        "use, and print the bytes it freed",
     )
     return parser
 
@@ -1004,6 +1012,40 @@ def clean(
     )
 
 
+def describe_pruned_entry(entry: PrunedEntry) -> str:
+    return (
+        f"removed {describe_entry_name(entry.name)}, key {show_key(entry.key)}, "
+        f"{entry.size_bytes} bytes"
+    )
+
+
+def describe_prune_total(pruned: Sequence[PrunedEntry]) -> str:
+    return f"pruned {len(pruned)} entries, {sum(entry.size_bytes for entry in pruned)} bytes freed"
+
+
+def print_pruned_entry(entry: PrunedEntry) -> None:
+    print(describe_pruned_entry(entry), flush=True)
+
+
+def prune(recipe: JudgedRecipe, work_directory: WorkDirectory, files: WorkFiles) -> None:
+    context = read_build_context(work_directory)
+    pruned = prune_cache(
+        CachePruning(
+            recipe=recipe,
+            units=plan_units(recipe, list_every_step(recipe)),
+            work_root=context.work_root,
+            head_tree=context.head_tree,
+            host=context.host,
+            tree_files=context.tree_files,
+            hardware=context.hardware,
+        ),
+        DockerEngine(),
+        files,
+        print_pruned_entry,
+    )
+    print(describe_prune_total(pruned), flush=True)
+
+
 def lock(work_directory: WorkDirectory, files: WorkFiles) -> None:
     clone_root = PurePosixPath(CLONE_ROOT)
     images_lock_path = IMAGES_ENVIRONMENT_DIRECTORY / LOCK_FILE_NAME
@@ -1041,6 +1083,8 @@ def run_command(arguments: argparse.Namespace) -> None:
         run_named_step(recipe, arguments.step, work_directory, files)
     elif arguments.command == CLEAN_STEP_NAME:
         clean(recipe, arguments.step, work_directory, files)
+    elif arguments.command == PRUNE_COMMAND:
+        prune(recipe, work_directory, files)
     elif arguments.command == VERIFY_COMMAND:
         verify(recipe, work_directory, files)
     elif arguments.command == BUILD_COMMAND:

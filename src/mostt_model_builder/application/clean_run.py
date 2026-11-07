@@ -22,7 +22,7 @@ from mostt_model_builder.domain.cache.hardware_facts import HardwareFacts
 from mostt_model_builder.domain.cache.output_records import RECORD_FILE_NAME
 from mostt_model_builder.domain.containers.container_files import FileKind, judge_mount
 from mostt_model_builder.domain.containers.container_steps import (
-    ContainerImage,
+    BENCH_IMAGE,
     build_clean_row,
     plan_container_run,
 )
@@ -63,14 +63,15 @@ class EntryCleaning:
     recipe_name: str
     entry_name: str
     key: str
-    image: ContainerImage
     work_root: PurePosixPath
     head_tree: str
     host: HostIdentity
 
 
 # The entry and the files beside its outputs are the host's own, and only the outputs, which a
-# container wrote and may have filled with directories of its user's, go through a container.
+# container wrote and may have filled with directories of its user's, go through a container. That
+# container runs in the core's bench image, which holds no library, since a pruned entry may name a
+# row, and an image, that no recipe declares any more.
 def clean_entry(request: EntryCleaning, engine: ContainerEngine, files: CleanFiles) -> CleanOutcome:
     entry = locate_entry(request.recipe_name, request.entry_name, request.key)
     if not is_judged_directory(request.work_root, entry, request.host.user_id, files):
@@ -98,7 +99,7 @@ def clean_entry(request: EntryCleaning, engine: ContainerEngine, files: CleanFil
 def empty_output_directory(
     request: EntryCleaning, engine: ContainerEngine, files: CleanFiles
 ) -> None:
-    clean_row = build_clean_row(request.image)
+    clean_row = build_clean_row(BENCH_IMAGE)
     image_id = prepare_container(clean_row, request.head_tree, request.host, engine)
     clean_placement = place_entry_clean(request.recipe_name, request.entry_name, request.key)
     run = plan_container_run(
@@ -254,8 +255,7 @@ def remove_entry(
     key = entry.key
     if key is None:
         return CleanOutcome.NOTHING_TO_CLEAN
-    row = entry.unit.row
-    if row is None:
+    if entry.unit.row is None:
         return remove_candidate_entry(
             request.recipe.name, key, request.work_root, request.host.user_id, files
         )
@@ -264,7 +264,6 @@ def remove_entry(
             recipe_name=request.recipe.name,
             entry_name=entry.unit.name,
             key=key,
-            image=row.image,
             work_root=request.work_root,
             head_tree=request.head_tree,
             host=request.host,

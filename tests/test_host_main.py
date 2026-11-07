@@ -5,6 +5,7 @@ from pathlib import Path, PurePosixPath
 import pytest
 
 from mostt_model_builder.application.clean_run import BuildFile, BuildFileCleaned, CleanOutcome
+from mostt_model_builder.application.prune_cache import PrunedEntry
 from mostt_model_builder.application.resolve_lock import LockResolution
 from mostt_model_builder.domain.cache.hardware_facts import NO_GPU_REASON
 from mostt_model_builder.domain.containers.step_peaks import StepPeaks
@@ -18,6 +19,8 @@ from mostt_model_builder.host_main import (
     describe_clean_event,
     describe_cleaned_entry,
     describe_lock_resolution,
+    describe_prune_total,
+    describe_pruned_entry,
     describe_removed_unfinished_entry,
     describe_reused_entry,
     describe_skipped_entry,
@@ -41,6 +44,7 @@ COMMANDS = (
     "publish",
     "check-published",
     "clean",
+    "prune",
 )
 RECIPE_NAME = "parakeet-tdt"
 RECIPE_STEPS = (
@@ -71,6 +75,13 @@ FLEURS_CHECK_KEY = "7b1e04c9a2f3" + "0" * 52
 CANDIDATE_KEY = "91aa3c0e7d45" + "1" * 52
 UNFINISHED_KEY = "6a0f3e81c9d4" + "2" * 52
 CLEANED_KEY = "9e41c2d07a3b" + "3" * 52
+PRUNED_ENTRIES = (
+    PrunedEntry("convert-bfloat16", "5c0d8a3b9e21" + "4" * 52, 1241503812),
+    PrunedEntry("candidate", "4e7a2b90c1d3" + "5" * 52, 5934410225),
+    PrunedEntry("inspect", "8f02d1b6e4a7" + "6" * 52, 61448),
+    PrunedEntry("transcribe-bfloat16-gpu-fr_fr-0", "b3c90e5a7d12" + "7" * 52, 398220),
+    PrunedEntry("transcribe-bfloat16-gpu-en_us-0", "1d7e4f0a9c63" + "8" * 52, 371904),
+)
 CARD_TEMPLATE_NAME = "card-template.md"
 CARD_TEMPLATE_TEXT = "# {title}\n"
 CONTRACT_WITHOUT_MODEL = RecipeContract(
@@ -403,3 +414,25 @@ class TestTheHostMain:
 
             def test_should_name_it(self, line: str, expected_line: str) -> None:
                 assert line == expected_line
+
+    class TestTheDescribePrunedEntryFunction:
+        @pytest.fixture
+        def lines(self) -> list[str]:
+            return [describe_pruned_entry(entry) for entry in PRUNED_ENTRIES]
+
+        def test_should_name_each_entry_its_key_and_its_bytes(self, lines: list[str]) -> None:
+            assert lines == [
+                "removed convert-bfloat16, key 5c0d8a3b9e21, 1241503812 bytes",
+                "removed the candidate, key 4e7a2b90c1d3, 5934410225 bytes",
+                "removed inspect, key 8f02d1b6e4a7, 61448 bytes",
+                "removed transcribe-bfloat16-gpu-fr_fr-0, key b3c90e5a7d12, 398220 bytes",
+                "removed transcribe-bfloat16-gpu-en_us-0, key 1d7e4f0a9c63, 371904 bytes",
+            ]
+
+    class TestTheDescribePruneTotalFunction:
+        @pytest.fixture
+        def line(self) -> str:
+            return describe_prune_total(PRUNED_ENTRIES)
+
+        def test_should_count_the_entries_and_the_bytes_freed(self, line: str) -> None:
+            assert line == "pruned 5 entries, 7176745609 bytes freed"
