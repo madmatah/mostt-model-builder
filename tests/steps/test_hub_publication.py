@@ -3,7 +3,7 @@ import hashlib
 import io
 import re
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import partial
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -58,6 +58,10 @@ REQUEST = PublicationRequest(
     (describe("encoder-model.onnx", ENCODER),),
     describe("README.md", CARD),
 )
+COMMIT_DESCRIPTION = (
+    "The float16 and bfloat16 encoders of revision 9dcab459 computed the encoder's output\n"
+    "lengths in their own reduced precision."
+)
 
 
 @dataclass(frozen=True)
@@ -65,6 +69,7 @@ class Commit:
     repository: str
     names: list[str]
     commit_message: str
+    commit_description: str
     parent_revision: str
 
 
@@ -101,6 +106,7 @@ class FakeHub:
         repository: str,
         staged_files: Sequence[StagedFile],
         commit_message: str,
+        commit_description: str,
         parent_revision: str,
     ) -> str:
         self.commits.append(
@@ -108,6 +114,7 @@ class FakeHub:
                 repository,
                 [staged.name for staged in staged_files],
                 commit_message,
+                commit_description,
                 parent_revision,
             )
         )
@@ -156,6 +163,7 @@ class LibraryCommit:
     repository: str
     operations: list[object]
     commit_message: str
+    commit_description: str
     parent_commit: str
 
 
@@ -218,9 +226,12 @@ class StubApi:
         operations: list[object],
         *,
         commit_message: str,
+        commit_description: str,
         parent_commit: str,
     ) -> SimpleNamespace:
-        self.commits.append(LibraryCommit(repository, operations, commit_message, parent_commit))
+        self.commits.append(
+            LibraryCommit(repository, operations, commit_message, commit_description, parent_commit)
+        )
         return SimpleNamespace(oid=REVISION)
 
 
@@ -329,7 +340,9 @@ class TestTheHubPublication:
             def committed(self, tmp_path: Path) -> tuple[str, StagedFile, StubApi]:
                 hub = build_library_hub()
                 staged_file = hub.stage_file(tmp_path / "encoder.onnx", "encoder.onnx")
-                revision = hub.commit(REPOSITORY, [staged_file], "Publish it", PARENT_REVISION)
+                revision = hub.commit(
+                    REPOSITORY, [staged_file], "Publish it", COMMIT_DESCRIPTION, PARENT_REVISION
+                )
                 api: StubApi = hub.api
                 return revision, staged_file, api
 
@@ -338,13 +351,17 @@ class TestTheHubPublication:
             ) -> None:
                 assert committed[0] == REVISION
 
-            def test_should_commit_the_staged_operations_on_the_parent(
+            def test_should_commit_the_staged_operations_with_the_message_on_the_parent(
                 self, committed: tuple[str, StagedFile, StubApi]
             ) -> None:
                 _, staged_file, api = committed
                 assert api.commits == [
                     LibraryCommit(
-                        REPOSITORY, [staged_file.operation], "Publish it", PARENT_REVISION
+                        REPOSITORY,
+                        [staged_file.operation],
+                        "Publish it",
+                        COMMIT_DESCRIPTION,
+                        PARENT_REVISION,
                     )
                 ]
 
@@ -402,6 +419,7 @@ class TestTheHubPublication:
                         REPOSITORY,
                         ["encoder-model.onnx", "README.md"],
                         "Publish Weights in ONNX",
+                        "",
                         PARENT_REVISION,
                     )
                 ]
@@ -428,6 +446,22 @@ class TestTheHubPublication:
                         report_uploaded("README.md", CARD),
                     ),
                 )
+
+        class TestWhenTheRequestCarriesACommitDescription:
+            @pytest.fixture
+            def hub(self, tmp_path: Path) -> FakeHub:
+                hub = FakeHub([HUB_ATTRIBUTES])
+                candidate_directory, request_directory = lay_out(tmp_path)
+                described_request = replace(REQUEST, commit_description=COMMIT_DESCRIPTION)
+                publish(described_request, hub, candidate_directory, request_directory)
+                return hub
+
+            def test_should_commit_with_the_requests_title_and_description(
+                self, hub: FakeHub
+            ) -> None:
+                assert [
+                    (commit.commit_message, commit.commit_description) for commit in hub.commits
+                ] == [("Publish Weights in ONNX", COMMIT_DESCRIPTION)]
 
         class TestWhenTheRepositoryHoldsAnUnexpectedFile:
             @pytest.fixture
