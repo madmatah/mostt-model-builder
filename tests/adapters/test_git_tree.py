@@ -29,6 +29,13 @@ RESHAPING_UMASK = "0077"
 COMMITTED_FILE_MODE = 0o644
 MISSING_TREE = "0" * 40
 MALFORMED_TREE = "HEAD"
+BUILD_DIRECTORIES = frozenset({"src", "recipes", "images"})
+BUILD_FILES = {
+    "src/mostt_model_builder/steps/step.py": b"import json\n",
+    "recipes/family/src/mostt_recipe_family/steps/run.py": b"x = 1\n",
+    "images/bench/Containerfile": b"FROM python\n",
+}
+DOCUMENT_FILE = "docs/model-build.md"
 
 
 def run_git(repository: Path, *arguments: str) -> str:
@@ -55,6 +62,16 @@ def build_repository(repository: Path) -> None:
     (repository / ".gitignore").write_text("*.log\n")
     run_git(repository, "add", COMMITTED_FILE, ".gitignore")
     run_git(repository, "-c", "commit.gpgsign=false", "commit", "--quiet", "--message", "first")
+
+
+def commit_build_files(repository: Path) -> None:
+    for name, content in BUILD_FILES.items():
+        (repository / name).parent.mkdir(parents=True, exist_ok=True)
+        (repository / name).write_bytes(content)
+    (repository / DOCUMENT_FILE).parent.mkdir()
+    (repository / DOCUMENT_FILE).write_text("# The build\n")
+    run_git(repository, "add", *BUILD_FILES, DOCUMENT_FILE)
+    run_git(repository, "-c", "commit.gpgsign=false", "commit", "--quiet", "--message", "code")
 
 
 def write_reshaping_configuration(home: Path) -> None:
@@ -304,6 +321,67 @@ class TestTheGitTree:
             ) -> None:
                 with pytest.raises(GitError, match=rf"^git archive failed: .*{MISSING_TREE}"):
                     archive_act()
+
+    class TestTheReadTreeFilesMethod:
+        class TestWhenTheCloneChangesAndAddsFilesBesideItsCommit:
+            @pytest.fixture
+            def tree_files(self, tmp_path: Path) -> dict[PurePosixPath, bytes]:
+                build_repository(tmp_path)
+                commit_build_files(tmp_path)
+                (tmp_path / "src/mostt_model_builder/steps/step.py").write_bytes(CHANGED_CONTENT)
+                (tmp_path / UNTRACKED_FILE).write_text("x = 2\n")
+                git_tree = GitTree(PurePosixPath(tmp_path))
+                return git_tree.read_tree_files(git_tree.find_head_tree(), BUILD_DIRECTORIES)
+
+            def test_should_give_the_committed_files_of_the_code_and_the_images_alone(
+                self, tree_files: dict[PurePosixPath, bytes]
+            ) -> None:
+                assert tree_files == {
+                    PurePosixPath(name): content for name, content in BUILD_FILES.items()
+                }
+
+        class TestWhenTheTreeHoldsALinkAmongTheCode:
+            @pytest.fixture
+            def read_act(self, tmp_path: Path) -> Callable[[], dict[PurePosixPath, bytes]]:
+                build_repository(tmp_path)
+                (tmp_path / "src").mkdir()
+                (tmp_path / "src/linked.py").symlink_to("/etc/passwd")
+                run_git(tmp_path, "add", "src/linked.py")
+                run_git(
+                    tmp_path, "-c", "commit.gpgsign=false", "commit", "--quiet", "--message", "link"
+                )
+                git_tree = GitTree(PurePosixPath(tmp_path))
+                return partial(
+                    git_tree.read_tree_files, git_tree.find_head_tree(), BUILD_DIRECTORIES
+                )
+
+            def test_should_refuse_it_since_no_step_runs_a_link(
+                self, read_act: Callable[[], dict[PurePosixPath, bytes]]
+            ) -> None:
+                with pytest.raises(
+                    GitError,
+                    match=re.escape(
+                        "the tree holds 'src/linked.py', neither a file nor a directory, among "
+                        "the build's code and images"
+                    ),
+                ):
+                    read_act()
+
+        class TestWhenTheTreeIsNotAGitObjectName:
+            @pytest.fixture
+            def read_act(self, tmp_path: Path) -> Callable[[], dict[PurePosixPath, bytes]]:
+                build_repository(tmp_path)
+                return partial(
+                    GitTree(PurePosixPath(tmp_path)).read_tree_files,
+                    MALFORMED_TREE,
+                    BUILD_DIRECTORIES,
+                )
+
+            def test_should_refuse_it_before_git_reads_it_as_a_revision(
+                self, read_act: Callable[[], dict[PurePosixPath, bytes]]
+            ) -> None:
+                with pytest.raises(ProvenanceError, match="is not a git object name"):
+                    read_act()
 
     class TestTheRunGitMethod:
         class TestWhenGitGivesNoAnswerInTime:

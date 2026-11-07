@@ -1,6 +1,8 @@
+import io
 import os
 import subprocess
-from collections.abc import Mapping, Sequence
+import tarfile
+from collections.abc import Collection, Mapping, Sequence
 from pathlib import PurePosixPath
 
 from mostt_model_builder.application.build_images import TarArchive
@@ -38,6 +40,23 @@ def drop_git_variables(environment: Mapping[str, str]) -> dict[str, str]:
         for name, value in environment.items()
         if not name.startswith(GIT_VARIABLE_PREFIX)
     }
+
+
+def read_build_files(archive: bytes, directories: Collection[str]) -> dict[PurePosixPath, bytes]:
+    files: dict[PurePosixPath, bytes] = {}
+    with tarfile.open(fileobj=io.BytesIO(archive), mode="r:") as archive_file:
+        for member in archive_file:
+            path = PurePosixPath(member.name)
+            if path.parts[0] not in directories or member.isdir():
+                continue
+            extracted = archive_file.extractfile(member) if member.isfile() else None
+            if extracted is None:
+                raise GitError(
+                    f"the tree holds {member.name!a}, neither a file nor a directory, among the "
+                    "build's code and images"
+                )
+            files[path] = extracted.read()
+    return files
 
 
 def parse_status(output: bytes) -> tuple[str, ...]:
@@ -99,3 +118,8 @@ class GitTree:
     def archive_tree(self, tree_hash: str) -> TarArchive:
         tree = require_object_name(tree_hash, "the tree to archive")
         return TarArchive(self.run_git(["archive", "--format=tar", tree], ARCHIVE_SETTINGS))
+
+    def read_tree_files(
+        self, tree_hash: str, directories: Collection[str]
+    ) -> dict[PurePosixPath, bytes]:
+        return read_build_files(self.archive_tree(tree_hash), directories)
