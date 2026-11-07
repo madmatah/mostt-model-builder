@@ -13,7 +13,7 @@ Moondream's Parakeet Ultra, a post-training of NVIDIA's Parakeet TDT 0.6B v3, ex
 
 ## Languages
 
-The model transcribes 25 European languages and detects the language by itself: Bulgarian, Croatian, Czech, Danish, Dutch, English, Estonian, Finnish, French, German, Greek, Hungarian, Italian, Latvian, Lithuanian, Maltese, Polish, Portuguese, Romanian, Russian, Slovak, Slovenian, Spanish, Swedish, Ukrainian.
+The model transcribes 25 languages and detects the language by itself: Bulgarian, Croatian, Czech, Danish, Dutch, English, Estonian, Finnish, French, German, Greek, Hungarian, Italian, Latvian, Lithuanian, Maltese, Polish, Portuguese, Romanian, Russian, Slovak, Slovenian, Spanish, Swedish, Ukrainian.
 
 This card measures $measured_languages on [FLEURS](https://huggingface.co/datasets/google/fleurs/tree/$fleurs_revision); the other languages are those NVIDIA's Parakeet TDT 0.6B v3 declares, not measured here.
 
@@ -43,9 +43,9 @@ Moondream's voice activity head, which its own runtime uses to cut long recordin
 
 1. NeMo builds the model from the configuration of Parakeet TDT 0.6B v3 alone, without loading its checkpoint, and loads the weights of Parakeet Ultra into it.
 2. The export writes the ONNX files, then checks the exported encoder against NeMo's on the first 20 utterances of FLEURS fr.
-3. NeMo transcribes FLEURS fr and en in float32 on the CPU: this run of the original model in NeMo is the reference of the comparisons.
+3. NeMo transcribes $measured_languages from FLEURS in float32 on the CPU: this run of the original model in NeMo is the reference of the comparisons.
 4. Transformers reads the weights of Parakeet Ultra as Moondream publishes them, and its encoder and joint are checked against NeMo's, so that the mapping of the weights is checked from a second side.
-5. onnx-asr transcribes FLEURS fr and en with every variant, on each device that its section under Variants gives.
+5. onnx-asr transcribes $measured_languages from FLEURS with every variant, on each device that its section under Variants gives.
 
 Every file was copied out of the container that wrote it, and refused if it began as code, a pickle or an archive, or broke the structure of its format. Every ONNX graph was inspected against the build's rules, on its nodes, its tensors and its quantized products. The verification then measured every run on FLEURS, and held every comparison of two runs and every parity of an export with its reference framework to its rule.
 
