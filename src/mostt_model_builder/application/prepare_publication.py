@@ -56,6 +56,11 @@ class PreparedPublication:
 class CardOutcome(Enum):
     WRITTEN = auto()
     UNCHANGED = auto()
+    REPLACED = auto()
+
+
+class CardFiles(VerificationFiles, Protocol):
+    def remove_file_if_present(self, path: PurePosixPath) -> bool: ...
 
 
 def prepare_publication(
@@ -107,15 +112,13 @@ def read_reviewed_card(
 
 
 def write_model_card(
-    prepared: PreparedPublication, work_root: PurePosixPath, files: VerificationFiles
+    prepared: PreparedPublication, work_root: PurePosixPath, files: CardFiles
 ) -> CardOutcome:
     reviewed_card = read_reviewed_card(prepared, work_root, files)
-    if reviewed_card is None:
-        files.write_new_file(work_root / prepared.card_path, prepared.card, MODEL_CARD_FILE_MODE)
-        return CardOutcome.WRITTEN
-    if reviewed_card != prepared.card:
-        raise PublicationError(
-            f"{prepared.card_path} holds another card than the build's records give: remove it "
-            f"with {CLEAN_COMMAND}, then write it again"
-        )
-    return CardOutcome.UNCHANGED
+    if reviewed_card == prepared.card:
+        return CardOutcome.UNCHANGED
+    card_path = work_root / prepared.card_path
+    if reviewed_card is not None:
+        files.remove_file_if_present(card_path)
+    files.write_new_file(card_path, prepared.card, MODEL_CARD_FILE_MODE)
+    return CardOutcome.WRITTEN if reviewed_card is None else CardOutcome.REPLACED

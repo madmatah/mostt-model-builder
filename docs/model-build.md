@@ -285,7 +285,7 @@ CC BY 4.0 asks a work that adapts licensed material to credit its creator, keep 
 3. it runs the verification again, which writes the same `verification.json` and hashes every file of the candidate, and refuses a build that it does not accept;
 4. it renders the recipe's template from that verification, with the versions of the libraries the recipe names, as the images of its variants' runs pin them, so that the card's "accepted" and "passed its comparisons" hold.
 
-It then writes `runs/<recipe>/<commit>/README.md`, in mode 0444, for the user and the reviewers to read before anything leaves the machine. A card already there that equals the new render is kept, and `card` says it is unchanged; one that differs is refused, naming `clean`, so that the card on disk is always the render of the records beside it. `clean` removes the card, whatever step it cleans, as it removes `verification.json`. `card` publishes nothing.
+It then writes `runs/<recipe>/<commit>/README.md`, in mode 0444, for the user and the reviewers to read before anything leaves the machine. A card already there that equals the new render is kept, and `card` says it is unchanged; one that differs is replaced by it, and `card` says it replaced it, so that the card on disk is always the render of the records beside it, and a change of the card alone needs no `clean`, which removes the outputs of the build's steps as well. A file in the card's place that the host did not write, such as a link or a file of another mode, is refused, naming `clean`. `clean` removes the card, whatever step it cleans, as it removes `verification.json`. `card` publishes nothing.
 
 ### Publishing
 
