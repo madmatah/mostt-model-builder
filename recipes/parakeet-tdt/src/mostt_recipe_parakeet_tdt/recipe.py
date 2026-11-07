@@ -55,7 +55,7 @@ from mostt_recipe_parakeet_tdt.domain.export.pinned_sources import (
     ULTRA_WEIGHTS,
 )
 from mostt_recipe_parakeet_tdt.domain.export.reference_dump import (
-    REFERENCE_STEP_NAME,
+    REFERENCE_DUMP_STEP_NAME,
     REFERENCE_STEPS_FILE_NAME,
     REFERENCE_TENSORS_FILE_NAME,
 )
@@ -97,6 +97,7 @@ TRANSCRIBE_GPU_IMAGE_NAME = "transcribe-gpu"
 TRANSFORMERS_IMAGE_NAME = "transformers-reference"
 DESCRIBE_STEP_NAME = "describe"
 EXPORT_STEP_NAME = "export"
+REFERENCE_STEP_NAME = "reference"
 TRANSCRIBE_STEP_NAME = "transcribe"
 TRANSFORMERS_STEP_NAME = "transformers-reference"
 
@@ -201,11 +202,7 @@ REFERENCE_STEP = RecipeStep(
     image=None,
     entry_module="mostt_recipe_parakeet_tdt.steps.nemo_reference",
     mounts=(*ULTRA_TOKENIZER_AND_WEIGHTS_MOUNTS, NEMO_ARCHIVE_MOUNT, *BENCH_MOUNTS),
-    outputs=(
-        DeclaredOutput(REFERENCE_TENSORS_FILE_NAME, 64 * 2**20),
-        DeclaredOutput(REFERENCE_STEPS_FILE_NAME, 2**20),
-        PEAKS_OUTPUT,
-    ),
+    outputs=(PEAKS_OUTPUT,),
     limits=None,
     devices=(
         DeviceTemplate(
@@ -215,6 +212,19 @@ REFERENCE_STEP = RecipeStep(
             outputs=(RUN_LINES_OUTPUT,),
         ),
     ),
+)
+# The dump builds the model as NeMo's reference does, so it takes the reference's limits.
+REFERENCE_DUMP_STEP = RecipeStep(
+    name=REFERENCE_DUMP_STEP_NAME,
+    image=EXPORT_IMAGE_NAME,
+    entry_module="mostt_recipe_parakeet_tdt.steps.nemo_reference_dump",
+    mounts=(*ULTRA_TOKENIZER_AND_WEIGHTS_MOUNTS, NEMO_ARCHIVE_MOUNT, *PARITY_BENCH_MOUNTS),
+    outputs=(
+        DeclaredOutput(REFERENCE_TENSORS_FILE_NAME, 64 * 2**20),
+        DeclaredOutput(REFERENCE_STEPS_FILE_NAME, 2**20),
+        PEAKS_OUTPUT,
+    ),
+    limits=REFERENCE_CPU_LIMITS,
 )
 # Transformers' check peaked at 5.4 GiB and 79 processes.
 TRANSFORMERS_LIMITS = StepLimits(
@@ -233,8 +243,8 @@ TRANSFORMERS_STEP = RecipeStep(
         *ULTRA_MOUNTS,
         *PROCESSOR_MOUNTS,
         *PARITY_BENCH_MOUNTS,
-        EarlierOutputMount(REFERENCE_STEP_NAME, REFERENCE_TENSORS_FILE_NAME),
-        EarlierOutputMount(REFERENCE_STEP_NAME, REFERENCE_STEPS_FILE_NAME),
+        EarlierOutputMount(REFERENCE_DUMP_STEP_NAME, REFERENCE_TENSORS_FILE_NAME),
+        EarlierOutputMount(REFERENCE_DUMP_STEP_NAME, REFERENCE_STEPS_FILE_NAME),
     ),
     outputs=(
         DeclaredOutput(TRANSFORMERS_ENCODER_PARITY_FILE_NAME, PARITY_REPORT_MAX_SIZE_BYTES),
@@ -391,7 +401,14 @@ RUNS = (
 RECIPE = RecipeContract(
     name=RECIPE_NAME,
     images=(EXPORT_IMAGE, TRANSFORMERS_IMAGE, TRANSCRIBE_CPU_IMAGE, TRANSCRIBE_GPU_IMAGE),
-    steps=(DESCRIBE_STEP, EXPORT_STEP, REFERENCE_STEP, TRANSFORMERS_STEP, TRANSCRIBE_STEP),
+    steps=(
+        DESCRIBE_STEP,
+        EXPORT_STEP,
+        REFERENCE_STEP,
+        REFERENCE_DUMP_STEP,
+        TRANSFORMERS_STEP,
+        TRANSCRIBE_STEP,
+    ),
     candidate=CANDIDATE,
     parities=(ENCODER_PARITY, TRANSFORMERS_ENCODER_PARITY, TRANSFORMERS_JOINT_PARITY),
     runs=RUNS,
@@ -404,6 +421,7 @@ RECIPE = RecipeContract(
         CONVERT_STEP_NAME,
         "inspect",
         REFERENCE_STEP_NAME,
+        REFERENCE_DUMP_STEP_NAME,
         TRANSFORMERS_STEP_NAME,
         TRANSCRIBE_STEP_NAME,
     ),

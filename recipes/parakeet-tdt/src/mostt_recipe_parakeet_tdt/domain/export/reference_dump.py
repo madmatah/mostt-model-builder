@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 from mostt_model_builder.domain.json_documents.json_depth import MAX_JSON_DEPTH, refuse_deep_json
 
-REFERENCE_STEP_NAME = "reference"
+REFERENCE_DUMP_STEP_NAME = "reference-dump"
 REFERENCE_TENSORS_FILE_NAME = "reference.safetensors"
 REFERENCE_STEPS_FILE_NAME = "reference.json"
 UTTERANCES_KEY = "utterances"
