@@ -2,7 +2,9 @@ import re
 from dataclasses import dataclass
 
 FLEURS_REPOSITORY = "google/fleurs"
-BENCH_LANGUAGES = ("fr_fr", "en_us")
+# FLEURS names each language by its code and its region, and some by a script too, such as es_419
+# and cmn_hans_cn: a step checks a language's form, and the host which languages the bench holds.
+LANGUAGE_GRAMMAR = re.compile(r"[a-z]{2,3}(_[a-z0-9]{2,4}){1,2}")
 FIELD_SEPARATOR = "\t"
 LINE_SEPARATOR = "\n"
 # FLEURS's index: the sentence's id, the file of its recording, the raw transcription, the

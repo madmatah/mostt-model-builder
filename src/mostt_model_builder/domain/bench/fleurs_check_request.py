@@ -3,7 +3,7 @@ import re
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 
-from mostt_model_builder.domain.bench.fleurs_index import BENCH_LANGUAGES
+from mostt_model_builder.domain.bench.fleurs_index import LANGUAGE_GRAMMAR
 from mostt_model_builder.domain.json_documents.json_depth import MAX_JSON_DEPTH, refuse_deep_json
 
 FLEURS_CHECK_REQUEST_FILE_NAME = "request.json"
@@ -65,8 +65,10 @@ def parse_bench_files(entry: object) -> BenchFiles:
             f"a language of the request is not an object of {sorted(LANGUAGE_KEYS)}"
         )
     language = entry["language"]
-    if language not in BENCH_LANGUAGES:
-        raise FleursCheckRequestError(f"{language!a} is not a language of the bench")
+    if not isinstance(language, str) or not LANGUAGE_GRAMMAR.fullmatch(language):
+        raise FleursCheckRequestError(
+            f"{language!a} does not name a language as FLEURS does, {LANGUAGE_GRAMMAR.pattern}"
+        )
     return BenchFiles(
         language=language,
         index=parse_container_path(entry["index"]),

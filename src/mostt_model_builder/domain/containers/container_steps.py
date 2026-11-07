@@ -3,15 +3,12 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 
+from mostt_model_builder.domain.bench.bench_languages import BENCH_LANGUAGES
 from mostt_model_builder.domain.bench.fleurs_check_report import (
     FLEURS_CHECK_REPORT_FILE_NAME,
     FLEURS_CHECK_REPORT_MAX_SIZE_BYTES,
 )
-from mostt_model_builder.domain.bench.fleurs_index import (
-    BENCH_LANGUAGES,
-    FLEURS_REPOSITORY,
-    locate_bench_files,
-)
+from mostt_model_builder.domain.bench.fleurs_index import FLEURS_REPOSITORY, locate_bench_files
 from mostt_model_builder.domain.containers.base_images import BASE_PYTHON, ENVIRONMENT_PYTHON
 from mostt_model_builder.domain.containers.container_paths import (
     CANDIDATE_IN_THE_CONTAINER,

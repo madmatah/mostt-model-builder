@@ -3,7 +3,7 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from mostt_model_builder.domain.bench.fleurs_index import BENCH_LANGUAGES
+from mostt_model_builder.domain.bench.fleurs_index import LANGUAGE_GRAMMAR
 from mostt_model_builder.domain.containers.devices import Device
 from mostt_model_builder.domain.json_documents.json_depth import MAX_JSON_DEPTH, refuse_deep_json
 
@@ -84,11 +84,14 @@ def require_languages(field: object) -> tuple[str, ...]:
     if (
         not isinstance(field, list)
         or not field
-        or not all(language in BENCH_LANGUAGES for language in field)
+        or not all(
+            isinstance(language, str) and LANGUAGE_GRAMMAR.fullmatch(language) for language in field
+        )
         or len(set(field)) != len(field)
     ):
         raise ShardRequestError(
-            f"its languages, {field!a}, are not distinct languages of the bench"
+            f"its languages, {field!a}, are not distinct languages named as FLEURS does, "
+            f"{LANGUAGE_GRAMMAR.pattern}"
         )
     return tuple(str(language) for language in field)
 

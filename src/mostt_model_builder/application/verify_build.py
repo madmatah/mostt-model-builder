@@ -37,8 +37,8 @@ from mostt_model_builder.domain.acceptance.verification import (
     render_verification_report,
     verify_transcripts,
 )
+from mostt_model_builder.domain.bench.bench_languages import BENCH_LANGUAGES
 from mostt_model_builder.domain.bench.fleurs_index import (
-    BENCH_LANGUAGES,
     FLEURS_REPOSITORY,
     FleursIndexError,
     locate_bench_files,
