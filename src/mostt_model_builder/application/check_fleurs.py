@@ -9,6 +9,7 @@ from mostt_model_builder.application.run_step import (
     StepRunRequest,
     run_step,
 )
+from mostt_model_builder.domain.bench.bench_languages import BENCH_LANGUAGES
 from mostt_model_builder.domain.bench.fleurs_check_report import (
     FLEURS_CHECK_REPORT_FILE_NAME,
     FleursCheckReport,
@@ -20,11 +21,7 @@ from mostt_model_builder.domain.bench.fleurs_check_request import (
     FleursCheckRequest,
     render_fleurs_check_request,
 )
-from mostt_model_builder.domain.bench.fleurs_index import (
-    BENCH_LANGUAGES,
-    FLEURS_REPOSITORY,
-    locate_bench_files,
-)
+from mostt_model_builder.domain.bench.fleurs_index import FLEURS_REPOSITORY, locate_bench_files
 from mostt_model_builder.domain.containers.container_paths import CONTAINER_ROOT
 from mostt_model_builder.domain.containers.container_steps import FLEURS_CHECK_ROW, SourceReference
 from mostt_model_builder.domain.containers.step_peaks import StepPeaks

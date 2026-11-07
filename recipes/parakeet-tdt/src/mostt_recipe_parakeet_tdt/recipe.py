@@ -1,9 +1,6 @@
 from mostt_model_builder.domain.acceptance.parity_reports import PARITY_REPORT_MAX_SIZE_BYTES
-from mostt_model_builder.domain.bench.fleurs_index import (
-    BENCH_LANGUAGES,
-    FLEURS_REPOSITORY,
-    locate_bench_files,
-)
+from mostt_model_builder.domain.bench.bench_languages import BENCH_LANGUAGES
+from mostt_model_builder.domain.bench.fleurs_index import FLEURS_REPOSITORY, locate_bench_files
 from mostt_model_builder.domain.bench.run_lines import RUN_LINES_FILE_NAME, RUN_LINES_MAX_SIZE_BYTES
 from mostt_model_builder.domain.containers.container_steps import (
     CONVERT_STEP_NAME,

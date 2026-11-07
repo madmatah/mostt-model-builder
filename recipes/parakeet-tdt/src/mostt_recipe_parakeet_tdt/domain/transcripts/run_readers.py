@@ -1,7 +1,7 @@
 from collections.abc import Callable, Mapping
 from functools import partial
 
-from mostt_model_builder.domain.bench.fleurs_index import BENCH_LANGUAGES
+from mostt_model_builder.domain.bench.bench_languages import BENCH_LANGUAGES
 from mostt_model_builder.domain.bench.hypotheses import (
     Hypothesis,
     RunLine,

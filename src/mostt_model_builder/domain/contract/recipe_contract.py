@@ -10,7 +10,7 @@ from mostt_model_builder.domain.acceptance.acceptance import (
     judge_comparison_rule,
 )
 from mostt_model_builder.domain.acceptance.parity_reports import PARITY_NAME_GRAMMAR
-from mostt_model_builder.domain.bench.fleurs_index import BENCH_LANGUAGES
+from mostt_model_builder.domain.bench.bench_languages import BENCH_LANGUAGES
 from mostt_model_builder.domain.bench.hypotheses import RunReader
 from mostt_model_builder.domain.bench.run_lines import RUN_LINES_FILE_NAME
 from mostt_model_builder.domain.containers.base_images import BASE_PYTHON, ENVIRONMENT_PYTHON
