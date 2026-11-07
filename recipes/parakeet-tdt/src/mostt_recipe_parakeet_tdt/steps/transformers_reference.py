@@ -26,7 +26,23 @@ from mostt_model_builder.domain.contract.shard_request import (
 )
 from mostt_model_builder.steps.bound_sources import find_bound_source
 from mostt_model_builder.steps.output_modes import finish_outputs
+from mostt_recipe_parakeet_tdt.domain.cpu_counts import TRANSFORMERS_CPU_COUNT
+from mostt_recipe_parakeet_tdt.domain.export.parity_checks import (
+    TRANSFORMERS_ENCODER_PARITY_FILE_NAME,
+    TRANSFORMERS_ENCODER_PARITY_NAME,
+    TRANSFORMERS_JOINT_PARITY_FILE_NAME,
+    TRANSFORMERS_JOINT_PARITY_NAME,
+)
+from mostt_recipe_parakeet_tdt.domain.export.pinned_sources import (
+    NEMO_REPOSITORY,
+    PROCESSOR_FILES,
+    ULTRA_FILES,
+    ULTRA_REPOSITORY,
+)
 from mostt_recipe_parakeet_tdt.domain.export.reference_dump import (
+    REFERENCE_STEP_NAME,
+    REFERENCE_STEPS_FILE_NAME,
+    REFERENCE_TENSORS_FILE_NAME,
     DumpedUtterance,
     JointStep,
     ReferenceSteps,
@@ -38,18 +54,6 @@ from mostt_recipe_parakeet_tdt.domain.export.reference_dump import (
 )
 from mostt_recipe_parakeet_tdt.domain.transcripts.generated_sequences import (
     read_generated_token_ids,
-)
-from mostt_recipe_parakeet_tdt.recipe import (
-    PROCESSOR_MOUNTS,
-    REFERENCE_STEP_NAME,
-    REFERENCE_STEPS_FILE_NAME,
-    REFERENCE_TENSORS_FILE_NAME,
-    TRANSFORMERS_ENCODER_PARITY_FILE_NAME,
-    TRANSFORMERS_ENCODER_PARITY_NAME,
-    TRANSFORMERS_JOINT_PARITY_FILE_NAME,
-    TRANSFORMERS_JOINT_PARITY_NAME,
-    TRANSFORMERS_LIMITS,
-    ULTRA_MOUNTS,
 )
 from mostt_recipe_parakeet_tdt.steps.fleurs_recordings import Recording, read_shard_recordings
 
@@ -72,8 +76,12 @@ class TransformersReferenceError(Exception):
 
 def link_model_files(model_directory: Path) -> None:
     model_directory.mkdir()
-    for mount in (*ULTRA_MOUNTS, *PROCESSOR_MOUNTS):
-        bound_path = find_bound_source(mount.repository, mount.path)
+    model_files = (
+        *((ULTRA_REPOSITORY, name) for name in ULTRA_FILES),
+        *((NEMO_REPOSITORY, name) for name in PROCESSOR_FILES),
+    )
+    for repository, name in model_files:
+        bound_path = find_bound_source(repository, name)
         (model_directory / bound_path.name).symlink_to(bound_path)
 
 
@@ -217,7 +225,7 @@ def run_transformers_reference(request_directory: Path, output_directory: Path) 
 
 
 def main() -> None:
-    torch.set_num_threads(TRANSFORMERS_LIMITS.cpu_count)
+    torch.set_num_threads(TRANSFORMERS_CPU_COUNT)
     torch.set_grad_enabled(False)
     output_directory = Path(OUTPUT_IN_THE_CONTAINER)
     run_transformers_reference(Path(REQUEST_IN_THE_CONTAINER), output_directory)

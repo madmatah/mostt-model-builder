@@ -1,6 +1,6 @@
 import json
-from collections.abc import Mapping
-from types import MappingProxyType
+import re
+from collections.abc import Sequence
 
 VOCABULARY_FILE_NAME = "vocab.txt"
 CONFIGURATION_FILE_NAME = "config.json"
@@ -16,41 +16,32 @@ ONNX_ASR_CONFIGURATION = json.dumps(
         "max_tokens_per_step": 10,
     }
 ).encode("utf-8")
-QUANTIZATION_BY_VARIANT: Mapping[str, str | None] = MappingProxyType(
-    {
-        "float32": None,
-        "float16": "fp16",
-        "bfloat16": "bf16",
-        "eight-bit-blocks": "int8",
-    }
-)
 ENCODER_FILE_STEM = "encoder-model"
 DECODER_JOINT_FILE_STEM = "decoder_joint-model"
 ONNX_FILE_EXTENSION = ".onnx"
+ENCODER_FILE_NAME = f"{ENCODER_FILE_STEM}{ONNX_FILE_EXTENSION}"
+ENCODER_DATA_FILE_NAME = f"{ENCODER_FILE_NAME}.data"
+DECODER_JOINT_FILE_NAME = f"{DECODER_JOINT_FILE_STEM}{ONNX_FILE_EXTENSION}"
+# onnx-asr names a quantized file by its quantization between its stem and its extension.
+ENCODER_FILE_GRAMMAR = re.compile(
+    re.escape(ENCODER_FILE_STEM)
+    + r"(\.(?P<quantization>[a-z0-9]{1,16}))?"
+    + re.escape(ONNX_FILE_EXTENSION)
+)
 
 
 class CandidateLayoutError(ValueError):
     pass
 
 
-def find_quantization(variant: str) -> str | None:
-    if variant not in QUANTIZATION_BY_VARIANT:
+def read_quantization(file_names: Sequence[str]) -> str | None:
+    matches = [
+        match
+        for match in (ENCODER_FILE_GRAMMAR.fullmatch(name) for name in file_names)
+        if match is not None
+    ]
+    if len(matches) != 1:
         raise CandidateLayoutError(
-            f"the variant {variant!a} is none of {', '.join(QUANTIZATION_BY_VARIANT)}"
+            f"the files {list(file_names)!a} hold {len(matches)} encoders, where onnx-asr loads one"
         )
-    return QUANTIZATION_BY_VARIANT[variant]
-
-
-def name_encoder_file(variant: str) -> str:
-    return name_onnx_file(ENCODER_FILE_STEM, variant)
-
-
-def name_decoder_joint_file(variant: str) -> str:
-    return name_onnx_file(DECODER_JOINT_FILE_STEM, variant)
-
-
-def name_onnx_file(stem: str, variant: str) -> str:
-    quantization = find_quantization(variant)
-    if quantization is None:
-        return f"{stem}{ONNX_FILE_EXTENSION}"
-    return f"{stem}.{quantization}{ONNX_FILE_EXTENSION}"
+    return matches[0].group("quantization")

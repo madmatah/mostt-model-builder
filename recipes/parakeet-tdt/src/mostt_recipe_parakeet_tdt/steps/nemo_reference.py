@@ -18,7 +18,18 @@ from mostt_model_builder.domain.contract.shard_request import (
 )
 from mostt_model_builder.steps.bound_sources import find_bound_source
 from mostt_model_builder.steps.output_modes import finish_outputs
+from mostt_recipe_parakeet_tdt.domain.cpu_counts import REFERENCE_CPU_COUNT
+from mostt_recipe_parakeet_tdt.domain.export.parity_checks import PARITY_LANGUAGE
+from mostt_recipe_parakeet_tdt.domain.export.pinned_sources import (
+    NEMO_ARCHIVE,
+    NEMO_REPOSITORY,
+    ULTRA_REPOSITORY,
+    ULTRA_TOKENIZER,
+    ULTRA_WEIGHTS,
+)
 from mostt_recipe_parakeet_tdt.domain.export.reference_dump import (
+    REFERENCE_STEPS_FILE_NAME,
+    REFERENCE_TENSORS_FILE_NAME,
     DumpedUtterance,
     JointStep,
     ReferenceSteps,
@@ -26,17 +37,6 @@ from mostt_recipe_parakeet_tdt.domain.export.reference_dump import (
     name_features,
     name_joint_logits,
     render_reference_steps,
-)
-from mostt_recipe_parakeet_tdt.recipe import (
-    NEMO_ARCHIVE,
-    NEMO_REPOSITORY,
-    PARITY_LANGUAGE,
-    REFERENCE_CPU_LIMITS,
-    REFERENCE_STEPS_FILE_NAME,
-    REFERENCE_TENSORS_FILE_NAME,
-    ULTRA_REPOSITORY,
-    ULTRA_TOKENIZER,
-    ULTRA_WEIGHTS,
 )
 from mostt_recipe_parakeet_tdt.steps.fleurs_recordings import Recording, read_shard_recordings
 from mostt_recipe_parakeet_tdt.steps.nemo_model import (
@@ -197,7 +197,7 @@ def run_reference(request_directory: Path, output_directory: Path) -> None:
 
 
 def main() -> None:
-    torch.set_num_threads(REFERENCE_CPU_LIMITS.cpu_count)
+    torch.set_num_threads(REFERENCE_CPU_COUNT)
     torch.set_grad_enabled(False)
     output_directory = Path(OUTPUT_IN_THE_CONTAINER)
     run_reference(Path(REQUEST_IN_THE_CONTAINER), output_directory)

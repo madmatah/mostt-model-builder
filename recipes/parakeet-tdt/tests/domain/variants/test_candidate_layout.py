@@ -7,22 +7,37 @@ import pytest
 
 from mostt_recipe_parakeet_tdt.domain.variants.candidate_layout import (
     CONFIGURATION_FILE_NAME,
+    DECODER_JOINT_FILE_NAME,
+    ENCODER_DATA_FILE_NAME,
+    ENCODER_FILE_NAME,
     ONNX_ASR_CONFIGURATION,
     ONNX_ASR_MODEL_TYPE,
     VOCABULARY_FILE_NAME,
     CandidateLayoutError,
+    read_quantization,
+)
+from mostt_recipe_parakeet_tdt.domain.variants.quantizations import (
+    QUANTIZATION_BY_VARIANT,
     find_quantization,
     name_decoder_joint_file,
     name_encoder_file,
 )
 
-LAYOUT_BY_VARIANT = {
-    "float32": (None, "encoder-model.onnx", "decoder_joint-model.onnx"),
-    "float16": ("fp16", "encoder-model.fp16.onnx", "decoder_joint-model.fp16.onnx"),
-    "bfloat16": ("bf16", "encoder-model.bf16.onnx", "decoder_joint-model.bf16.onnx"),
-    "eight-bit-blocks": ("int8", "encoder-model.int8.onnx", "decoder_joint-model.int8.onnx"),
+REFUSED_FILE_LISTS = {
+    "no encoder": (
+        ("decoder_joint-model.onnx", "vocab.txt"),
+        "the files ['decoder_joint-model.onnx', 'vocab.txt'] hold 0 encoders, where onnx-asr "
+        "loads one",
+    ),
+    "two encoders": (
+        ("encoder-model.onnx", "encoder-model.int8.onnx"),
+        "hold 2 encoders, where onnx-asr loads one",
+    ),
+    "an encoder whose quantization holds a dot": (
+        ("encoder-model.int8.extra.onnx",),
+        "hold 0 encoders",
+    ),
 }
-UNKNOWN_VARIANT = "four-bit-blocks"
 EXPECTED_CONFIGURATION = (
     b'{"model_type": "nemo-conformer-tdt", "features_size": 128, "subsampling_factor": 8, '
     b'"max_tokens_per_step": 10}'
@@ -36,92 +51,52 @@ EXPECTED_CONFIGURATION_ENTRIES = {
 
 
 class TestTheCandidateLayout:
-    class TestTheFindQuantizationFunction:
+    class TestTheReadQuantizationFunction:
         @pytest.mark.parametrize(
-            ("variant", "expected_quantization"),
-            [(variant, layout[0]) for variant, layout in LAYOUT_BY_VARIANT.items()],
-            ids=list(LAYOUT_BY_VARIANT),
+            "variant", list(QUANTIZATION_BY_VARIANT), ids=list(QUANTIZATION_BY_VARIANT)
         )
-        class TestWhenTheVariantIsKnown:
+        class TestWhenGivenTheFilesOfAVariant:
             @pytest.fixture
             def quantization(self, variant: str) -> str | None:
-                return find_quantization(variant)
+                return read_quantization(
+                    (
+                        name_encoder_file(variant),
+                        name_decoder_joint_file(variant),
+                        VOCABULARY_FILE_NAME,
+                        CONFIGURATION_FILE_NAME,
+                    )
+                )
 
-            def test_should_give_onnx_asr_suffix_of_the_variant(
-                self, quantization: str | None, expected_quantization: str | None
+            def test_should_read_the_quantization_that_names_its_encoder(
+                self, quantization: str | None, variant: str
             ) -> None:
-                assert quantization == expected_quantization
+                assert quantization == find_quantization(variant)
 
-        class TestWhenTheVariantIsUnknown:
+        class TestWhenGivenTheExportedEncoderWithItsExternalData:
             @pytest.fixture
-            def find_act(self) -> Callable[[], str | None]:
-                return partial(find_quantization, UNKNOWN_VARIANT)
+            def quantization(self) -> str | None:
+                return read_quantization(
+                    (ENCODER_FILE_NAME, ENCODER_DATA_FILE_NAME, DECODER_JOINT_FILE_NAME)
+                )
 
-            def test_should_refuse_it_and_name_the_known_variants(
-                self, find_act: Callable[[], str | None]
-            ) -> None:
-                with pytest.raises(
-                    CandidateLayoutError,
-                    match=re.escape(
-                        "the variant 'four-bit-blocks' is none of float32, float16, bfloat16, "
-                        "eight-bit-blocks"
-                    ),
-                ):
-                    find_act()
+            def test_should_read_no_quantization(self, quantization: str | None) -> None:
+                assert quantization is None
 
-    class TestTheNameEncoderFileFunction:
         @pytest.mark.parametrize(
-            ("variant", "expected_file_name"),
-            [(variant, layout[1]) for variant, layout in LAYOUT_BY_VARIANT.items()],
-            ids=list(LAYOUT_BY_VARIANT),
+            ("file_names", "reason"),
+            list(REFUSED_FILE_LISTS.values()),
+            ids=list(REFUSED_FILE_LISTS.keys()),
         )
-        class TestWhenTheVariantIsKnown:
+        class TestWhenTheFilesHoldOtherThanOneEncoder:
             @pytest.fixture
-            def file_name(self, variant: str) -> str:
-                return name_encoder_file(variant)
+            def read_act(self, file_names: tuple[str, ...]) -> Callable[[], str | None]:
+                return partial(read_quantization, file_names)
 
-            def test_should_name_the_file_onnx_asr_loads_for_the_variant(
-                self, file_name: str, expected_file_name: str
+            def test_should_refuse_them_since_onnx_asr_loads_one(
+                self, read_act: Callable[[], str | None], reason: str
             ) -> None:
-                assert file_name == expected_file_name
-
-        class TestWhenTheVariantIsUnknown:
-            @pytest.fixture
-            def name_act(self) -> Callable[[], str]:
-                return partial(name_encoder_file, UNKNOWN_VARIANT)
-
-            def test_should_refuse_it(self, name_act: Callable[[], str]) -> None:
-                with pytest.raises(
-                    CandidateLayoutError, match=re.escape("the variant 'four-bit-blocks' is none")
-                ):
-                    name_act()
-
-    class TestTheNameDecoderJointFileFunction:
-        @pytest.mark.parametrize(
-            ("variant", "expected_file_name"),
-            [(variant, layout[2]) for variant, layout in LAYOUT_BY_VARIANT.items()],
-            ids=list(LAYOUT_BY_VARIANT),
-        )
-        class TestWhenTheVariantIsKnown:
-            @pytest.fixture
-            def file_name(self, variant: str) -> str:
-                return name_decoder_joint_file(variant)
-
-            def test_should_name_the_file_onnx_asr_loads_for_the_variant(
-                self, file_name: str, expected_file_name: str
-            ) -> None:
-                assert file_name == expected_file_name
-
-        class TestWhenTheVariantIsUnknown:
-            @pytest.fixture
-            def name_act(self) -> Callable[[], str]:
-                return partial(name_decoder_joint_file, UNKNOWN_VARIANT)
-
-            def test_should_refuse_it(self, name_act: Callable[[], str]) -> None:
-                with pytest.raises(
-                    CandidateLayoutError, match=re.escape("the variant 'four-bit-blocks' is none")
-                ):
-                    name_act()
+                with pytest.raises(CandidateLayoutError, match=re.escape(reason)):
+                    read_act()
 
     class TestTheOnnxAsrConfigurationConstant:
         def test_should_hold_exactly_the_bytes_onnx_asr_reads(self) -> None:
@@ -136,6 +111,13 @@ class TestTheCandidateLayout:
             assert json.loads(ONNX_ASR_CONFIGURATION)["model_type"] == ONNX_ASR_MODEL_TYPE
 
     class TestTheFileNameConstants:
+        def test_should_name_the_exported_files_as_onnx_asr_loads_them_in_float32(self) -> None:
+            assert (ENCODER_FILE_NAME, ENCODER_DATA_FILE_NAME, DECODER_JOINT_FILE_NAME) == (
+                "encoder-model.onnx",
+                "encoder-model.onnx.data",
+                "decoder_joint-model.onnx",
+            )
+
         def test_should_name_the_vocabulary_as_onnx_asr_reads_it(self) -> None:
             assert VOCABULARY_FILE_NAME == "vocab.txt"
 

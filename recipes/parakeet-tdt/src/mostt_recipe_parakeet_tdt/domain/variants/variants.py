@@ -7,7 +7,7 @@ from mostt_model_builder.domain.onnx.conversion_request import (
     EightBitBlocksConversion,
     FloatConversion,
 )
-from mostt_recipe_parakeet_tdt.domain.variants.candidate_layout import name_encoder_file
+from mostt_recipe_parakeet_tdt.domain.variants.quantizations import name_encoder_file
 
 FLOAT32_VARIANT = "float32"
 FLOAT16_VARIANT = "float16"

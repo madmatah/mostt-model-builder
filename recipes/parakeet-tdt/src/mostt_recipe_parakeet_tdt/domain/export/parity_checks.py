@@ -1,0 +1,7 @@
+PARITY_LANGUAGE = "fr_fr"
+ENCODER_PARITY_FILE_NAME = "encoder-parity.json"
+ENCODER_PARITY_NAME = "encoder-onnx-against-nemo"
+TRANSFORMERS_ENCODER_PARITY_FILE_NAME = "transformers-encoder-parity.json"
+TRANSFORMERS_ENCODER_PARITY_NAME = "encoder-transformers-against-nemo"
+TRANSFORMERS_JOINT_PARITY_FILE_NAME = "transformers-joint-parity.json"
+TRANSFORMERS_JOINT_PARITY_NAME = "joint-transformers-against-nemo"

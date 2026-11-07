@@ -140,7 +140,7 @@ The one such package is antlr4-python3-runtime 4.9.3, which hydra-core and omega
 
 ## The recipe contract
 
-A recipe gives the core plain data, `RECIPE` in its `recipe.py`, of the type `RecipeContract` of `domain/contract/recipe_contract.py`, and the core judges every field of it when it loads the recipe, before any command runs. The host's command line imports a recipe's `recipe.py` and domain, never its steps, which run only in their containers. A recipe adds what its family needs without changing the core, and cannot widen the confinement the core imposes: `.claude/rules/container-security.md` > Confinement gives each check.
+A recipe gives the core plain data, `RECIPE` in its `recipe.py`, of the type `RecipeContract` of `domain/contract/recipe_contract.py`, and the core judges every field of it when it loads the recipe, before any command runs. The host's command line imports a recipe's `recipe.py` and domain, never its steps, which run only in their containers. A recipe's steps never import its `recipe.py`: the names and numbers that a step shares with the contract, such as its sources, the files it writes, the parity language and its count of CPUs, live in the recipe's domain, which `recipe.py` imports, so that a change of the build's plan changes no step's code. A recipe adds what its family needs without changing the core, and cannot widen the confinement the core imposes: `.claude/rules/container-security.md` > Confinement gives each check.
 
 | Field | Holds |
 |---|---|
@@ -388,7 +388,7 @@ float16 and bfloat16 serve the GPU, whose kernels compute in them, where ONNX Ru
 
 The step refuses a dump whose tensors are not exactly those its steps name. `recipes/parakeet-tdt/src/mostt_recipe_parakeet_tdt/domain/export/reference_dump.py` holds the layout of the dump, which `reference` writes and this step reads.
 
-**`transcribe`** transcribes FLEURS fr and en with onnx-asr 0.12, from the candidate bound read-only, under onnx-asr's names: on the GPU, in the image `transcribe-gpu`, with ONNX Runtime's CUDA provider, reached through CDI's `nvidia.com/gpu=all`; on the CPU, in `transcribe-cpu`. Greedy, one utterance at a time, after 3 warm-ups that are not timed; each shard writes, for each utterance, the pieces of onnx-asr's `with_timestamps()` and the decoding time. `domain/variants/candidate_layout.py` alone maps a variant to onnx-asr's suffix: none for `float32`, `fp16`, `bf16` and `int8` for `float16`, `bfloat16` and `eight-bit-blocks`.
+**`transcribe`** transcribes FLEURS fr and en with onnx-asr 0.12, from the candidate bound read-only, under onnx-asr's names: on the GPU, in the image `transcribe-gpu`, with ONNX Runtime's CUDA provider, reached through CDI's `nvidia.com/gpu=all`; on the CPU, in `transcribe-cpu`. Greedy, one utterance at a time, after 3 warm-ups that are not timed; each shard writes, for each utterance, the pieces of onnx-asr's `with_timestamps()` and the decoding time. `domain/variants/quantizations.py` alone maps a variant to onnx-asr's suffix: none for `float32`, `fp16`, `bf16` and `int8` for `float16`, `bfloat16` and `eight-bit-blocks`; the host names the files of the candidate from it, and the step reads the suffix back from the encoder among the files its request names, `domain/variants/candidate_layout.py`, so that a variant added to the table changes no step's code.
 
 | Run | Step | Device | Variant | Shards | Languages |
 |---|---|---|---|---|---|

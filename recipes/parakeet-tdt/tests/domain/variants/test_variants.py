@@ -5,7 +5,7 @@ import pytest
 from mostt_model_builder.domain.containers.devices import Device
 from mostt_model_builder.domain.formats.file_formats import FileFormat
 from mostt_model_builder.domain.onnx.conversion_request import EightBitBlocksConversion
-from mostt_recipe_parakeet_tdt.domain.variants.candidate_layout import find_quantization
+from mostt_recipe_parakeet_tdt.domain.variants.quantizations import find_quantization
 from mostt_recipe_parakeet_tdt.domain.variants.variants import VARIANTS, Variant, name_run
 from mostt_recipe_parakeet_tdt.recipe import RECIPE
 
