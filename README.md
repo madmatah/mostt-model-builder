@@ -130,7 +130,7 @@ Publication is yours: run these commands yourself, at a terminal, from the commi
     --repository <user>/parakeet-ultra-onnx
 ```
 
-`publish` verifies the build again, checks that the card is the one you read, shows each file with its SHA-256, asks you to type the repository again and then the token, which it does not show, and commits every file at once. It prints the new revision. Read the card and the files on the site, make the repository public, run `check-published`, and revoke the token.
+`publish` verifies the build again, checks that the card is the one you read, shows each file with its SHA-256, asks you to type the repository again and then the token, which it does not show, and commits at once the files that differ from the repository's, leaving in place those the Hub already holds with the same SHA-256. It prints each file as kept or uploaded, then the new revision, or says that the repository already holds the build, in which case nothing is committed. Read the card and the files on the site, make the repository public, run `check-published`, and revoke the token.
 
 Once the files are published, `check-published` downloads each file of the published revision, without a token, into `sources/` in the work directory, and checks it against the build's own bytes and its card; it then prints the revision for mostt to pin:
 

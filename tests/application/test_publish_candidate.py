@@ -37,9 +37,9 @@ from mostt_model_builder.domain.publication.hub_token import HubToken, parse_hub
 from mostt_model_builder.domain.publication.publication_report import (
     PublicationReport,
     PublicationReportError,
+    ReportedFile,
     render_publication_report,
 )
-from mostt_model_builder.domain.publication.publication_request import PublishedFile
 from mostt_model_builder.domain.publication.repository_files import RepositoryFilesError
 
 REPOSITORY = "example-user/parakeet-ultra-onnx"
@@ -84,8 +84,8 @@ class Publication:
     prompt: FakePrompt
 
 
-def describe(name: str, content: bytes) -> PublishedFile:
-    return PublishedFile(name, len(content), hashlib.sha256(content).hexdigest())
+def describe(name: str, content: bytes, is_uploaded: bool = True) -> ReportedFile:
+    return ReportedFile(name, len(content), hashlib.sha256(content).hexdigest(), is_uploaded)
 
 
 def build_reviewed_files() -> tuple[FakeStepFiles, bytes]:
@@ -95,16 +95,18 @@ def build_reviewed_files() -> tuple[FakeStepFiles, bytes]:
     return files, prepared.card
 
 
-def build_report(card: bytes, encoder: bytes = ENCODER) -> PublicationReport:
+def build_report(
+    card: bytes, encoder: bytes = ENCODER, is_uploaded: bool = True, revision: str = REVISION
+) -> PublicationReport:
     return PublicationReport(
         REPOSITORY,
         True,
         PARENT_REVISION,
-        REVISION,
+        revision,
         (
-            describe(ENCODER_NAME, encoder),
-            describe("vocab.txt", VOCABULARY),
-            describe("README.md", card),
+            describe(ENCODER_NAME, encoder, is_uploaded),
+            describe("vocab.txt", VOCABULARY, is_uploaded),
+            describe("README.md", card, is_uploaded),
         ),
     )
 
@@ -121,10 +123,13 @@ def build_engine(files: FakeStepFiles, report: PublicationReport) -> FakeContain
 
 
 def publish_reviewed_card(
-    prompt: FakePrompt | None = None, encoder: bytes = ENCODER
+    prompt: FakePrompt | None = None,
+    encoder: bytes = ENCODER,
+    is_uploaded: bool = True,
+    revision: str = REVISION,
 ) -> Publication:
     files, card = build_reviewed_files()
-    engine = build_engine(files, build_report(card, encoder))
+    engine = build_engine(files, build_report(card, encoder, is_uploaded, revision))
     prompt = prompt or FakePrompt()
     published = publish_candidate(
         CandidatePublication(build_card_request(), REPOSITORY), FakeClone(), prompt, engine, files
@@ -224,6 +229,49 @@ class TestTheCandidatePublication:
 
             def test_should_stop_before_it_asks_for_the_token(self, prompt: FakePrompt) -> None:
                 assert prompt.events[-1] == REPOSITORY_ASKED
+
+        class TestWhenTheHubAlreadyHeldEveryFile:
+            @pytest.fixture
+            def publication(self) -> Publication:
+                return publish_reviewed_card(is_uploaded=False, revision=PARENT_REVISION)
+
+            def test_should_accept_the_report_at_the_parents_revision(
+                self, publication: Publication
+            ) -> None:
+                assert (
+                    publication.published.report.revision,
+                    publication.published.report.has_uploaded,
+                ) == (PARENT_REVISION, False)
+
+        class TestWhenAFileLeftInPlaceHasAnotherSha256:
+            @pytest.fixture
+            def publish_act(self) -> Callable[[], Publication]:
+                return partial(
+                    publish_reviewed_card,
+                    encoder=ENCODER + b"\x00",
+                    is_uploaded=False,
+                    revision=PARENT_REVISION,
+                )
+
+            def test_should_refuse_its_report(self, publish_act: Callable[[], Publication]) -> None:
+                with pytest.raises(
+                    PublicationReportError, match=re.escape("the report gives 5 bytes of SHA-256")
+                ):
+                    publish_act()
+
+        class TestWhenTheReportClaimsAnUploadAtItsParentsRevision:
+            @pytest.fixture
+            def publish_act(self) -> Callable[[], Publication]:
+                return partial(publish_reviewed_card, revision=PARENT_REVISION)
+
+            def test_should_refuse_it(self, publish_act: Callable[[], Publication]) -> None:
+                with pytest.raises(
+                    PublicationReportError,
+                    match=re.escape(
+                        "the report's revision is its parent, though it uploaded files"
+                    ),
+                ):
+                    publish_act()
 
         class TestWhenTheContainerCommittedOtherBytes:
             @pytest.fixture

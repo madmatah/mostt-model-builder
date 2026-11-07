@@ -185,7 +185,11 @@ from mostt_model_builder.domain.onnx.graph_rules import (
 from mostt_model_builder.domain.onnx.inspection_report import InspectionReportError
 from mostt_model_builder.domain.onnx.node_placement import NodePlacementError, PlacementSummary
 from mostt_model_builder.domain.publication.hub_token import HubTokenError
-from mostt_model_builder.domain.publication.publication_report import PublicationReportError
+from mostt_model_builder.domain.publication.publication_report import (
+    PublicationReport,
+    PublicationReportError,
+    ReportedFile,
+)
 from mostt_model_builder.domain.publication.repository_files import RepositoryFilesError
 from mostt_model_builder.domain.sources.source_pins import (
     SourcePin,
@@ -885,17 +889,33 @@ def publish(
         files,
     )
     report = published.report
-    visibility = "private" if report.is_private else "public"
-    print(
-        f"published {report.repository} at the revision {report.revision}, on "
-        f"{report.parent_revision}; the repository is {visibility}",
-        flush=True,
-    )
+    for reported in report.files:
+        print(describe_reported_file(reported), flush=True)
+    print(describe_publication(report), flush=True)
     print(
         "check it once read on the site: ./model-build.sh --work <dir> --recipe "
         f"{recipe.name} {CHECK_PUBLISHED_COMMAND} --repository {report.repository} "
         f"--revision {report.revision}",
         flush=True,
+    )
+
+
+def describe_reported_file(reported: ReportedFile) -> str:
+    if reported.is_uploaded:
+        return f"uploaded {reported.name}, {reported.size_bytes} bytes"
+    return f"kept {reported.name}, already on the Hub with its sha256"
+
+
+def describe_publication(report: PublicationReport) -> str:
+    visibility = "private" if report.is_private else "public"
+    if not report.has_uploaded:
+        return (
+            f"nothing to publish: {report.repository} already holds every file of the build at "
+            f"the revision {report.revision}; the repository is {visibility}"
+        )
+    return (
+        f"published {report.repository} at the revision {report.revision}, on "
+        f"{report.parent_revision}; the repository is {visibility}"
     )
 
 

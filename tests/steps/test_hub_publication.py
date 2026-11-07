@@ -10,12 +10,19 @@ from types import ModuleType, SimpleNamespace
 
 import pytest
 
+from mostt_model_builder.domain.publication.hub_files import (
+    COMPARED_CONTENT_MAX_SIZE_BYTES,
+    HubFile,
+)
 from mostt_model_builder.domain.publication.hub_token import (
     HubToken,
     HubTokenError,
     parse_hub_token,
 )
-from mostt_model_builder.domain.publication.publication_report import PublicationReport
+from mostt_model_builder.domain.publication.publication_report import (
+    PublicationReport,
+    ReportedFile,
+)
 from mostt_model_builder.domain.publication.publication_request import (
     PublicationRequest,
     PublishedFile,
@@ -63,7 +70,9 @@ class Commit:
 
 @dataclass
 class FakeHub:
-    listed_files: list[str]
+    listed_files: list[HubFile]
+    download_directory: Path | None = None
+    stored: dict[str, bytes] = field(default_factory=dict)
     commits: list[Commit] = field(default_factory=list)
     calls: list[str] = field(default_factory=list)
 
@@ -71,9 +80,17 @@ class FakeHub:
         self.calls.append(f"find_head {repository}")
         return RepositoryHead(PARENT_REVISION, is_private=True)
 
-    def list_files(self, repository: str, revision: str) -> list[str]:
-        self.calls.append(f"list_files {repository} {revision}")
+    def list_tree(self, repository: str, revision: str) -> list[HubFile]:
+        self.calls.append(f"list_tree {repository} {revision}")
         return self.listed_files
+
+    def download_file(self, repository: str, revision: str, name: str) -> Path:
+        self.calls.append(f"download_file {repository} {revision} {name}")
+        if self.download_directory is None:
+            raise LookupError("the fake hub was given no directory to download into")
+        path = self.download_directory / name
+        path.write_bytes(self.stored[name])
+        return path
 
     def stage_file(self, local_path: Path, name: str) -> StagedFile:
         content = local_path.read_bytes()
@@ -104,6 +121,23 @@ class Publication:
     hub: FakeHub
 
 
+HUB_ATTRIBUTES = HubFile(".gitattributes", 1519, None)
+
+
+def list_on_the_hub(name: str, content: bytes, is_large: bool) -> HubFile:
+    return HubFile(name, len(content), hashlib.sha256(content).hexdigest() if is_large else None)
+
+
+def report_kept(name: str, content: bytes) -> ReportedFile:
+    published = describe(name, content)
+    return ReportedFile(published.name, published.size_bytes, published.sha256, is_uploaded=False)
+
+
+def report_uploaded(name: str, content: bytes) -> ReportedFile:
+    published = describe(name, content)
+    return ReportedFile(published.name, published.size_bytes, published.sha256, is_uploaded=True)
+
+
 def lay_out(directory: Path, encoder: bytes = ENCODER) -> tuple[Path, Path]:
     candidate_directory = directory / "candidate"
     request_directory = directory / "request"
@@ -132,6 +166,36 @@ class StubOperation:
         self.upload_info = SimpleNamespace(size=len(ENCODER), sha256=ENCODER_SHA256)
 
 
+@dataclass(frozen=True)
+class StubLargeFileStorage:
+    sha256: str
+
+
+@dataclass(frozen=True)
+class StubRepoFile:
+    path: str
+    size: int
+    lfs: StubLargeFileStorage | None
+
+
+@dataclass(frozen=True)
+class StubRepoFolder:
+    path: str
+
+
+LISTED_TREE: list[StubRepoFile | StubRepoFolder] = [
+    StubRepoFile(".gitattributes", 1519, None),
+    StubRepoFile("encoder-model.onnx.data", 2_480_000_000, StubLargeFileStorage("a" * 64)),
+    StubRepoFolder("extra"),
+]
+DOWNLOADED_PATH = "/tmp/huggingface/hub/models--example-user--parakeet-ultra-onnx/README.md"
+
+
+def download_from_the_stub(*, repo_id: str, filename: str, revision: str, token: str) -> str:
+    del repo_id, filename, revision, token
+    return DOWNLOADED_PATH
+
+
 class StubApi:
     def __init__(self, token: str) -> None:
         self.token = token
@@ -141,6 +205,12 @@ class StubApi:
     def model_info(self, repository: str) -> SimpleNamespace:
         self.read_repositories.append(repository)
         return SimpleNamespace(sha=PARENT_REVISION, private=True)
+
+    def list_repo_tree(
+        self, repository: str, *, revision: str, recursive: bool
+    ) -> list[StubRepoFile | StubRepoFolder]:
+        del repository, revision, recursive
+        return LISTED_TREE
 
     def create_commit(
         self,
@@ -159,10 +229,48 @@ class StubApi:
 class StubLibrary(ModuleType):
     HfApi = StubApi
     CommitOperationAdd = StubOperation
+    RepoFile = StubRepoFile
+    RepoFolder = StubRepoFolder
+    hf_hub_download = staticmethod(download_from_the_stub)
 
 
 def build_library_hub() -> HuggingFaceHub:
     return HuggingFaceHub(StubLibrary("huggingface_hub"), parse_hub_token(PLACEHOLDER_TOKEN))
+
+
+@dataclass(frozen=True)
+class DifferentialPublication:
+    report: PublicationReport
+    hub: FakeHub
+
+
+def publish_beside(
+    tmp_path: Path, listed: list[HubFile], stored: dict[str, bytes], encoder: bytes = ENCODER
+) -> DifferentialPublication:
+    candidate_directory, request_directory = lay_out(tmp_path, encoder)
+    download_directory = tmp_path / "downloads"
+    download_directory.mkdir()
+    hub = FakeHub([HUB_ATTRIBUTES, *listed], download_directory, stored)
+    request = PublicationRequest(
+        REPOSITORY,
+        "Publish Weights in ONNX",
+        (describe("encoder-model.onnx", encoder),),
+        describe("README.md", CARD),
+    )
+    return DifferentialPublication(
+        publish(request, hub, candidate_directory, request_directory), hub
+    )
+
+
+def list_downloads(hub: FakeHub) -> list[str]:
+    return [call.split()[-1] for call in hub.calls if call.startswith("download_file")]
+
+
+def list_committed(hub: FakeHub) -> list[list[str]]:
+    return [commit.names for commit in hub.commits]
+
+
+LARGE_ENCODER = ENCODER + bytes(COMPARED_CONTENT_MAX_SIZE_BYTES + 1 - len(ENCODER))
 
 
 class TestTheHubPublication:
@@ -176,6 +284,29 @@ class TestTheHubPublication:
                 self, repository_head: RepositoryHead
             ) -> None:
                 assert repository_head == RepositoryHead(PARENT_REVISION, is_private=True)
+
+    class TestTheHuggingFaceHubListTreeMethod:
+        class TestWhenTheLibraryListsFilesAndAFolder:
+            @pytest.fixture
+            def listed(self) -> list[HubFile]:
+                return build_library_hub().list_tree(REPOSITORY, PARENT_REVISION)
+
+            def test_should_read_each_files_size_and_large_file_storage_sha256_and_skip_folders(
+                self, listed: list[HubFile]
+            ) -> None:
+                assert listed == [
+                    HubFile(".gitattributes", 1519, None),
+                    HubFile("encoder-model.onnx.data", 2_480_000_000, "a" * 64),
+                ]
+
+    class TestTheHuggingFaceHubDownloadFileMethod:
+        class TestWhenTheLibraryDownloadsAFile:
+            @pytest.fixture
+            def downloaded(self) -> Path:
+                return build_library_hub().download_file(REPOSITORY, PARENT_REVISION, "README.md")
+
+            def test_should_give_the_path_the_library_wrote(self, downloaded: Path) -> None:
+                assert downloaded == Path(DOWNLOADED_PATH)
 
     class TestTheHuggingFaceHubStageFileMethod:
         class TestWhenTheLibraryReadsAFile:
@@ -257,7 +388,7 @@ class TestTheHubPublication:
         class TestWhenTheRepositoryHoldsTheHubsFileAlone:
             @pytest.fixture
             def publication(self, tmp_path: Path) -> Publication:
-                hub = FakeHub([".gitattributes"])
+                hub = FakeHub([HUB_ATTRIBUTES])
                 candidate_directory, request_directory = lay_out(tmp_path)
                 return Publication(
                     publish(REQUEST, hub, candidate_directory, request_directory), hub
@@ -280,7 +411,7 @@ class TestTheHubPublication:
             ) -> None:
                 assert publication.hub.calls == [
                     f"find_head {REPOSITORY}",
-                    f"list_files {REPOSITORY} {PARENT_REVISION}",
+                    f"list_tree {REPOSITORY} {PARENT_REVISION}",
                     f"commit {REPOSITORY} {PARENT_REVISION}",
                 ]
 
@@ -288,7 +419,14 @@ class TestTheHubPublication:
                 self, publication: Publication
             ) -> None:
                 assert publication.report == PublicationReport(
-                    REPOSITORY, True, PARENT_REVISION, REVISION, REQUEST.files
+                    REPOSITORY,
+                    True,
+                    PARENT_REVISION,
+                    REVISION,
+                    (
+                        report_uploaded("encoder-model.onnx", ENCODER),
+                        report_uploaded("README.md", CARD),
+                    ),
                 )
 
         class TestWhenTheRepositoryHoldsAnUnexpectedFile:
@@ -298,7 +436,7 @@ class TestTheHubPublication:
                 return partial(
                     publish,
                     REQUEST,
-                    FakeHub([".gitattributes", "model.safetensors"]),
+                    FakeHub([HUB_ATTRIBUTES, HubFile("model.safetensors", 7, None)]),
                     candidate_directory,
                     request_directory,
                 )
@@ -314,7 +452,7 @@ class TestTheHubPublication:
                 return partial(
                     publish,
                     REQUEST,
-                    FakeHub([".gitattributes"]),
+                    FakeHub([HUB_ATTRIBUTES]),
                     candidate_directory,
                     request_directory,
                 )
@@ -336,7 +474,7 @@ class TestTheHubPublication:
         class TestWhenAFileReadsOtherBytesAndTheRefusalIsCaught:
             @pytest.fixture
             def hub(self, tmp_path: Path) -> FakeHub:
-                hub = FakeHub([".gitattributes"])
+                hub = FakeHub([HUB_ATTRIBUTES])
                 candidate_directory, request_directory = lay_out(tmp_path, ENCODER + b"\x00")
                 with contextlib.suppress(PublicationStepError):
                     publish(REQUEST, hub, candidate_directory, request_directory)
@@ -344,3 +482,123 @@ class TestTheHubPublication:
 
             def test_should_commit_nothing(self, hub: FakeHub) -> None:
                 assert hub.commits == []
+
+        class TestWhenTheHubListsTheEncoderWithTheSameLargeFileStorageSha256:
+            @pytest.fixture
+            def publication(self, tmp_path: Path) -> DifferentialPublication:
+                return publish_beside(
+                    tmp_path, [list_on_the_hub("encoder-model.onnx", ENCODER, is_large=True)], {}
+                )
+
+            def test_should_commit_the_missing_card_alone(
+                self, publication: DifferentialPublication
+            ) -> None:
+                assert list_committed(publication.hub) == [["README.md"]]
+
+            def test_should_report_the_encoder_left_in_place_with_what_the_hub_listed(
+                self, publication: DifferentialPublication
+            ) -> None:
+                assert publication.report.files == (
+                    report_kept("encoder-model.onnx", ENCODER),
+                    report_uploaded("README.md", CARD),
+                )
+
+            def test_should_download_nothing(self, publication: DifferentialPublication) -> None:
+                assert list_downloads(publication.hub) == []
+
+        class TestWhenTheHubListsTheEncoderWithAnotherLargeFileStorageSha256:
+            @pytest.fixture
+            def publication(self, tmp_path: Path) -> DifferentialPublication:
+                listed = HubFile("encoder-model.onnx", len(ENCODER), "f" * 64)
+                return publish_beside(tmp_path, [listed], {})
+
+            def test_should_upload_it_again(self, publication: DifferentialPublication) -> None:
+                assert list_committed(publication.hub) == [["encoder-model.onnx", "README.md"]]
+
+        class TestWhenASmallFileWithoutAHashOnTheHubHoldsTheSameBytes:
+            @pytest.fixture
+            def publication(self, tmp_path: Path) -> DifferentialPublication:
+                return publish_beside(
+                    tmp_path,
+                    [
+                        list_on_the_hub("encoder-model.onnx", ENCODER, is_large=True),
+                        list_on_the_hub("README.md", CARD, is_large=False),
+                    ],
+                    {"README.md": CARD},
+                )
+
+            def test_should_download_it_to_compare_its_sha256(
+                self, publication: DifferentialPublication
+            ) -> None:
+                assert list_downloads(publication.hub) == ["README.md"]
+
+            def test_should_commit_nothing_since_nothing_differs(
+                self, publication: DifferentialPublication
+            ) -> None:
+                assert publication.hub.commits == []
+
+            def test_should_report_the_head_as_the_revision(
+                self, publication: DifferentialPublication
+            ) -> None:
+                assert (publication.report.revision, publication.report.has_uploaded) == (
+                    PARENT_REVISION,
+                    False,
+                )
+
+        class TestWhenASmallFileWithoutAHashOnTheHubHoldsOtherBytesOfTheSameSize:
+            @pytest.fixture
+            def publication(self, tmp_path: Path) -> DifferentialPublication:
+                other_card = CARD.replace(b"4.0", b"4.1")
+                return publish_beside(
+                    tmp_path,
+                    [
+                        list_on_the_hub("encoder-model.onnx", ENCODER, is_large=True),
+                        list_on_the_hub("README.md", other_card, is_large=False),
+                    ],
+                    {"README.md": other_card},
+                )
+
+            def test_should_upload_it(self, publication: DifferentialPublication) -> None:
+                assert list_committed(publication.hub) == [["README.md"]]
+
+        @pytest.mark.parametrize(
+            "downloaded_card",
+            [
+                pytest.param(CARD + b"\n", id="one byte longer"),
+                pytest.param(CARD[:-1], id="one byte shorter"),
+            ],
+        )
+        class TestWhenTheDownloadOfASmallFileHoldsAnotherSizeThanTheHubListed:
+            @pytest.fixture
+            def publication(
+                self, tmp_path: Path, downloaded_card: bytes
+            ) -> DifferentialPublication:
+                return publish_beside(
+                    tmp_path,
+                    [
+                        list_on_the_hub("encoder-model.onnx", ENCODER, is_large=True),
+                        list_on_the_hub("README.md", CARD, is_large=False),
+                    ],
+                    {"README.md": downloaded_card},
+                )
+
+            def test_should_upload_it(self, publication: DifferentialPublication) -> None:
+                assert list_committed(publication.hub) == [["README.md"]]
+
+        class TestWhenALargeFileHasNoHashOnTheHub:
+            @pytest.fixture
+            def publication(self, tmp_path: Path) -> DifferentialPublication:
+                return publish_beside(
+                    tmp_path,
+                    [list_on_the_hub("encoder-model.onnx", LARGE_ENCODER, is_large=False)],
+                    {},
+                    encoder=LARGE_ENCODER,
+                )
+
+            def test_should_stage_it_without_downloading_it(
+                self, publication: DifferentialPublication
+            ) -> None:
+                assert (list_downloads(publication.hub), list_committed(publication.hub)) == (
+                    [],
+                    [["encoder-model.onnx", "README.md"]],
+                )
