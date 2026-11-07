@@ -180,8 +180,12 @@ from mostt_model_builder.domain.lock.lock_check import (
     LockError,
 )
 from mostt_model_builder.domain.lock.lock_freshness import LockFreshnessError
-from mostt_model_builder.domain.onnx.conversion_report import ConversionReportError
-from mostt_model_builder.domain.onnx.conversion_request import ConversionRequestError
+from mostt_model_builder.domain.onnx.conversion_report import ConversionReportError, ConvertedFile
+from mostt_model_builder.domain.onnx.conversion_request import (
+    Conversion,
+    ConversionRequestError,
+    FloatConversion,
+)
 from mostt_model_builder.domain.onnx.graph_rules import (
     GraphRuleError,
     count_eight_bit_block_products,
@@ -695,14 +699,28 @@ def describe_conversion(row: StepRow, outcome: ConversionOutcome) -> list[str]:
             f"{converted.kind.value}: {converted.node_count} nodes, "
             f"{converted.quantized_product_count} products in 8-bit blocks, "
             f"{', '.join(converted.kept_float32_operators) or 'no operator'} kept in float32, "
+            f"{describe_kept_computation(converted, conversion)}, "
             f"{converted.below_min_positive_count} values raised to the minimum and "
             f"{converted.above_max_finite_count} lowered to the maximum in "
             f"{converted.clamped_initializer_count} initializers, "
             f"{converted.realigned_cast_count} Cast nodes realigned"
-            for converted in outcome.report.files
+            for converted, conversion in zip(
+                outcome.report.files, outcome.request.conversions, strict=True
+            )
         ),
         f"  {describe_peaks(outcome.outputs.peaks)}",
     ]
+
+
+def describe_kept_computation(converted: ConvertedFile, conversion: Conversion) -> str:
+    if not isinstance(conversion, FloatConversion) or not conversion.kept_inputs:
+        return "no computation kept in float32"
+    possessive = "its" if len(conversion.kept_inputs) == 1 else "their"
+    kept_count = converted.kept_from_inputs_node_count
+    return (
+        f"{kept_count} {'node' if kept_count == 1 else 'nodes'} from "
+        f"{' and '.join(conversion.kept_inputs)} to {possessive} casts to integers kept in float32"
+    )
 
 
 def describe_build_event(event: BuildEvent) -> list[str]:
