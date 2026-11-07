@@ -176,9 +176,9 @@ REFUSED_TOKEN_ID_LINES: dict[str, tuple[bytes, type[ValueError], str]] = {
         "the utterance 1.wav of fr_fr has two hypotheses",
     ),
     "a language outside the bench": (
-        render_lines(build_token_id_record(language="de_de")),
+        render_lines(build_token_id_record(language="it_it")),
         HypothesisError,
-        "is in 'de_de', not a language of its run",
+        "is in 'it_it', not a language of its run",
     ),
 }
 REFUSED_ONNX_ASR_LINES: dict[str, tuple[bytes, type[ValueError], str]] = {

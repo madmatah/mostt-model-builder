@@ -15,17 +15,21 @@ FLOAT32_GPU_RUN_NAME = name_run(FLOAT32_VARIANT, Device.GPU)
 EQUIVALENCE_BOUND_POINTS = 0.10
 # NeMo and onnx-asr, both in float32 on the CPU, gave identical token ids on every utterance of
 # FLEURS fr and en in the trial build: any difference is a fault of the export or of its patch.
+# (hypothesis: the ids stay identical on es_419, pt_br and de_de; the first build on the five
+# languages settles it)
 SAME_DEVICE_EQUIVALENCE = Equivalence(
     min_identical_ratio=1.0, max_difference_points=EQUIVALENCE_BOUND_POINTS
 )
 # CUDA's kernels sum in another order than the CPU's, and the trial build found 99.4 % of identical
-# token ids in fr and 99.7 % in en between the two devices.
+# token ids in fr and 99.7 % in en between the two devices. (hypothesis: at least 99 % stay
+# identical on es_419, pt_br and de_de; the first build on the five languages settles it)
 CROSS_DEVICE_EQUIVALENCE = Equivalence(
     min_identical_ratio=0.99, max_difference_points=EQUIVALENCE_BOUND_POINTS
 )
 # A variant may lose a fifth of a point at most against float32 on its device: the trial build
-# measured every one of them within 0.1 point, and the interval of FLEURS's test set is a few tenths
-# wide.
+# measured every one of them within 0.1 point on fr and en, and the interval of FLEURS's test set
+# is a few tenths wide. (hypothesis: the bound holds on es_419, pt_br and de_de; the first build on
+# the five languages settles it)
 VARIANT_NON_INFERIORITY = NonInferiority(max_upper_bound_points=0.20)
 
 # Transformers reads its features with its own extractor, apart from NeMo's, so its transcripts are

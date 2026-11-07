@@ -187,7 +187,7 @@ EIGHT_BIT_BLOCKS_RATES = (
     "|---|---|---|---|\n"
     "| French (fr_fr) | 6.00 % | +0.05 points | -0.30 points |\n"
 )
-GERMAN_RUN_MEASURE = RunMeasure("float32-cpu", "de_de", 2, 100, 5, 7, 2, 1000.0)
+ITALIAN_RUN_MEASURE = RunMeasure("float32-cpu", "it_it", 2, 100, 5, 7, 2, 1000.0)
 THREE_WORDS = ("French", "English", "German")
 
 
@@ -225,10 +225,10 @@ REFUSED_INPUTS = {
     "a measured language without a name": (
         replace(
             INPUTS,
-            verification=replace(VERIFICATION, runs=(*VERIFICATION.runs, GERMAN_RUN_MEASURE)),
+            verification=replace(VERIFICATION, runs=(*VERIFICATION.runs, ITALIAN_RUN_MEASURE)),
         ),
         CardError,
-        "the card has no name for the language de_de, which a run measured",
+        "the card has no name for the language it_it, which a run measured",
     ),
     "the table of the variants, which the card no longer gives": (
         replace(INPUTS, template=f"{TEMPLATE}$variant_table\n"),

@@ -15,7 +15,7 @@ Moondream's Parakeet Ultra, a post-training of NVIDIA's Parakeet TDT 0.6B v3, ex
 
 The model transcribes 25 languages and detects the language by itself: Bulgarian, Croatian, Czech, Danish, Dutch, English, Estonian, Finnish, French, German, Greek, Hungarian, Italian, Latvian, Lithuanian, Maltese, Polish, Portuguese, Romanian, Russian, Slovak, Slovenian, Spanish, Swedish, Ukrainian.
 
-This card measures French and English on [FLEURS](https://huggingface.co/datasets/google/fleurs/tree/70bb2e84b976b7e960aa89f1c648e09c59f894dd); the other languages are those NVIDIA's Parakeet TDT 0.6B v3 declares, not measured here.
+This card measures English, Latin American Spanish, French, Brazilian Portuguese and German on [FLEURS](https://huggingface.co/datasets/google/fleurs/tree/70bb2e84b976b7e960aa89f1c648e09c59f894dd); the other languages are those NVIDIA's Parakeet TDT 0.6B v3 declares, not measured here.
 
 ## Variants
 
@@ -30,8 +30,11 @@ The reference: the exported model, unconverted, against which the other variants
 
 | Language | WER | Against the original model in NeMo, CPU |
 |---|---|---|
-| French (fr_fr) | 4.50 % | -0.01 points |
 | English (en_us) | 4.50 % | -0.01 points |
+| Latin American Spanish (es_419) | 4.50 % | -0.01 points |
+| French (fr_fr) | 4.50 % | -0.01 points |
+| Brazilian Portuguese (pt_br) | 4.50 % | -0.01 points |
+| German (de_de) | 4.50 % | -0.01 points |
 
 Files:
 
@@ -50,8 +53,11 @@ The encoder converted to float16, for the GPU.
 
 | Language | WER | Against float32, GPU |
 |---|---|---|
-| French (fr_fr) | 4.50 % | +0.01 points |
 | English (en_us) | 4.50 % | +0.01 points |
+| Latin American Spanish (es_419) | 4.50 % | +0.01 points |
+| French (fr_fr) | 4.50 % | +0.01 points |
+| Brazilian Portuguese (pt_br) | 4.50 % | +0.01 points |
+| German (de_de) | 4.50 % | +0.01 points |
 
 Files:
 
@@ -69,8 +75,11 @@ The encoder converted to bfloat16, with Pad, Tile and Floor kept in float32, for
 
 | Language | WER | Against float32, GPU |
 |---|---|---|
-| French (fr_fr) | 4.50 % | +0.01 points |
 | English (en_us) | 4.50 % | +0.01 points |
+| Latin American Spanish (es_419) | 4.50 % | +0.01 points |
+| French (fr_fr) | 4.50 % | +0.01 points |
+| Brazilian Portuguese (pt_br) | 4.50 % | +0.01 points |
+| German (de_de) | 4.50 % | +0.01 points |
 
 Files:
 
@@ -88,8 +97,11 @@ Recommended on the CPU: the smallest variant. The encoder is in 8-bit blocks of 
 
 | Language | WER | Against float32, CPU |
 |---|---|---|
-| French (fr_fr) | 4.50 % | +0.01 points |
 | English (en_us) | 4.50 % | +0.01 points |
+| Latin American Spanish (es_419) | 4.50 % | +0.01 points |
+| French (fr_fr) | 4.50 % | +0.01 points |
+| Brazilian Portuguese (pt_br) | 4.50 % | +0.01 points |
+| German (de_de) | 4.50 % | +0.01 points |
 
 Files:
 
@@ -102,7 +114,7 @@ The rates and comparisons are measured as [How the rates were measured](#how-the
 
 ## How the rates were measured
 
-The word error rate (WER) counts the words a transcript gets wrong (substituted, missing or added) against FLEURS's reference, over the number of words in the reference. Each variant transcribed the test sets of FLEURS (350 utterances in French, 350 in English) greedily, one utterance at a time, on each device it runs on, with onnx-asr 0.12.0 and onnxruntime 1.31.0 on the CPU, and with onnx-asr 0.12.0 and onnxruntime-gpu 1.31.0 on the GPU. The rate shown is the one measured on the CPU, or on the GPU for the variants that only run there: the runtime and the hardware, not the files, make the two differ slightly.
+The word error rate (WER) counts the words a transcript gets wrong (substituted, missing or added) against FLEURS's reference, over the number of words in the reference. Each variant transcribed the test sets of FLEURS (350 utterances in English, 350 in Latin American Spanish, 350 in French, 350 in Brazilian Portuguese, 350 in German) greedily, one utterance at a time, on each device it runs on, with onnx-asr 0.12.0 and onnxruntime 1.31.0 on the CPU, and with onnx-asr 0.12.0 and onnxruntime-gpu 1.31.0 on the GPU. The rate shown is the one measured on the CPU, or on the GPU for the variants that only run there: the runtime and the hardware, not the files, make the two differ slightly.
 
 Before counting errors, both the transcript and FLEURS's reference are normalized the same way: Unicode NFKC, lowercase, punctuation removed, typographic apostrophes read as plain ones.
 
@@ -118,9 +130,9 @@ Moondream's voice activity head, which its own runtime uses to cut long recordin
 
 1. NeMo builds the model from the configuration of Parakeet TDT 0.6B v3 alone, without loading its checkpoint, and loads the weights of Parakeet Ultra into it.
 2. The export writes the ONNX files, then checks the exported encoder against NeMo's on the first 20 utterances of FLEURS fr.
-3. NeMo transcribes French and English from FLEURS in float32 on the CPU: this run of the original model in NeMo is the reference of the comparisons.
+3. NeMo transcribes English, Latin American Spanish, French, Brazilian Portuguese and German from FLEURS in float32 on the CPU: this run of the original model in NeMo is the reference of the comparisons.
 4. Transformers reads the weights of Parakeet Ultra as Moondream publishes them, and its encoder and joint are checked against NeMo's, so that the mapping of the weights is checked from a second side.
-5. onnx-asr transcribes French and English from FLEURS with every variant, on each device that its section under Variants gives.
+5. onnx-asr transcribes English, Latin American Spanish, French, Brazilian Portuguese and German from FLEURS with every variant, on each device that its section under Variants gives.
 
 Every file was copied out of the container that wrote it, and refused if it began as code, a pickle or an archive, or broke the structure of its format. Every ONNX graph was inspected against the build's rules, on its nodes, its tensors and its quantized products. The verification then measured every run on FLEURS, and held every comparison of two runs and every parity of an export with its reference framework to its rule.
 

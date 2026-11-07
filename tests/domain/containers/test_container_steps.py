@@ -6,6 +6,8 @@ from pathlib import PurePosixPath
 
 import pytest
 
+from mostt_model_builder.domain.bench.bench_languages import BENCH_LANGUAGES
+from mostt_model_builder.domain.bench.fleurs_index import locate_bench_files
 from mostt_model_builder.domain.containers.base_images import BASE_PYTHON, ENVIRONMENT_PYTHON
 from mostt_model_builder.domain.containers.container_paths import (
     CANDIDATE_IN_THE_CONTAINER,
@@ -72,7 +74,8 @@ PLACEMENT = StepPlacement(
     log_path=PurePosixPath("runs/core/c0ffee/logs/step.log"),
     candidate_directory=PurePosixPath("runs/core/c0ffee/candidate"),
 )
-BENCH_FILE_COUNT = 4
+BENCH_FILES = sorted(path for language in BENCH_LANGUAGES for path in locate_bench_files(language))
+BENCH_FILE_COUNT = len(BENCH_FILES)
 REVISION = "70bb2e84b976b7e960aa89f1c648e09c59f894dd"
 
 
@@ -686,19 +689,17 @@ class TestTheContainerSteps:
                     or mount.container_path != PurePosixPath("/") / mount.host_path
                 ] == []
 
-            def test_should_bind_the_index_and_the_audio_of_both_languages(
+            def test_should_bind_the_index_and_the_audio_of_every_language_of_the_bench(
                 self, container_run: ContainerRun
             ) -> None:
-                assert sorted(
-                    str(mount.host_path).split("/", 4)[4]
-                    for mount in container_run.mounts
-                    if mount.is_file
-                ) == [
-                    "data/en_us/audio/test.tar.gz",
-                    "data/en_us/test.tsv",
-                    "data/fr_fr/audio/test.tar.gz",
-                    "data/fr_fr/test.tsv",
-                ]
+                assert (
+                    sorted(
+                        str(mount.host_path).split("/", 4)[4]
+                        for mount in container_run.mounts
+                        if mount.is_file
+                    )
+                    == BENCH_FILES
+                )
 
             def test_should_bind_its_request_read_only(self, container_run: ContainerRun) -> None:
                 assert (

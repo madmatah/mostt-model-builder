@@ -24,6 +24,7 @@ from mostt_model_builder.application.resolve_build import (
     resolve_build,
 )
 from mostt_model_builder.application.run_step import HostIdentity, ImageFacts
+from mostt_model_builder.domain.bench.bench_languages import BENCH_LANGUAGES
 from mostt_model_builder.domain.bench.fleurs_check_report import (
     FLEURS_CHECK_REPORT_FILE_NAME,
     FleursCheckReport,
@@ -109,7 +110,7 @@ RECIPE_NAME = "family"
 HOST = HostIdentity(USER_ID, GROUP_ID, 20, HostAccounts(False, (), ()))
 FLEURS_REVISION = "70bb2e84b976b7e960aa89f1c648e09c59f894dd"
 WEIGHTS_REVISION = "73175eb7aeb0d82f1e2a6b53b3aabc10a90bcd0b"
-LANGUAGES = ("fr_fr", "en_us")
+LANGUAGES_OF_THE_RUNS = ("fr_fr", "en_us")
 LIMITS = StepLimits(memory_mib=1024, process_count=64, cpu_count=2, temporary_directory_mib=64)
 PEAKS = render_step_peaks(StepPeaks(memory_peak_bytes=64 * 2**20, process_count_peak=6))
 GPU_HARDWARE = HardwareFacts(("AMD Ryzen 9 7950X 16-Core Processor",), ("RTX 4090",), "550.54.14")
@@ -141,7 +142,9 @@ def build_pin(repository: str, revision: str, path: str, content: bytes) -> Sour
 
 
 BENCH_CONTENTS = {
-    path: f"{path}\n".encode() for language in LANGUAGES for path in locate_bench_files(language)
+    path: f"{path}\n".encode()
+    for language in BENCH_LANGUAGES
+    for path in locate_bench_files(language)
 }
 BENCH_PINS = tuple(
     build_pin(FLEURS_REPOSITORY, FLEURS_REVISION, path, content)
@@ -202,7 +205,10 @@ INSPECTION_REPORT = InspectionReport(
     )
 )
 FLEURS_REPORT = FleursCheckReport(
-    tuple(LanguageCheck(language, (RecordingDuration("1.wav", 16000),)) for language in LANGUAGES)
+    tuple(
+        LanguageCheck(language, (RecordingDuration("1.wav", 16000),))
+        for language in BENCH_LANGUAGES
+    )
 )
 GPU_PLACEMENT = PlacementSummary((PlacedNodes("CUDAExecutionProvider", "MatMul", ("float32",), 4),))
 TREE_FILES = {
@@ -263,12 +269,17 @@ def build_recipe(shape: RecipeShape = DEFAULT_SHAPE) -> JudgedRecipe:
             "float32-cpu",
             shape.cpu_variant,
             Device.CPU,
-            LANGUAGES,
+            LANGUAGES_OF_THE_RUNS,
             shape.cpu_shard_count,
             (ENCODER_NAME, VOCABULARY_NAME),
         ),
         ShardedRun(
-            "float32-gpu", "float32", Device.GPU, LANGUAGES, 1, (ENCODER_NAME, VOCABULARY_NAME)
+            "float32-gpu",
+            "float32",
+            Device.GPU,
+            LANGUAGES_OF_THE_RUNS,
+            1,
+            (ENCODER_NAME, VOCABULARY_NAME),
         ),
     )
     derived_rows = derive_rows(TEMPLATE, sharded_runs)
