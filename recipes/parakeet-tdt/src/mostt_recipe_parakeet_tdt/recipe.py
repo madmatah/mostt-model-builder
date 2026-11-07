@@ -10,6 +10,7 @@ from mostt_model_builder.domain.containers.container_steps import (
 )
 from mostt_model_builder.domain.containers.devices import Device
 from mostt_model_builder.domain.contract.recipe_contract import (
+    BENCH_MOUNT,
     CANDIDATE_MOUNT,
     REFERENCE_VARIANT,
     CandidateFile,
@@ -181,11 +182,6 @@ ENCODER_PARITY = Parity(
     output=ENCODER_PARITY_FILE_NAME,
     absolute_difference_tolerance=5e-5,
 )
-BENCH_MOUNTS = tuple(
-    SourceMount(FLEURS_REPOSITORY, path)
-    for language in BENCH_LANGUAGES
-    for path in locate_bench_files(language)
-)
 RUN_LINES_OUTPUT = DeclaredOutput(RUN_LINES_FILE_NAME, RUN_LINES_MAX_SIZE_BYTES)
 # NeMo's reference peaked at 6.2 GiB, its /scratch included, and 58 processes.
 REFERENCE_CPU_LIMITS = StepLimits(
@@ -201,7 +197,7 @@ REFERENCE_STEP = RecipeStep(
     name=REFERENCE_STEP_NAME,
     image=None,
     entry_module="mostt_recipe_parakeet_tdt.steps.nemo_reference",
-    mounts=(*ULTRA_TOKENIZER_AND_WEIGHTS_MOUNTS, NEMO_ARCHIVE_MOUNT, *BENCH_MOUNTS),
+    mounts=(*ULTRA_TOKENIZER_AND_WEIGHTS_MOUNTS, NEMO_ARCHIVE_MOUNT, BENCH_MOUNT),
     outputs=(PEAKS_OUTPUT,),
     limits=None,
     devices=(
@@ -242,7 +238,7 @@ TRANSFORMERS_STEP = RecipeStep(
     mounts=(
         *ULTRA_MOUNTS,
         *PROCESSOR_MOUNTS,
-        *PARITY_BENCH_MOUNTS,
+        BENCH_MOUNT,
         EarlierOutputMount(REFERENCE_DUMP_STEP_NAME, REFERENCE_TENSORS_FILE_NAME),
         EarlierOutputMount(REFERENCE_DUMP_STEP_NAME, REFERENCE_STEPS_FILE_NAME),
     ),
@@ -296,7 +292,7 @@ TRANSCRIBE_STEP = RecipeStep(
     name=TRANSCRIBE_STEP_NAME,
     image=None,
     entry_module="mostt_recipe_parakeet_tdt.steps.onnx_asr_transcription",
-    mounts=(CANDIDATE_MOUNT, *BENCH_MOUNTS),
+    mounts=(CANDIDATE_MOUNT, BENCH_MOUNT),
     outputs=(PEAKS_OUTPUT,),
     limits=None,
     devices=(

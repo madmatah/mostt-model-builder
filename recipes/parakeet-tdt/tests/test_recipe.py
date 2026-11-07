@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from mostt_model_builder.domain.contract.recipe_contract import (
+    BENCH_MOUNT,
     CANDIDATE_MOUNT,
     EarlierOutputMount,
     HostContentOrigin,
@@ -70,17 +71,11 @@ EXPORT_OUTPUTS = [
     "encoder-parity.json",
     "peaks.json",
 ]
-BENCH_FILES = {
-    SourceMount(FLEURS_REPOSITORY, "data/fr_fr/test.tsv"),
-    SourceMount(FLEURS_REPOSITORY, "data/fr_fr/audio/test.tar.gz"),
-    SourceMount(FLEURS_REPOSITORY, "data/en_us/test.tsv"),
-    SourceMount(FLEURS_REPOSITORY, "data/en_us/audio/test.tar.gz"),
-}
 REFERENCE_FILES = {
     SourceMount(ULTRA_REPOSITORY, "tokenizer.json"),
     SourceMount(ULTRA_REPOSITORY, "model.safetensors"),
     SourceMount(NEMO_REPOSITORY, "parakeet-tdt-0.6b-v3.nemo"),
-    *BENCH_FILES,
+    BENCH_MOUNT,
 }
 DUMPED_FILES = {
     SourceMount(ULTRA_REPOSITORY, "tokenizer.json"),
@@ -97,8 +92,7 @@ TRANSFORMERS_FILES = {
     SourceMount(NEMO_REPOSITORY, "processor_config.json"),
     SourceMount(NEMO_REPOSITORY, "tokenizer_config.json"),
     SourceMount(NEMO_REPOSITORY, "generation_config.json"),
-    SourceMount(FLEURS_REPOSITORY, "data/fr_fr/test.tsv"),
-    SourceMount(FLEURS_REPOSITORY, "data/fr_fr/audio/test.tar.gz"),
+    BENCH_MOUNT,
     EarlierOutputMount("reference-dump", "reference.safetensors"),
     EarlierOutputMount("reference-dump", "reference.json"),
 }
@@ -324,7 +318,7 @@ class TestTheParakeetTdtRecipe:
             ] == PARITIES
 
     class TestItsReferenceStep:
-        def test_should_bind_moondreams_tokenizer_and_weights_the_nemo_and_both_benches_alone(
+        def test_should_bind_moondreams_tokenizer_and_weights_the_nemo_and_its_rows_bench_alone(
             self,
         ) -> None:
             assert set(REFERENCE_STEP.mounts) == REFERENCE_FILES
@@ -358,7 +352,7 @@ class TestTheParakeetTdtRecipe:
             assert [output.name for output in REFERENCE_DUMP_STEP.outputs] == DUMP_OUTPUTS
 
     class TestItsTransformersReferenceStep:
-        def test_should_bind_moondreams_files_v3s_processor_french_and_the_references_dump_alone(
+        def test_should_bind_moondreams_files_v3s_processor_its_rows_bench_and_the_dump_alone(
             self,
         ) -> None:
             assert set(TRANSFORMERS_STEP.mounts) == TRANSFORMERS_FILES
@@ -375,8 +369,8 @@ class TestTheParakeetTdtRecipe:
             assert [output.name for output in TRANSFORMERS_STEP.outputs] == TRANSFORMERS_OUTPUTS
 
     class TestItsTranscribeStep:
-        def test_should_bind_the_candidate_and_both_benches_alone(self) -> None:
-            assert set(TRANSCRIBE_STEP.mounts) == {CANDIDATE_MOUNT, *BENCH_FILES}
+        def test_should_bind_the_candidate_and_its_rows_bench_alone(self) -> None:
+            assert set(TRANSCRIBE_STEP.mounts) == {CANDIDATE_MOUNT, BENCH_MOUNT}
 
         def test_should_run_four_shards_of_two_cpus_on_the_cpu_and_one_of_eight_on_the_gpu(
             self,
@@ -458,6 +452,25 @@ class TestTheParakeetTdtRecipe:
                 for request in transcriptions
                 if read_quantization(request.files) != find_quantization(request.variant)
             ] == []
+
+        def test_should_bind_each_row_of_a_run_to_the_bench_of_its_own_language_alone(
+            self, judged_recipe: JudgedRecipe
+        ) -> None:
+            mismatches = [
+                derived_row.row.name
+                for derived_row in judged_recipe.derived_rows
+                if {
+                    source.path
+                    for source in derived_row.row.sources
+                    if source.repository == FLEURS_REPOSITORY
+                }
+                != {
+                    f"data/{derived_row.language}/test.tsv",
+                    f"data/{derived_row.language}/audio/test.tar.gz",
+                }
+            ]
+            assert len(judged_recipe.derived_rows) == len(DERIVED_ROW_NAMES)
+            assert mismatches == []
 
         def test_should_read_the_parities_of_transformers_from_the_one_row_of_its_run(
             self, judged_recipe: JudgedRecipe
