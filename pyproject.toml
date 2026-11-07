@@ -193,6 +193,28 @@ forbidden_modules = [
 ]
 
 [[tool.importlinter.contracts]]
+name = "A step's code imports only what it runs: no plan of the build, no rule of the host's side and no card"
+type = "forbidden"
+source_modules = ["mostt_model_builder.steps", "mostt_recipe_parakeet_tdt.steps"]
+forbidden_modules = [
+    "mostt_model_builder.domain.containers.container_steps",
+    "mostt_model_builder.domain.containers.container_files",
+    "mostt_model_builder.domain.containers.work_directory",
+    "mostt_model_builder.domain.contract.derived_rows",
+    "mostt_model_builder.domain.contract.recipe_contract",
+    "mostt_model_builder.domain.bench.hypotheses",
+    "mostt_model_builder.domain.bench.bench_languages",
+    "mostt_model_builder.domain.publication.model_card",
+    "mostt_model_builder.domain.publication.variant_summaries",
+    "mostt_model_builder.domain.publication.measuring_libraries",
+    "mostt_recipe_parakeet_tdt.recipe",
+    "mostt_recipe_parakeet_tdt.domain.variants.variants",
+    "mostt_recipe_parakeet_tdt.domain.variants.comparisons",
+    "mostt_recipe_parakeet_tdt.domain.variants.quantizations",
+    "mostt_recipe_parakeet_tdt.domain.publication.model_description",
+]
+
+[[tool.importlinter.contracts]]
 name = "The libraries of the models load only in the steps that need them, never on the host"
 type = "forbidden"
 source_modules = [
