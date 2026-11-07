@@ -33,6 +33,7 @@ from mostt_recipe_parakeet_tdt.recipe import (
     EXPORT_IMAGE_NAME,
     EXPORT_STEP,
     RECIPE,
+    REFERENCE_DUMP_STEP,
     REFERENCE_STEP,
     TRANSCRIBE_STEP,
     TRANSFORMERS_STEP,
@@ -81,6 +82,14 @@ REFERENCE_FILES = {
     SourceMount(NEMO_REPOSITORY, "parakeet-tdt-0.6b-v3.nemo"),
     *BENCH_FILES,
 }
+DUMPED_FILES = {
+    SourceMount(ULTRA_REPOSITORY, "tokenizer.json"),
+    SourceMount(ULTRA_REPOSITORY, "model.safetensors"),
+    SourceMount(NEMO_REPOSITORY, "parakeet-tdt-0.6b-v3.nemo"),
+    SourceMount(FLEURS_REPOSITORY, "data/fr_fr/test.tsv"),
+    SourceMount(FLEURS_REPOSITORY, "data/fr_fr/audio/test.tar.gz"),
+}
+DUMP_OUTPUTS = ["reference.safetensors", "reference.json", "peaks.json"]
 TRANSFORMERS_FILES = {
     SourceMount(ULTRA_REPOSITORY, "config.json"),
     SourceMount(ULTRA_REPOSITORY, "tokenizer.json"),
@@ -90,8 +99,8 @@ TRANSFORMERS_FILES = {
     SourceMount(NEMO_REPOSITORY, "generation_config.json"),
     SourceMount(FLEURS_REPOSITORY, "data/fr_fr/test.tsv"),
     SourceMount(FLEURS_REPOSITORY, "data/fr_fr/audio/test.tar.gz"),
-    EarlierOutputMount("reference", "reference.safetensors"),
-    EarlierOutputMount("reference", "reference.json"),
+    EarlierOutputMount("reference-dump", "reference.safetensors"),
+    EarlierOutputMount("reference-dump", "reference.json"),
 }
 TRANSFORMERS_OUTPUTS = [
     "transformers-encoder-parity.json",
@@ -109,8 +118,8 @@ TRANSFORMERS_ROW_SOURCES = {
     (FLEURS_REPOSITORY, "data/fr_fr/audio/test.tar.gz"),
 }
 TRANSFORMERS_ROW_INPUTS = {
-    ("reference", "reference.safetensors"),
-    ("reference", "reference.json"),
+    ("reference-dump", "reference.safetensors"),
+    ("reference-dump", "reference.json"),
 }
 PARITIES = [
     ("export", "encoder-parity.json", 5e-5),
@@ -324,6 +333,26 @@ class TestTheParakeetTdtRecipe:
                 ("cpu", EXPORT_IMAGE_NAME)
             ]
 
+        def test_should_write_its_peaks_alone_beside_the_lines_of_its_runs_so_it_dumps_nothing(
+            self,
+        ) -> None:
+            assert [output.name for output in REFERENCE_STEP.outputs] == ["peaks.json"]
+
+    class TestItsReferenceDumpStep:
+        def test_should_bind_moondreams_tokenizer_and_weights_the_nemo_and_the_french_bench_alone(
+            self,
+        ) -> None:
+            assert set(REFERENCE_DUMP_STEP.mounts) == DUMPED_FILES
+
+        def test_should_bind_each_file_once(self) -> None:
+            assert len(REFERENCE_DUMP_STEP.mounts) == len(DUMPED_FILES)
+
+        def test_should_run_in_the_export_image_since_it_reads_the_nemo(self) -> None:
+            assert REFERENCE_DUMP_STEP.image == EXPORT_IMAGE_NAME
+
+        def test_should_write_the_tensors_and_the_steps_of_the_dump_and_its_peaks(self) -> None:
+            assert [output.name for output in REFERENCE_DUMP_STEP.outputs] == DUMP_OUTPUTS
+
     class TestItsTransformersReferenceStep:
         def test_should_bind_moondreams_files_v3s_processor_french_and_the_references_dump_alone(
             self,
@@ -445,6 +474,7 @@ class TestTheParakeetTdtRecipe:
                 "convert",
                 "inspect",
                 "reference",
+                "reference-dump",
                 "transformers-reference",
                 "transcribe",
             )

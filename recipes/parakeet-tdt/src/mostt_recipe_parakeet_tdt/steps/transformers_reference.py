@@ -40,7 +40,7 @@ from mostt_recipe_parakeet_tdt.domain.export.pinned_sources import (
     ULTRA_REPOSITORY,
 )
 from mostt_recipe_parakeet_tdt.domain.export.reference_dump import (
-    REFERENCE_STEP_NAME,
+    REFERENCE_DUMP_STEP_NAME,
     REFERENCE_STEPS_FILE_NAME,
     REFERENCE_TENSORS_FILE_NAME,
     DumpedUtterance,
@@ -66,7 +66,7 @@ type TransformersProcessor = Any
 # Transformers loads a model and its processor from one directory, where Moondream publishes the
 # weights and v3 the processor: the directory links each bound file under its own name.
 MODEL_DIRECTORY = Path(TEMPORARY_DIRECTORY_IN_THE_CONTAINER) / "transformers-model"
-REFERENCE_DIRECTORY = Path(INPUTS_IN_THE_CONTAINER) / REFERENCE_STEP_NAME
+REFERENCE_DIRECTORY = Path(INPUTS_IN_THE_CONTAINER) / REFERENCE_DUMP_STEP_NAME
 MILLISECONDS_PER_SECOND = 1000.0
 
 
