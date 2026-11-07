@@ -49,6 +49,7 @@ from mostt_model_builder.domain.containers.container_files import (
 )
 from mostt_model_builder.domain.containers.container_paths import OUTPUT_IN_THE_CONTAINER
 from mostt_model_builder.domain.containers.container_steps import (
+    BENCH_IMAGE,
     FLEURS_CHECK_ROW,
     PEAKS_OUTPUT,
     BindMount,
@@ -63,6 +64,7 @@ WORK_ROOT = PurePosixPath("/data/builds/work")
 KEY = "7b1e04c9a2f3" + "0" * 52
 HEAD_TREE = "3f1d1ffe79bc3336eb583331cfbf9b189fd45f01"
 IMAGE_ID = "sha256:" + "d" * 64
+BENCH_IMAGE_ID = "sha256:" + "b" * 64
 RECIPE_NAME = "parakeet-tdt"
 ENTRY = WORK_ROOT / "cache" / RECIPE_NAME / "fleurs-check" / KEY
 OUTPUT_DIRECTORY = ENTRY / "output"
@@ -81,9 +83,7 @@ RECORD_NAME = "record.json"
 UNREADABLE_RECORD = b"{not json"
 CARD_PATH = BUILD_DIRECTORY / "README.md"
 HOST = HostIdentity(USER_ID, GROUP_ID, 20, HostAccounts(False, (), ()))
-REQUEST = EntryCleaning(
-    RECIPE_NAME, FLEURS_CHECK_ROW.name, KEY, FLEURS_CHECK_ROW.image, WORK_ROOT, HEAD_TREE, HOST
-)
+REQUEST = EntryCleaning(RECIPE_NAME, FLEURS_CHECK_ROW.name, KEY, WORK_ROOT, HEAD_TREE, HOST)
 RECIPE_ROW = StepRow(
     name="describe",
     image=ContainerImage(RECIPE_NAME, "export", Device.CPU, ENVIRONMENT_PYTHON),
@@ -340,28 +340,24 @@ class TestTheCleanRun:
                 files.add_directory(describe_directory, build_directory_facts(0o2770))
                 files.add_file(describe_directory / "peaks.json", *build_step_output(b"{}"))
                 engine = FakeContainerEngine(
-                    files=files, images={RECIPE_ROW.image.tag: ImageFacts(IMAGE_ID, HEAD_TREE)}
+                    files=files,
+                    images={
+                        RECIPE_ROW.image.tag: ImageFacts(IMAGE_ID, HEAD_TREE),
+                        BENCH_IMAGE.tag: ImageFacts(BENCH_IMAGE_ID, HEAD_TREE),
+                    },
                 )
                 outcome = clean_entry(
-                    EntryCleaning(
-                        RECIPE_NAME,
-                        RECIPE_ROW.name,
-                        KEY,
-                        RECIPE_ROW.image,
-                        WORK_ROOT,
-                        HEAD_TREE,
-                        HOST,
-                    ),
+                    EntryCleaning(RECIPE_NAME, RECIPE_ROW.name, KEY, WORK_ROOT, HEAD_TREE, HOST),
                     engine,
                     files,
                 )
                 return CleanRecord(outcome, engine.runs, engine.log_paths, files)
 
-            def test_should_run_the_cores_cleaning_in_the_recipes_image(
+            def test_should_run_the_cores_cleaning_in_the_bench_image_which_holds_no_library(
                 self, clean_record: CleanRecord
             ) -> None:
                 assert [(run.image_id, run.entry_module) for run in clean_record.runs] == [
-                    (IMAGE_ID, "mostt_model_builder.steps.clean_output")
+                    (BENCH_IMAGE_ID, "mostt_model_builder.steps.clean_output")
                 ]
 
     class TestTheRemoveCandidateEntryFunction:

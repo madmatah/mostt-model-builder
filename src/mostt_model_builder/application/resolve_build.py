@@ -346,7 +346,6 @@ class BuildResolver:
                     recipe_name=self.recipe.name,
                     entry_name=keyed.row.name,
                     key=keyed.key,
-                    image=keyed.row.image,
                     work_root=self.request.work_root,
                     head_tree=self.request.head_tree,
                     host=self.request.host,

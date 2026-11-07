@@ -35,6 +35,7 @@ PUBLICATION_OUTPUT_DIRECTORY_NAME = "output"
 PUBLISH_LOG_NAME = "publish.log"
 LOG_SUFFIX = ".log"
 RUN_NUMBER_GRAMMAR = re.compile(r"[1-9][0-9]{0,8}")
+CLEANING_LOG_GRAMMAR = re.compile(rf"{CLEAN_STEP_NAME}-[0-9a-f]{{64}}\{LOG_SUFFIX}")
 
 
 class WorkDirectoryError(ValueError):
@@ -194,6 +195,10 @@ def place_entry_clean(recipe_name: str, row_name: str, key: str) -> StepPlacemen
         request_directory=None,
         log_path=entry.parent / f"{CLEAN_STEP_NAME}-{key}{LOG_SUFFIX}",
     )
+
+
+def is_cleaning_log_name(name: str) -> bool:
+    return CLEANING_LOG_GRAMMAR.fullmatch(name) is not None
 
 
 def locate_build(recipe_name: str) -> PurePosixPath:
