@@ -38,6 +38,7 @@ class ConversionRun:
 
 @dataclass(frozen=True, slots=True)
 class ConversionOutcome:
+    request: ConversionRequest
     outputs: StepOutputs
     report: ConversionReport
 
@@ -65,4 +66,4 @@ def convert_variants(
 
 def read_conversion(request: ConversionRequest, outputs: StepOutputs) -> ConversionOutcome:
     report = parse_conversion_report(outputs.contents[CONVERSION_REPORT_FILE_NAME], request)
-    return ConversionOutcome(outputs, report)
+    return ConversionOutcome(request, outputs, report)

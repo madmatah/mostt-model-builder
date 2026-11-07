@@ -1,10 +1,12 @@
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path, PurePosixPath
 
 import pytest
 
 from mostt_model_builder.application.clean_run import BuildFile, BuildFileCleaned, CleanOutcome
+from mostt_model_builder.application.convert_variants import ConversionOutcome
 from mostt_model_builder.application.prune_cache import PrunedEntry
 from mostt_model_builder.application.publish_candidate import (
     DryRunEnded,
@@ -12,7 +14,9 @@ from mostt_model_builder.application.publish_candidate import (
     SummaryUnavailable,
 )
 from mostt_model_builder.application.resolve_lock import LockResolution
+from mostt_model_builder.application.run_step import StepOutputs
 from mostt_model_builder.domain.cache.hardware_facts import NO_GPU_REASON
+from mostt_model_builder.domain.containers.container_steps import INSPECT_ROW
 from mostt_model_builder.domain.containers.step_peaks import StepPeaks
 from mostt_model_builder.domain.contract.model_description import ModelDescription
 from mostt_model_builder.domain.contract.recipe_contract import (
@@ -20,6 +24,12 @@ from mostt_model_builder.domain.contract.recipe_contract import (
     RecipeContract,
 )
 from mostt_model_builder.domain.lock.lock_check import CheckedLock, LockedPackage
+from mostt_model_builder.domain.onnx.conversion_report import ConversionReport, ConvertedFile
+from mostt_model_builder.domain.onnx.conversion_request import (
+    ConversionKind,
+    ConversionRequest,
+    FloatConversion,
+)
 from mostt_model_builder.domain.publication.publication_report import (
     PublicationReport,
     ReportedFile,
@@ -27,6 +37,7 @@ from mostt_model_builder.domain.publication.publication_report import (
 from mostt_model_builder.host_main import (
     describe_clean_event,
     describe_cleaned_entry,
+    describe_conversion,
     describe_dry_run,
     describe_lock_resolution,
     describe_prune_total,
@@ -83,6 +94,52 @@ LOCK_RESOLUTION = LockResolution(
     change_lines=(),
     peaks=StepPeaks(memory_peak_bytes=0, process_count_peak=0),
 )
+BFLOAT16_ENCODER_NAME = "encoder-model.bf16.onnx"
+BFLOAT16_ENCODER_SIZE_BYTES = 1241513216
+LENGTHS_NODE_COUNT = 23
+BFLOAT16_ROW = replace(INSPECT_ROW, name="convert-bfloat16")
+BFLOAT16_CONVERSION = FloatConversion(
+    ConversionKind.BFLOAT16,
+    BFLOAT16_ENCODER_NAME,
+    kept_inputs=("length",),
+)
+SINGLE_NODE_COUNT = 1
+CONVERTED_BFLOAT16_ENCODER = ConvertedFile(
+    kind=ConversionKind.BFLOAT16,
+    output=BFLOAT16_ENCODER_NAME,
+    node_count=1712,
+    quantized_product_count=0,
+    kept_float32_operators=("Pad", "Tile", "Floor"),
+    clamped_initializer_count=0,
+    below_min_positive_count=0,
+    above_max_finite_count=0,
+    realigned_cast_count=4,
+    kept_from_inputs_node_count=LENGTHS_NODE_COUNT,
+)
+CONVERSION_OUTPUTS = StepOutputs(
+    peaks=StepPeaks(memory_peak_bytes=0, process_count_peak=0),
+    contents={},
+    sizes_bytes={BFLOAT16_ENCODER_NAME: BFLOAT16_ENCODER_SIZE_BYTES},
+)
+
+
+def build_bfloat16_outcome(
+    conversion: FloatConversion, kept_from_inputs_node_count: int
+) -> ConversionOutcome:
+    return ConversionOutcome(
+        request=ConversionRequest("export", "encoder-model.onnx", (conversion,)),
+        outputs=CONVERSION_OUTPUTS,
+        report=ConversionReport(
+            (
+                replace(
+                    CONVERTED_BFLOAT16_ENCODER,
+                    kept_from_inputs_node_count=kept_from_inputs_node_count,
+                ),
+            )
+        ),
+    )
+
+
 TEMPLATE_RECIPE_NAME = "family"
 # The keys of the mock of the commands' lines, each completed to its 64 hexadecimal digits.
 FLEURS_CHECK_KEY = "7b1e04c9a2f3" + "0" * 52
@@ -306,6 +363,74 @@ class TestTheHostMain:
                 f"wrote images/environment.lock, {len(LOCKED_PACKAGES)} packages, "
                 f"{len(RECORDED_EXTRAS)} extras, from {LOCK_RUN}; review its change in the diff"
             )
+
+    class TestTheDescribeConversionFunction:
+        class TestWhenTheConversionKeepsTheComputationOfAnInputInFloat32:
+            @pytest.fixture
+            def conversion_lines(self) -> list[str]:
+                return describe_conversion(
+                    BFLOAT16_ROW,
+                    build_bfloat16_outcome(BFLOAT16_CONVERSION, LENGTHS_NODE_COUNT),
+                )
+
+            def test_should_count_the_nodes_it_kept_from_the_input_to_its_casts_to_integers(
+                self, conversion_lines: list[str]
+            ) -> None:
+                assert conversion_lines[1] == (
+                    f"  wrote {BFLOAT16_ENCODER_NAME}, {BFLOAT16_ENCODER_SIZE_BYTES} bytes, "
+                    "bfloat16: 1712 nodes, 0 products in 8-bit blocks, Pad, Tile, Floor kept in "
+                    f"float32, {LENGTHS_NODE_COUNT} nodes from length to its casts to integers "
+                    "kept in float32, 0 values raised to the minimum and 0 lowered to the maximum "
+                    "in 0 initializers, 4 Cast nodes realigned"
+                )
+
+        class TestWhenTheConversionKeepsTheComputationOfTwoInputs:
+            @pytest.fixture
+            def conversion_lines(self) -> list[str]:
+                return describe_conversion(
+                    BFLOAT16_ROW,
+                    build_bfloat16_outcome(
+                        replace(BFLOAT16_CONVERSION, kept_inputs=("length", "audio_lengths")),
+                        LENGTHS_NODE_COUNT,
+                    ),
+                )
+
+            def test_should_name_both_inputs_and_their_casts_to_integers(
+                self, conversion_lines: list[str]
+            ) -> None:
+                assert (
+                    f"{LENGTHS_NODE_COUNT} nodes from length and audio_lengths to their casts to "
+                    "integers kept in float32, 0 values" in conversion_lines[1]
+                )
+
+        class TestWhenTheConversionKeepsASingleNode:
+            @pytest.fixture
+            def conversion_lines(self) -> list[str]:
+                return describe_conversion(
+                    BFLOAT16_ROW, build_bfloat16_outcome(BFLOAT16_CONVERSION, SINGLE_NODE_COUNT)
+                )
+
+            def test_should_count_it_in_the_singular(self, conversion_lines: list[str]) -> None:
+                assert (
+                    "Floor kept in float32, 1 node from length to its casts to integers kept in "
+                    "float32, 0 values" in conversion_lines[1]
+                )
+
+        class TestWhenTheConversionDeclaresNoInput:
+            @pytest.fixture
+            def conversion_lines(self) -> list[str]:
+                return describe_conversion(
+                    BFLOAT16_ROW,
+                    build_bfloat16_outcome(replace(BFLOAT16_CONVERSION, kept_inputs=()), 0),
+                )
+
+            def test_should_say_it_kept_no_computation_in_float32(
+                self, conversion_lines: list[str]
+            ) -> None:
+                assert (
+                    "Pad, Tile, Floor kept in float32, no computation kept in float32, 0 values"
+                    in conversion_lines[1]
+                )
 
     class TestTheIsCardTemplatePresentFunction:
         class TestWhenTheTemplateIsARegularFile:
