@@ -137,6 +137,13 @@ Publication is yours: run these commands yourself, at a terminal, from the commi
     --repository <user>/parakeet-ultra-onnx
 ```
 
+`--message-file` gives the message of the publication's commit, from a file of yours, best kept outside the work directory, which holds none of your own files: the title on its first line, at most 200 characters, then a blank line and the description, at most 4096 characters, all in printable ASCII, within 8192 bytes. Write there what the new revision changes, which the card, describing only the current build, does not say. Without it, the commit's title is "Publish" and the card's title, with no description. `publish` reads the file before it verifies the build, reads the repository's listing or asks for the token, and stops on a malformed one, saying why:
+
+```sh
+./model-build.sh --work /data/model-build --recipe parakeet-tdt publish \
+    --repository <user>/parakeet-ultra-onnx --message-file ~/publication-message.txt
+```
+
 `publish` verifies the build again, checks that the card is the one you read, shows each file with its SHA-256, then the commit message, its title and its description, each line after `  |`, and, from the repository's listing read without a token, which files it would keep and which it would upload, asks you to type the repository again and then the token, which it does not show, and commits at once the files that differ from the repository's, leaving in place those the Hub already holds with the same SHA-256. It prints each file as kept or uploaded, then the new revision, or says that the repository already holds the build, in which case nothing is committed. Read the card and the files on the site, make the repository public, run `check-published`, and revoke the token.
 
 Once the files are published, `check-published` downloads each file of the published revision, without a token, into `sources/` in the work directory, and checks it against the build's own bytes and its card; it then prints the revision for mostt to pin:
@@ -165,7 +172,7 @@ Once the files are published, `check-published` downloads each file of the publi
 | `./model-build.sh --work <dir> --recipe <name> verify` | Measures every run on FLEURS, holds the parities, the runs and their comparisons to the recipe's rules, and writes `verification.json`. |
 | `./model-build.sh --work <dir> --recipe <name> build` | Runs every step of the recipe's build, in its order, reusing each output whose key is unchanged, then `verify`. |
 | `./model-build.sh --work <dir> --recipe <name> card` | Verifies the build again from a clean clone, renders its model card and writes it to `builds/<recipe>/README.md` for review. |
-| `./model-build.sh --work <dir> --recipe <name> publish [--dry-run] --repository <namespace>/<name>` | Shows what it would send, then publishes the verified candidate and its reviewed card into a Hugging Face repository you created, with a token you type, or stops there with `--dry-run`; yours to run, at a terminal. |
+| `./model-build.sh --work <dir> --recipe <name> publish [--dry-run] --repository <namespace>/<name> [--message-file <file>]` | Shows what it would send and the commit message, from the file or else from the card's title, then publishes the verified candidate and its reviewed card into a Hugging Face repository you created, with a token you type, or stops there with `--dry-run`; yours to run, at a terminal. |
 | `./model-build.sh --work <dir> --recipe <name> check-published --repository <namespace>/<name> --revision <commit>` | Downloads each file of a published revision without a token, checks it against the build's own bytes and its card, and prints the revision that mostt pins. |
 | `./model-build.sh --work <dir> --recipe <name> clean [<step>]` | Removes the entries of the cache that the current build uses, or those of one step, and the verification's report and the model card. |
 | `./model-build.sh --work <dir> --recipe <name> prune` | Removes every entry of the recipe's cache that its complete current build does not use, and prints the bytes it freed. |

@@ -7,6 +7,7 @@ import tomllib
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+from typing import BinaryIO
 
 from mostt_model_builder.adapters.curl_downloader import HTTP_ERROR_STATUS, CurlDownloader
 from mostt_model_builder.adapters.docker_engine import ContainerEngineError, DockerEngine
@@ -193,6 +194,12 @@ from mostt_model_builder.domain.onnx.graph_rules import (
 )
 from mostt_model_builder.domain.onnx.inspection_report import InspectionReportError
 from mostt_model_builder.domain.onnx.node_placement import NodePlacementError, PlacementSummary
+from mostt_model_builder.domain.publication.commit_message import (
+    MAX_COMMIT_MESSAGE_FILE_BYTES,
+    CommitMessage,
+    CommitMessageError,
+    parse_commit_message_file,
+)
 from mostt_model_builder.domain.publication.hub_token import HubTokenError
 from mostt_model_builder.domain.publication.publication_report import (
     PublicationReport,
@@ -297,6 +304,7 @@ COMMAND_ERRORS = (
     HubTokenError,
     PublicationReportError,
     RepositoryFilesError,
+    CommitMessageError,
     CacheEntryError,
     BuildUnitError,
     HardwareFactsError,
@@ -387,6 +395,12 @@ def build_argument_parser() -> argparse.ArgumentParser:
         "--dry-run",
         action="store_true",
         help="show what the publication would send, then stop, before the token",
+    )
+    publish_parser.add_argument(
+        "--message-file",
+        metavar="<file>",
+        help="the commit message, in printable ASCII: its title on the first line, then a blank "
+        "line and its description; by default, Publish and the card's title",
     )
     check_parser = commands.add_parser(
         CHECK_PUBLISHED_COMMAND,
@@ -939,13 +953,17 @@ def publish(
     recipe: JudgedRecipe,
     repository: str,
     is_dry_run: bool,
+    message_path: str | None,
     work_directory: WorkDirectory,
     files: WorkFiles,
 ) -> None:
+    commit_message = None if message_path is None else read_message_file(message_path)
     context = read_build_context(work_directory)
     resolved = resolve_built(recipe, context, files)
     published = publish_candidate(
-        CandidatePublication(build_card_request(recipe, context, resolved), repository, is_dry_run),
+        CandidatePublication(
+            build_card_request(recipe, context, resolved), repository, is_dry_run, commit_message
+        ),
         GitTree(PurePosixPath(CLONE_ROOT)),
         TerminalPrompt(STANDARD_INPUT_DESCRIPTOR, sys.stdout),
         CurlDownloader(),
@@ -965,6 +983,19 @@ def publish(
         f"--revision {report.revision}",
         flush=True,
     )
+
+
+def read_message_file(message_path: str) -> CommitMessage:
+    what = f"the message file {message_path}"
+    try:
+        with open(message_path, "rb") as stream:
+            return read_message_stream(stream, what)
+    except OSError as error:
+        raise CommitMessageError(f"{what} cannot be read: {error.strerror}") from error
+
+
+def read_message_stream(stream: BinaryIO, what: str) -> CommitMessage:
+    return parse_commit_message_file(stream.read(MAX_COMMIT_MESSAGE_FILE_BYTES + 1), what)
 
 
 def describe_reported_file(reported: ReportedFile) -> str:
@@ -1179,7 +1210,14 @@ def run_command(arguments: argparse.Namespace) -> None:
     elif arguments.command == CARD_COMMAND:
         write_card(recipe, work_directory, files)
     elif arguments.command == PUBLISH_COMMAND:
-        publish(recipe, arguments.repository, arguments.dry_run, work_directory, files)
+        publish(
+            recipe,
+            arguments.repository,
+            arguments.dry_run,
+            arguments.message_file,
+            work_directory,
+            files,
+        )
     elif arguments.command == CHECK_PUBLISHED_COMMAND:
         check_published_revision(
             recipe, arguments.repository, arguments.revision, work_directory, files

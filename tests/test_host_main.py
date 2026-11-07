@@ -1,10 +1,16 @@
+import contextlib
+import io
+import re
 import subprocess
 import sys
+from collections.abc import Callable
 from dataclasses import replace
+from functools import partial
 from pathlib import Path, PurePosixPath
 
 import pytest
 
+from mostt_model_builder.adapters.work_files import WorkFiles
 from mostt_model_builder.application.clean_run import BuildFile, BuildFileCleaned, CleanOutcome
 from mostt_model_builder.application.convert_variants import ConversionOutcome
 from mostt_model_builder.application.prune_cache import PrunedEntry
@@ -18,9 +24,11 @@ from mostt_model_builder.application.run_step import StepOutputs
 from mostt_model_builder.domain.cache.hardware_facts import NO_GPU_REASON
 from mostt_model_builder.domain.containers.container_steps import INSPECT_ROW
 from mostt_model_builder.domain.containers.step_peaks import StepPeaks
+from mostt_model_builder.domain.containers.work_directory import WorkDirectory
 from mostt_model_builder.domain.contract.model_description import ModelDescription
 from mostt_model_builder.domain.contract.recipe_contract import (
     RECIPES_DIRECTORY_NAME,
+    JudgedRecipe,
     RecipeContract,
 )
 from mostt_model_builder.domain.lock.lock_check import CheckedLock, LockedPackage
@@ -30,11 +38,16 @@ from mostt_model_builder.domain.onnx.conversion_request import (
     ConversionRequest,
     FloatConversion,
 )
+from mostt_model_builder.domain.publication.commit_message import (
+    CommitMessage,
+    CommitMessageError,
+)
 from mostt_model_builder.domain.publication.publication_report import (
     PublicationReport,
     ReportedFile,
 )
 from mostt_model_builder.host_main import (
+    build_argument_parser,
     describe_clean_event,
     describe_cleaned_entry,
     describe_conversion,
@@ -50,6 +63,9 @@ from mostt_model_builder.host_main import (
     describe_summarized_file,
     describe_unavailable_summary,
     is_card_template_present,
+    publish,
+    read_message_file,
+    read_message_stream,
 )
 
 BOOTSTRAP_PATH = (
@@ -176,6 +192,63 @@ CONTRACT_WITH_MODEL = RecipeContract(
         variants=(),
     ),
 )
+
+
+MESSAGE_PATH = "/data/work/publication-message.txt"
+MESSAGE_FILE = f"the message file {MESSAGE_PATH}"
+PUBLISH_ARGUMENTS = [
+    "--work",
+    "/data/work",
+    "--recipe",
+    RECIPE_NAME,
+    "publish",
+    "--repository",
+    "example-user/parakeet-ultra-onnx",
+]
+OVERSIZED_MESSAGE_FILE = b"t" * 9000
+COMMIT_TITLE = (
+    "Keep the encoder's lengths in float32 in float16 and bfloat16; measure five languages"
+)
+COMMIT_DESCRIPTION = (
+    "The float16 and bfloat16 encoders of revision 9dcab459 computed the encoder's output\n"
+    "lengths (encoded_lengths), and the lengths of its subsampling stages, in their own\n"
+    "reduced precision. The decoder then ignored the last frames of most recordings, and\n"
+    "onnx-asr could fail on a long one. This revision keeps that computation in float32;\n"
+    "the float32 and int8 files are unchanged.\n"
+    "\n"
+    "The card now measures English, Latin American Spanish, French, Brazilian Portuguese\n"
+    "and German on FLEURS."
+)
+MESSAGE_FILE_TEXT = f"{COMMIT_TITLE}\n\n{COMMIT_DESCRIPTION}\n"
+MESSAGE_FILE_NAME = "publication-message.txt"
+MALFORMED_MESSAGE_FILE_TEXT = f"{COMMIT_TITLE}\n\nThe float16\tencoders\n"
+REPOSITORY = "example-user/parakeet-ultra-onnx"
+WORK_DIRECTORY_NAME = "work"
+PUBLISHED_RECIPE = JudgedRecipe(
+    name=TEMPLATE_RECIPE_NAME,
+    pins=(),
+    images=(),
+    rows=(),
+    candidate=(),
+    parities=(),
+    card_template=None,
+)
+
+
+class WorkFilesThatRecordEachCall(WorkFiles):
+    def __init__(self) -> None:
+        self.called_methods: list[str] = []
+
+    def __getattribute__(self, name: str) -> object:
+        if not name.startswith("_") and name != "called_methods":
+            object.__getattribute__(self, "called_methods").append(name)
+        return object.__getattribute__(self, name)
+
+
+def write_malformed_message_file(directory: Path) -> Path:
+    message_path = directory / MESSAGE_FILE_NAME
+    message_path.write_text(MALFORMED_MESSAGE_FILE_TEXT, encoding="ascii")
+    return message_path
 
 
 def make_recipe_directory(clone_root: Path) -> Path:
@@ -350,6 +423,132 @@ class TestTheHostMain:
                 self, fetch_run: subprocess.CompletedProcess[str]
             ) -> None:
                 assert fetch_run.returncode == ARGUMENT_ERROR_EXIT_STATUS
+
+    class TestTheBuildArgumentParserFunction:
+        class TestWhenThePublicationIsGivenAMessageFile:
+            @pytest.fixture
+            def message_path(self) -> object:
+                arguments = build_argument_parser().parse_args(
+                    [*PUBLISH_ARGUMENTS, "--message-file", MESSAGE_PATH]
+                )
+                return arguments.message_file
+
+            def test_should_give_its_path_as_typed(self, message_path: object) -> None:
+                assert message_path == MESSAGE_PATH
+
+        class TestWhenThePublicationIsGivenNoMessageFile:
+            @pytest.fixture
+            def message_path(self) -> object:
+                return build_argument_parser().parse_args(PUBLISH_ARGUMENTS).message_file
+
+            def test_should_give_none(self, message_path: object) -> None:
+                assert message_path is None
+
+    class TestTheReadMessageStreamFunction:
+        class TestWhenTheStreamHoldsATitleABlankLineAndTwoParagraphs:
+            @pytest.fixture
+            def commit_message(self) -> CommitMessage:
+                return read_message_stream(io.BytesIO(MESSAGE_FILE_TEXT.encode()), MESSAGE_FILE)
+
+            def test_should_give_its_title_and_its_description(
+                self, commit_message: CommitMessage
+            ) -> None:
+                assert commit_message == CommitMessage(COMMIT_TITLE, COMMIT_DESCRIPTION)
+
+        class TestWhenTheStreamHoldsMoreThanItsBound:
+            @pytest.fixture
+            def read_act(self) -> Callable[[], CommitMessage]:
+                return partial(
+                    read_message_stream, io.BytesIO(OVERSIZED_MESSAGE_FILE), MESSAGE_FILE
+                )
+
+            def test_should_refuse_it_after_its_label(
+                self, read_act: Callable[[], CommitMessage]
+            ) -> None:
+                with pytest.raises(
+                    CommitMessageError,
+                    match=f"^{re.escape(f'{MESSAGE_FILE} holds more than 8192 bytes')}$",
+                ):
+                    read_act()
+
+        class TestWhenTheStreamHoldsMoreThanItsBoundAndTheRefusalIsCaught:
+            @pytest.fixture
+            def stream_position_bytes(self) -> int:
+                stream = io.BytesIO(OVERSIZED_MESSAGE_FILE)
+                with contextlib.suppress(CommitMessageError):
+                    read_message_stream(stream, MESSAGE_FILE)
+                return stream.tell()
+
+            def test_should_stop_reading_one_byte_past_its_bound(
+                self, stream_position_bytes: int
+            ) -> None:
+                assert stream_position_bytes == 8193
+
+    class TestTheReadMessageFileFunction:
+        class TestWhenThePathIsMissing:
+            @pytest.fixture
+            def read_act(self, tmp_path: Path) -> Callable[[], CommitMessage]:
+                return partial(read_message_file, str(tmp_path / MESSAGE_FILE_NAME))
+
+            def test_should_refuse_it_and_say_why_it_cannot_be_read(
+                self, read_act: Callable[[], CommitMessage], tmp_path: Path
+            ) -> None:
+                missing_path = tmp_path / MESSAGE_FILE_NAME
+                with pytest.raises(
+                    CommitMessageError,
+                    match=re.escape(
+                        f"the message file {missing_path} cannot be read: No such file or directory"
+                    ),
+                ):
+                    read_act()
+
+    class TestThePublishFunction:
+        class TestWhenTheMessageFileIsMalformed:
+            @pytest.fixture
+            def publish_act(self, tmp_path: Path) -> Callable[[], None]:
+                message_path = write_malformed_message_file(tmp_path)
+                return partial(
+                    publish,
+                    PUBLISHED_RECIPE,
+                    REPOSITORY,
+                    False,
+                    str(message_path),
+                    WorkDirectory(str(tmp_path / WORK_DIRECTORY_NAME)),
+                    WorkFilesThatRecordEachCall(),
+                )
+
+            def test_should_refuse_it_and_say_why(
+                self, publish_act: Callable[[], None], tmp_path: Path
+            ) -> None:
+                message_path = tmp_path / MESSAGE_FILE_NAME
+                with pytest.raises(
+                    CommitMessageError,
+                    match=re.escape(
+                        f"the message file {message_path} is not printable ASCII text: "
+                        "line 3 holds '\\t'"
+                    ),
+                ):
+                    publish_act()
+
+        class TestWhenTheMessageFileIsMalformedAndTheRefusalIsCaught:
+            @pytest.fixture
+            def work_file_calls(self, tmp_path: Path) -> list[str]:
+                files = WorkFilesThatRecordEachCall()
+                with contextlib.suppress(CommitMessageError):
+                    publish(
+                        PUBLISHED_RECIPE,
+                        REPOSITORY,
+                        False,
+                        str(write_malformed_message_file(tmp_path)),
+                        WorkDirectory(str(tmp_path / WORK_DIRECTORY_NAME)),
+                        files,
+                    )
+                return files.called_methods
+
+            def test_should_stop_before_it_reads_the_work_directory_or_the_hub(
+                self, work_file_calls: list[str]
+            ) -> None:
+                assert work_file_calls == []
 
     class TestTheDescribeLockResolutionFunction:
         @pytest.fixture
