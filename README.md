@@ -121,7 +121,7 @@ Once the build passes, `card` verifies it again, from a clean clone, and writes 
 
 ## Publishing the models
 
-Publication is yours: run these commands yourself, at a terminal, from the commit whose build passed, once that commit is on GitHub's `main`, since the card links the code at that commit. First write the card with `card` and read it. Create the Hugging Face repository yourself, private, and a fine-grained token with read and write access to that repository alone. Publish first into a throwaway private repository, as a trial, then into the real one:
+Publication is yours: run these commands yourself, at a terminal, from the commit whose build passed. First write the card with `card` and read it. Create the Hugging Face repository yourself, private, and a fine-grained token with read and write access to that repository alone. Publish first into a throwaway private repository, as a trial, then into the real one:
 
 ```sh
 ./model-build.sh --work /data/model-build --recipe parakeet-tdt publish \

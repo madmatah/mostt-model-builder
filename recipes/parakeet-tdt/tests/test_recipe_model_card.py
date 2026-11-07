@@ -40,6 +40,8 @@ EXPECTED_CARD_PATH = RECIPE_DIRECTORY / "tests" / "fixtures" / "model-card.md"
 HOST_CPU_COUNT = 64
 BUILD_COMMIT = "89abcdef0123456789abcdef0123456789abcdef"
 LICENSE_LINK = "[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)"
+REPOSITORY_URL = "https://github.com/madmatah/mostt-model-builder"
+REPOSITORY_SENTENCE = f"The code of this build is [mostt-model-builder]({REPOSITORY_URL})."
 
 
 def judge_the_recipe() -> JudgedRecipe:
@@ -133,11 +135,13 @@ class TestTheModelCardOfTheParakeetTdtRecipe:
         def test_should_give_the_reviewed_card(self, card: str) -> None:
             assert card == EXPECTED_CARD_PATH.read_text(encoding="utf-8")
 
-        def test_should_link_the_code_that_built_the_files_at_its_commit(self, card: str) -> None:
-            assert (
-                "[mostt-model-builder](https://github.com/madmatah/mostt-model-builder/tree/"
-                f"{BUILD_COMMIT}), at the commit `{BUILD_COMMIT}`" in card
-            )
+        def test_should_cite_the_code_of_the_build_by_its_repository(self, card: str) -> None:
+            assert REPOSITORY_SENTENCE in card
+
+        def test_should_link_no_commit_of_the_repository_so_that_a_cached_output_keeps_its_card(
+            self, card: str
+        ) -> None:
+            assert f"{REPOSITORY_URL}/tree/" not in card
 
         def test_should_credit_both_works_under_their_license(self, card: str) -> None:
             attribution = card.partition("## License and attribution")[2]
