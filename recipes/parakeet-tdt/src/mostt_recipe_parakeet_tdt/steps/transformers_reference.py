@@ -12,15 +12,15 @@ from mostt_model_builder.domain.acceptance.parity_reports import (
     render_parity_report,
     summarize_differences,
 )
-from mostt_model_builder.domain.bench.hypotheses import RUN_LINES_FILE_NAME
+from mostt_model_builder.domain.bench.run_lines import RUN_LINES_FILE_NAME
 from mostt_model_builder.domain.bench.wav_format import SAMPLE_RATE_HZ
-from mostt_model_builder.domain.containers.container_steps import (
+from mostt_model_builder.domain.containers.container_paths import (
     INPUTS_IN_THE_CONTAINER,
     OUTPUT_IN_THE_CONTAINER,
     REQUEST_IN_THE_CONTAINER,
     TEMPORARY_DIRECTORY_IN_THE_CONTAINER,
 )
-from mostt_model_builder.domain.contract.derived_rows import (
+from mostt_model_builder.domain.contract.shard_request import (
     SHARD_REQUEST_FILE_NAME,
     parse_shard_request,
 )

@@ -14,7 +14,7 @@ from onnxruntime.quantization.matmul_nbits_quantizer import (
     MatMulNBitsQuantizer,
 )
 
-from mostt_model_builder.domain.containers.container_steps import (
+from mostt_model_builder.domain.containers.container_paths import (
     INPUTS_IN_THE_CONTAINER,
     OUTPUT_IN_THE_CONTAINER,
     REQUEST_IN_THE_CONTAINER,

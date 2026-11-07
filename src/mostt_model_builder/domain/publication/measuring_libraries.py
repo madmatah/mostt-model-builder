@@ -2,7 +2,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from mostt_model_builder.domain.containers.base_images import ENVIRONMENT_PYTHON
-from mostt_model_builder.domain.containers.container_steps import Device
+from mostt_model_builder.domain.containers.devices import Device
 from mostt_model_builder.domain.contract.derived_rows import DerivedRow
 from mostt_model_builder.domain.contract.recipe_contract import REFERENCE_VARIANT
 from mostt_model_builder.domain.lock.declared_requirements import DeclaredRequirement

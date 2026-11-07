@@ -31,7 +31,8 @@ from mostt_model_builder.application.publish_candidate import (
 )
 from mostt_model_builder.application.run_step import ImageFacts
 from mostt_model_builder.application.verify_build import BuildRejectedError
-from mostt_model_builder.domain.containers.container_steps import HUB_IMAGE, PEAKS_FILE_NAME
+from mostt_model_builder.domain.containers.container_steps import HUB_IMAGE
+from mostt_model_builder.domain.containers.step_peaks import PEAKS_FILE_NAME
 from mostt_model_builder.domain.publication.hub_token import HubToken, parse_hub_token
 from mostt_model_builder.domain.publication.publication_report import (
     PublicationReport,

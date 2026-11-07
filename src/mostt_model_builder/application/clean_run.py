@@ -17,12 +17,8 @@ from mostt_model_builder.domain.containers.container_steps import (
     build_clean_row,
     plan_container_run,
 )
-from mostt_model_builder.domain.containers.work_directory import (
-    MODEL_CARD_FILE_NAME,
-    locate_run,
-    place_clean,
-    place_step,
-)
+from mostt_model_builder.domain.containers.work_directory import locate_run, place_clean, place_step
+from mostt_model_builder.domain.publication.publication_request import MODEL_CARD_FILE_NAME
 
 
 class CleanFiles(StepFiles, Protocol):

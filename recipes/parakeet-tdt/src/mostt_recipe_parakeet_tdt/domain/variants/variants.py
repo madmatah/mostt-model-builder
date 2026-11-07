@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from mostt_model_builder.domain.containers.container_steps import Device
+from mostt_model_builder.domain.containers.devices import Device
 from mostt_model_builder.domain.onnx.conversion_request import (
     Conversion,
     ConversionKind,

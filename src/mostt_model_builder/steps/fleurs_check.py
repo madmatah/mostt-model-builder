@@ -14,7 +14,7 @@ from mostt_model_builder.domain.bench.fleurs_check_request import (
 )
 from mostt_model_builder.domain.bench.fleurs_index import FleursUtterance, parse_fleurs_index
 from mostt_model_builder.domain.bench.wav_format import parse_wav_layout
-from mostt_model_builder.domain.containers.container_steps import (
+from mostt_model_builder.domain.containers.container_paths import (
     CONTAINER_ROOT,
     OUTPUT_IN_THE_CONTAINER,
     REQUEST_IN_THE_CONTAINER,

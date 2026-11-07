@@ -16,23 +16,19 @@ from mostt_model_builder.application.run_step import (
     run_step,
 )
 from mostt_model_builder.domain.acceptance.parity_reports import ParityReport, parse_parity_report
-from mostt_model_builder.domain.bench.hypotheses import (
-    RUN_LINES_FILE_NAME,
-    Hypothesis,
-    RunReader,
-    judge_hypotheses,
-)
+from mostt_model_builder.domain.bench.hypotheses import Hypothesis, RunReader, judge_hypotheses
+from mostt_model_builder.domain.bench.run_lines import RUN_LINES_FILE_NAME
 from mostt_model_builder.domain.containers.container_steps import StepRow
 from mostt_model_builder.domain.containers.work_directory import (
     locate_referenced_sources,
     place_step,
 )
-from mostt_model_builder.domain.contract.derived_rows import (
+from mostt_model_builder.domain.contract.recipe_contract import Parity
+from mostt_model_builder.domain.contract.shard_request import (
     SHARD_REQUEST_FILE_NAME,
     ShardRequest,
     render_shard_request,
 )
-from mostt_model_builder.domain.contract.recipe_contract import Parity
 from mostt_model_builder.domain.onnx.node_placement import (
     PLACEMENT_FILE_NAME,
     PlacementSummary,

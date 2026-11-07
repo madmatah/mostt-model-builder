@@ -2,7 +2,7 @@ from pathlib import Path
 
 import onnx
 
-from mostt_model_builder.domain.containers.container_steps import (
+from mostt_model_builder.domain.containers.container_paths import (
     CANDIDATE_IN_THE_CONTAINER,
     OUTPUT_IN_THE_CONTAINER,
     REQUEST_IN_THE_CONTAINER,

@@ -1,13 +1,11 @@
 import json
 from dataclasses import dataclass
 
-from mostt_model_builder.domain.containers.container_steps import (
-    MAX_MEMORY_MIB,
-    MAX_PROCESS_COUNT,
-    PEAKS_MAX_SIZE_BYTES,
-)
+from mostt_model_builder.domain.containers.limit_bounds import MAX_MEMORY_MIB, MAX_PROCESS_COUNT
 from mostt_model_builder.domain.json_documents.json_depth import MAX_JSON_DEPTH, refuse_deep_json
 
+PEAKS_FILE_NAME = "peaks.json"
+PEAKS_MAX_SIZE_BYTES = 4096
 PEAKS_KEYS = ("memory_peak_bytes", "process_count_peak")
 BYTES_PER_MIB = 2**20
 # No container exceeds its own limit, and no limit exceeds the ceilings of the step table.

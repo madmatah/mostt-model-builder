@@ -2,7 +2,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from mostt_model_builder.domain.containers.container_steps import (
+from mostt_model_builder.domain.containers.container_paths import (
     OUTPUT_IN_THE_CONTAINER,
     REQUEST_IN_THE_CONTAINER,
     TEMPORARY_DIRECTORY_IN_THE_CONTAINER,

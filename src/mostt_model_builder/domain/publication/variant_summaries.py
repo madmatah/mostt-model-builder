@@ -8,7 +8,7 @@ from mostt_model_builder.domain.acceptance.verification import (
     Verification,
     compute_run_word_error_rate_percent,
 )
-from mostt_model_builder.domain.containers.container_steps import Device
+from mostt_model_builder.domain.containers.devices import Device
 from mostt_model_builder.domain.contract.recipe_contract import REFERENCE_VARIANT, JudgedRun
 
 # The runtime and the hardware, not the files, make two devices differ, so one run speaks for a

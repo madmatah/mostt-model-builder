@@ -5,13 +5,11 @@ from pathlib import Path
 from types import ModuleType
 from typing import BinaryIO, Protocol
 
-from mostt_model_builder.domain.containers.container_steps import (
+from mostt_model_builder.domain.containers.container_paths import (
     CANDIDATE_IN_THE_CONTAINER,
     OUTPUT_IN_THE_CONTAINER,
-    PUBLICATION_REPORT_FILE_NAME,
     REQUEST_IN_THE_CONTAINER,
 )
-from mostt_model_builder.domain.containers.work_directory import MODEL_CARD_FILE_NAME
 from mostt_model_builder.domain.publication.hub_token import (
     MAX_HUB_TOKEN_BYTES,
     TOKEN_ENCODING,
@@ -20,10 +18,12 @@ from mostt_model_builder.domain.publication.hub_token import (
     parse_hub_token,
 )
 from mostt_model_builder.domain.publication.publication_report import (
+    PUBLICATION_REPORT_FILE_NAME,
     PublicationReport,
     render_publication_report,
 )
 from mostt_model_builder.domain.publication.publication_request import (
+    MODEL_CARD_FILE_NAME,
     PUBLICATION_REQUEST_FILE_NAME,
     PublicationRequest,
     PublishedFile,

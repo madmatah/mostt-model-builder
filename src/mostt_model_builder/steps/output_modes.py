@@ -2,8 +2,8 @@ import os
 import stat
 from pathlib import Path
 
-from mostt_model_builder.domain.containers.container_files import WRITTEN_FILE_MODE
-from mostt_model_builder.domain.containers.container_steps import PEAKS_FILE_NAME
+from mostt_model_builder.domain.containers.step_peaks import PEAKS_FILE_NAME
+from mostt_model_builder.domain.containers.written_files import WRITTEN_FILE_MODE
 from mostt_model_builder.steps.control_group_peaks import (
     CONTROL_GROUP_DIRECTORY,
     write_control_group_peaks,

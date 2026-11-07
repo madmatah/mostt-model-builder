@@ -12,7 +12,7 @@ from mostt_model_builder.domain.acceptance.parity_reports import (
     render_parity_report,
     summarize_differences,
 )
-from mostt_model_builder.domain.containers.container_steps import (
+from mostt_model_builder.domain.containers.container_paths import (
     OUTPUT_IN_THE_CONTAINER,
     SCRATCH_IN_THE_CONTAINER,
 )

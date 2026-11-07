@@ -2,11 +2,11 @@ import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from mostt_model_builder.domain.containers.work_directory import MODEL_CARD_FILE_NAME
 from mostt_model_builder.domain.formats.file_names import is_file_name
 from mostt_model_builder.domain.json_documents.json_depth import MAX_JSON_DEPTH, refuse_deep_json
 from mostt_model_builder.domain.sources.source_pins import REPOSITORY_GRAMMAR, SHA256_GRAMMAR
 
+MODEL_CARD_FILE_NAME = "README.md"
 PUBLICATION_REQUEST_FILE_NAME = "publication-request.json"
 PUBLICATION_REQUEST_MAX_SIZE_BYTES = 64 * 1024
 REQUEST_ENCODING = "ascii"

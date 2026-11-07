@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from mostt_model_builder.domain.containers.container_steps import OUTPUT_IN_THE_CONTAINER
+from mostt_model_builder.domain.containers.container_paths import OUTPUT_IN_THE_CONTAINER
 from mostt_model_builder.steps.bound_sources import find_bound_source
 from mostt_model_builder.steps.output_modes import finish_outputs
 from mostt_recipe_parakeet_tdt.domain.export.tensor_fixtures import (

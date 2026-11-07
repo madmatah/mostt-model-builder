@@ -39,16 +39,15 @@ from mostt_model_builder.domain.acceptance.verification import (
 )
 from mostt_model_builder.domain.bench.fleurs_index import (
     BENCH_LANGUAGES,
+    FLEURS_REPOSITORY,
     FleursIndexError,
     locate_bench_files,
     parse_fleurs_index,
 )
-from mostt_model_builder.domain.bench.hypotheses import RUN_LINES_FILE_NAME, Hypothesis
+from mostt_model_builder.domain.bench.hypotheses import Hypothesis
+from mostt_model_builder.domain.bench.run_lines import RUN_LINES_FILE_NAME
 from mostt_model_builder.domain.containers.container_files import judge_mount
-from mostt_model_builder.domain.containers.container_steps import (
-    FLEURS_REPOSITORY,
-    StepRow,
-)
+from mostt_model_builder.domain.containers.container_steps import StepRow
 from mostt_model_builder.domain.containers.work_directory import (
     locate_run,
     locate_source,

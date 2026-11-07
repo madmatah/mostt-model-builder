@@ -33,23 +33,26 @@ from mostt_model_builder.domain.containers.container_files import (
     FileFacts,
     FileKind,
 )
+from mostt_model_builder.domain.containers.container_paths import CANDIDATE_IN_THE_CONTAINER
 from mostt_model_builder.domain.containers.container_steps import (
-    CANDIDATE_IN_THE_CONTAINER,
     CONTAINER_USER_ID,
     INSPECT_ROW,
     ONNX_INSPECT_IMAGE,
-    PEAKS_FILE_NAME,
     PEAKS_OUTPUT,
     BindMount,
     ContainerImage,
     ContainerRun,
     DeclaredOutput,
-    Device,
     StepLimits,
     StepRow,
     build_convert_row,
 )
-from mostt_model_builder.domain.containers.step_peaks import StepPeaks, render_step_peaks
+from mostt_model_builder.domain.containers.devices import Device
+from mostt_model_builder.domain.containers.step_peaks import (
+    PEAKS_FILE_NAME,
+    StepPeaks,
+    render_step_peaks,
+)
 from mostt_model_builder.domain.contract.recipe_contract import (
     HostContentOrigin,
     JudgedCandidateFile,

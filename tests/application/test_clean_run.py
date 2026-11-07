@@ -31,18 +31,18 @@ from mostt_model_builder.domain.containers.container_files import (
     FileFacts,
     FileKind,
 )
+from mostt_model_builder.domain.containers.container_paths import OUTPUT_IN_THE_CONTAINER
 from mostt_model_builder.domain.containers.container_steps import (
     FLEURS_CHECK_ROW,
     INSPECT_ROW,
-    OUTPUT_IN_THE_CONTAINER,
     PEAKS_OUTPUT,
     BindMount,
     ContainerImage,
     ContainerRun,
-    Device,
     StepLimits,
     StepRow,
 )
+from mostt_model_builder.domain.containers.devices import Device
 
 WORK_ROOT = PurePosixPath("/data/builds/work")
 COMMIT = "e949fa3a2eb8bf218e96c2c03625bbd36e4342b1"

@@ -4,10 +4,13 @@ from typing import Any
 
 import numpy
 
-from mostt_model_builder.domain.bench.fleurs_index import locate_bench_files, parse_fleurs_index
+from mostt_model_builder.domain.bench.fleurs_index import (
+    FLEURS_REPOSITORY,
+    locate_bench_files,
+    parse_fleurs_index,
+)
 from mostt_model_builder.domain.bench.wav_format import SampleFormat, parse_wav_layout
-from mostt_model_builder.domain.containers.container_steps import FLEURS_REPOSITORY
-from mostt_model_builder.domain.contract.derived_rows import select_shard
+from mostt_model_builder.domain.contract.shard_request import select_shard
 from mostt_model_builder.steps.bound_sources import find_bound_source
 from mostt_model_builder.steps.fleurs_audio import read_recordings
 

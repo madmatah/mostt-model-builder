@@ -1,17 +1,17 @@
 from mostt_model_builder.domain.acceptance.parity_reports import PARITY_REPORT_MAX_SIZE_BYTES
-from mostt_model_builder.domain.bench.fleurs_index import BENCH_LANGUAGES, locate_bench_files
-from mostt_model_builder.domain.bench.hypotheses import (
-    RUN_LINES_FILE_NAME,
-    RUN_LINES_MAX_SIZE_BYTES,
+from mostt_model_builder.domain.bench.fleurs_index import (
+    BENCH_LANGUAGES,
+    FLEURS_REPOSITORY,
+    locate_bench_files,
 )
+from mostt_model_builder.domain.bench.run_lines import RUN_LINES_FILE_NAME, RUN_LINES_MAX_SIZE_BYTES
 from mostt_model_builder.domain.containers.container_steps import (
     CONVERT_STEP_NAME,
-    FLEURS_REPOSITORY,
     PEAKS_OUTPUT,
     DeclaredOutput,
-    Device,
     StepLimits,
 )
+from mostt_model_builder.domain.containers.devices import Device
 from mostt_model_builder.domain.contract.recipe_contract import (
     CANDIDATE_MOUNT,
     REFERENCE_VARIANT,

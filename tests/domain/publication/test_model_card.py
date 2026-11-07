@@ -21,7 +21,7 @@ from mostt_model_builder.domain.acceptance.verification import (
     Verification,
     measure_parity,
 )
-from mostt_model_builder.domain.containers.container_steps import Device
+from mostt_model_builder.domain.containers.devices import Device
 from mostt_model_builder.domain.contract.model_description import (
     ModelDescription,
     PinnedRevision,

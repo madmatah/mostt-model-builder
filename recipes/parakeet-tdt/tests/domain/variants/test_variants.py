@@ -2,7 +2,7 @@ from fnmatch import fnmatchcase
 
 import pytest
 
-from mostt_model_builder.domain.containers.container_steps import Device
+from mostt_model_builder.domain.containers.devices import Device
 from mostt_model_builder.domain.formats.file_formats import FileFormat
 from mostt_model_builder.domain.onnx.conversion_request import EightBitBlocksConversion
 from mostt_recipe_parakeet_tdt.domain.variants.candidate_layout import find_quantization
