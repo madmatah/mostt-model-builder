@@ -11,19 +11,31 @@ base_model_relation: "quantized"
 
 Moondream's Parakeet Ultra, a post-training of NVIDIA's Parakeet TDT 0.6B v3, exported to ONNX in the layout of onnx-asr, with its encoder in float32, float16, bfloat16 and 8-bit blocks.
 
+## Languages
+
+The model transcribes 25 European languages and detects the language by itself: Bulgarian, Croatian, Czech, Danish, Dutch, English, Estonian, Finnish, French, German, Greek, Hungarian, Italian, Latvian, Lithuanian, Maltese, Polish, Portuguese, Romanian, Russian, Slovak, Slovenian, Spanish, Swedish, Ukrainian.
+
+This card measures $measured_languages on [FLEURS](https://huggingface.co/datasets/google/fleurs/tree/$fleurs_revision); the other languages are those NVIDIA's Parakeet TDT 0.6B v3 declares, not measured here.
+
 ## Variants
 
-Word error rates on the test sets of FLEURS, without the unknown tokens, which the vocabulary cannot write.
+The variants share the same weights and differ in the precision of the encoder. Pick float32 for reference accuracy.
 
 $variant_sections
 
-## Languages
+The rates and comparisons are measured as [How the rates were measured](#how-the-rates-were-measured) describes.
 
-The model declares 25 languages: en, es, fr, de, bg, hr, cs, da, nl, et, fi, el, hu, it, lv, lt, mt, pl, pt, ro, sk, sl, sv, ru, uk. [FLEURS](https://huggingface.co/datasets/google/fleurs/tree/$fleurs_revision) measured $measured_languages only: the other languages are declared, not measured here.
+## How the rates were measured
+
+The word error rate (WER) counts the words a transcript gets wrong (substituted, missing or added) against FLEURS's reference, over the number of words in the reference. Each variant transcribed the test sets of FLEURS ($measured_utterances) greedily, one utterance at a time, on each device it runs on, $measured_with. The rate shown is the one measured on the CPU, or on the GPU for the variants that only run there: the runtime and the hardware, not the files, make the two differ slightly.
+
+Before counting errors, both the transcript and FLEURS's reference are normalized the same way: Unicode NFKC, lowercase, punctuation removed, typographic apostrophes read as plain ones.
+
+The `<unk>` tokens are removed from the transcripts. The vocabulary of Parakeet TDT has no piece for some characters FLEURS writes, such as « or ’, so the model writes `<unk>` where they stand; counting them as errors would penalize the vocabulary, not the recognition.
+
+Each variant is compared with its reference on the same utterances: float32 with the original model in NeMo, the other variants with float32 on the same device. float32 must give the same tokens as NeMo on every utterance, and a variant is accepted only if it loses at most 0.2 points against its reference, at the upper end of a 95 % interval from a paired bootstrap.
 
 ## Limitations
-
-FLEURS measured French and English alone; the other declared languages are those of Parakeet TDT 0.6B v3, unmeasured here.
 
 Moondream's voice activity head, which its own runtime uses to cut long recordings at their pauses, is not exported.
 
@@ -52,8 +64,6 @@ The files follow onnx-asr's layout for a NeMo TDT model: config.json selects its
 onnx-asr loads the directory of these files as a NeMo TDT model, given the quantization of the variant to run.
 
 encoder-model.onnx reads its weights from encoder-model.onnx.data, which lies beside it; each other encoder is a single file.
-
-The rates above were measured $measured_with.
 
 ## License and attribution
 
