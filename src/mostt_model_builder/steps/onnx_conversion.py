@@ -33,6 +33,7 @@ from mostt_model_builder.domain.onnx.conversion_request import (
     FloatConversion,
     parse_conversion_request,
 )
+from mostt_model_builder.domain.onnx.element_types import ElementType
 from mostt_model_builder.domain.onnx.onnx_runtime_names import (
     EIGHT_BIT_BLOCKS_OPERATOR,
     ONNX_RUNTIME_DOMAIN,
@@ -40,7 +41,6 @@ from mostt_model_builder.domain.onnx.onnx_runtime_names import (
 from mostt_model_builder.domain.onnx.precision_decisions import (
     MAX_FINITE_VALUE,
     MIN_POSITIVE_VALUE,
-    ElementType,
     list_kept_float32_operators,
     realign_cast_target,
     retype_for_bfloat16,

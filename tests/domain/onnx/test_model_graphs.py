@@ -4,17 +4,18 @@ from dataclasses import dataclass, field
 
 import pytest
 
+from mostt_model_builder.domain.onnx.element_types import ElementType
+from mostt_model_builder.domain.onnx.graph_paths import GRAPH_ATTRIBUTE, GRAPHS_ATTRIBUTE
 from mostt_model_builder.domain.onnx.inspection_report import (
     ExternalTensor,
     MatrixProduct,
     NodeCount,
     NodeScope,
+    TensorComputation,
     WeightSource,
 )
 from mostt_model_builder.domain.onnx.model_graphs import (
     EXTERNAL_DATA_LOCATION,
-    GRAPH_ATTRIBUTE,
-    GRAPHS_ATTRIBUTE,
     SPARSE_TENSOR_ATTRIBUTE,
     SPARSE_TENSORS_ATTRIBUTE,
     TENSOR_ATTRIBUTE,
@@ -23,7 +24,10 @@ from mostt_model_builder.domain.onnx.model_graphs import (
     count_nodes_with_metadata,
     count_sparse_initializers,
     count_training_graphs,
+    index_main_graph,
+    list_cast_computations,
     list_external_tensors,
+    list_output_computations,
     list_products,
 )
 
@@ -37,6 +41,8 @@ LOCAL_DOMAIN = "mostt.local"
 LOCAL_FUNCTION_NAME = "RelativePositionAttention"
 WEIGHT_NAME = "weight"
 SIBLING_WEIGHT_NAME = "then_weight"
+# The value of AttributeProto.AttributeType that holds an integer, as onnx/onnx.proto defines it.
+INT_ATTRIBUTE = 2
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,12 +68,30 @@ class FakeSparseTensor:
 @dataclass(frozen=True, slots=True)
 class FakeAttribute:
     type: int
+    name: str = ""
+    i: int = 0
     t: FakeTensor = field(default_factory=FakeTensor)
     tensors: tuple[FakeTensor, ...] = ()
     sparse_tensor: FakeSparseTensor = field(default_factory=FakeSparseTensor)
     sparse_tensors: tuple[FakeSparseTensor, ...] = ()
     g: "FakeGraph" = field(default_factory=lambda: FakeGraph())
     graphs: tuple["FakeGraph", ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class FakeTensorType:
+    elem_type: int
+
+
+@dataclass(frozen=True, slots=True)
+class FakeType:
+    tensor_type: FakeTensorType
+
+
+@dataclass(frozen=True, slots=True)
+class FakeValueInfo:
+    name: str
+    type: FakeType
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,10 +109,15 @@ class FakeGraph:
     node: tuple[FakeNode, ...] = ()
     initializer: tuple[FakeTensor, ...] = ()
     sparse_initializer: tuple[FakeSparseTensor, ...] = ()
+    input: tuple[FakeValueInfo, ...] = ()
+    output: tuple[FakeValueInfo, ...] = ()
+    value_info: tuple[FakeValueInfo, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
 class FakeFunction:
+    domain: str = LOCAL_DOMAIN
+    name: str = LOCAL_FUNCTION_NAME
     node: tuple[FakeNode, ...] = ()
     attribute_proto: tuple[FakeAttribute, ...] = ()
 
@@ -350,6 +379,203 @@ METADATA_IN_A_FUNCTION_SUBGRAPH = build_model_with_function(
 )
 
 
+def declare(name: str, element_type: ElementType) -> FakeValueInfo:
+    return FakeValueInfo(name, FakeType(FakeTensorType(element_type)))
+
+
+def build_cast(source: str, target: str, element_type: ElementType) -> FakeNode:
+    return FakeNode(
+        "Cast",
+        input=(source,),
+        output=(target,),
+        attribute=(FakeAttribute(INT_ATTRIBUTE, name="to", i=element_type),),
+    )
+
+
+# The length chain of torch 2.15's export of the encoder: each round of the subsampling adds,
+# subtracts and divides, with a Floor between casts to float32 and back, beside an audio path that
+# ends in the encoder's outputs; the declarations of its tensors give the precision it rounds in.
+ENCODER_NODES = (
+    FakeNode("Relu", input=("audio_signal",), output=("features",)),
+    FakeNode("MatMul", input=("features", WEIGHT_NAME), output=("outputs",)),
+    build_cast("length", "length_rounded", ElementType.FLOAT),
+    FakeNode("Add", input=("length_rounded", "padding"), output=("padded",)),
+    FakeNode("Add", input=("padded", "padding"), output=("padded_twice",)),
+    FakeNode("Sub", input=("padded_twice", "kernel_size"), output=("shortened",)),
+    FakeNode("Div", input=("shortened", "stride"), output=("divided",)),
+    build_cast("divided", "divided_float", ElementType.FLOAT),
+    FakeNode("Floor", input=("divided_float",), output=("floored",)),
+    build_cast("floored", "floored_rounded", ElementType.FLOAT),
+    build_cast("floored_rounded", "encoded_lengths", ElementType.INT64),
+)
+
+
+def declare_length_chain(rounding_type: ElementType) -> tuple[FakeValueInfo, ...]:
+    return (
+        declare("features", ElementType.FLOAT),
+        declare("length_rounded", rounding_type),
+        declare("padded", rounding_type),
+        declare("padded_twice", rounding_type),
+        declare("shortened", rounding_type),
+        declare("divided", rounding_type),
+        declare("divided_float", ElementType.FLOAT),
+        declare("floored", ElementType.FLOAT),
+        declare("floored_rounded", rounding_type),
+    )
+
+
+ENCODER_INPUTS = (declare("audio_signal", ElementType.FLOAT), declare("length", ElementType.INT64))
+ENCODER_OUTPUTS = (
+    declare("outputs", ElementType.FLOAT),
+    declare("encoded_lengths", ElementType.INT64),
+)
+CHAIN_INITIALIZERS = tuple(
+    FakeTensor(name, ()) for name in (WEIGHT_NAME, "padding", "kernel_size", "stride")
+)
+
+
+def build_encoder(
+    nodes: tuple[FakeNode, ...],
+    value_info: tuple[FakeValueInfo, ...],
+    functions: tuple[FakeFunction, ...] = (),
+    outputs: tuple[FakeValueInfo, ...] = ENCODER_OUTPUTS,
+) -> FakeModel:
+    return FakeModel(
+        graph=FakeGraph(
+            node=nodes,
+            initializer=CHAIN_INITIALIZERS,
+            input=ENCODER_INPUTS,
+            output=outputs,
+            value_info=value_info,
+        ),
+        functions=functions,
+    )
+
+
+def replace_chain_node(
+    nodes: tuple[FakeNode, ...], operator: str, replacement: FakeNode
+) -> tuple[FakeNode, ...]:
+    return tuple(replacement if node.op_type == operator else node for node in nodes)
+
+
+def drop_declaration(value_info: tuple[FakeValueInfo, ...], name: str) -> tuple[FakeValueInfo, ...]:
+    return tuple(declaration for declaration in value_info if declaration.name != name)
+
+
+BFLOAT16_ENCODER = build_encoder(ENCODER_NODES, declare_length_chain(ElementType.BFLOAT16))
+FLOAT32_DECLARATIONS = declare_length_chain(ElementType.FLOAT)
+BRANCH_THAT_READS_THE_CHAIN = FakeGraph(
+    node=(FakeNode("Sub", input=("padded_twice", "kernel_size"), output=("branch_shortened",)),),
+    output=(declare("branch_shortened", ElementType.FLOAT),),
+)
+OUTPUT_COMPUTATIONS = {
+    "a cast pair that the conversion removed leaves a float16 declaration that no node writes": (
+        build_encoder(
+            ENCODER_NODES,
+            (*FLOAT32_DECLARATIONS, declare("removed_cast_output", ElementType.FLOAT16)),
+        ),
+        (ElementType.FLOAT, ElementType.INT64),
+    ),
+    "a tensor of the computation without a declared type": (
+        build_encoder(ENCODER_NODES, drop_declaration(FLOAT32_DECLARATIONS, "shortened")),
+        (ElementType.UNDEFINED, ElementType.FLOAT, ElementType.INT64),
+    ),
+    "an If whose branch reads a tensor of the chain": (
+        build_encoder(
+            replace_chain_node(
+                ENCODER_NODES,
+                "Sub",
+                FakeNode(
+                    "If",
+                    input=("condition",),
+                    output=("shortened",),
+                    attribute=(
+                        FakeAttribute(GRAPH_ATTRIBUTE, g=BRANCH_THAT_READS_THE_CHAIN),
+                        FakeAttribute(GRAPH_ATTRIBUTE, g=BRANCH_THAT_READS_THE_CHAIN),
+                    ),
+                ),
+            ),
+            FLOAT32_DECLARATIONS,
+        ),
+        (ElementType.UNDEFINED, ElementType.FLOAT, ElementType.INT64),
+    ),
+    "a call to a function of the model": (
+        build_encoder(
+            replace_chain_node(
+                ENCODER_NODES,
+                "Div",
+                FakeNode(
+                    LOCAL_FUNCTION_NAME,
+                    LOCAL_DOMAIN,
+                    input=("shortened", "stride"),
+                    output=("divided",),
+                ),
+            ),
+            FLOAT32_DECLARATIONS,
+            functions=(build_function((FakeNode("Div"),)),),
+        ),
+        (ElementType.UNDEFINED, ElementType.FLOAT, ElementType.INT64),
+    ),
+}
+INPUT_BORNE_BY_AN_INITIALIZER = FakeModel(
+    graph=FakeGraph(
+        node=(FakeNode("Identity", input=("scale",), output=("scaled",)),),
+        initializer=(FakeTensor("scale", ()),),
+        input=(declare("scale", ElementType.FLOAT16),),
+        output=(declare("scaled", ElementType.FLOAT16),),
+        value_info=(),
+    )
+)
+
+
+# onnxconverter-common leaves a float16 cast pair around a length that a cast to int64 off the path
+# reads, here add_9 and _to_copy_5, even when it keeps the path from length to encoded_lengths in
+# float32.
+CONVERTED_WITH_A_CAST_PAIR = FakeModel(
+    graph=FakeGraph(
+        node=(
+            FakeNode("Relu", input=("audio_signal",), output=("features",)),
+            FakeNode("MatMul", input=("features", WEIGHT_NAME), output=("outputs",)),
+            build_cast("length", "_to_copy", ElementType.FLOAT),
+            FakeNode("Add", input=("_to_copy", "padding"), output=("add_9_float32",)),
+            build_cast("add_9_float32", "add_9", ElementType.FLOAT16),
+            build_cast("add_9", "_to_copy_5", ElementType.INT64),
+            build_cast("add_9", "add_16_input", ElementType.FLOAT),
+            FakeNode("Add", input=("add_16_input", "padding"), output=("add_16",)),
+            build_cast("add_16", "encoded_lengths", ElementType.INT64),
+        ),
+        initializer=CHAIN_INITIALIZERS,
+        input=ENCODER_INPUTS,
+        output=ENCODER_OUTPUTS,
+        value_info=(
+            declare("features", ElementType.FLOAT),
+            declare("_to_copy", ElementType.FLOAT),
+            declare("add_9_float32", ElementType.FLOAT),
+            declare("add_9", ElementType.FLOAT16),
+            declare("_to_copy_5", ElementType.INT64),
+            declare("add_16_input", ElementType.FLOAT),
+            declare("add_16", ElementType.FLOAT),
+        ),
+    )
+)
+SHAPE_OF_A_FLOAT16_TENSOR = FakeModel(
+    graph=FakeGraph(
+        node=(
+            build_cast("audio_signal", "audio_half", ElementType.FLOAT16),
+            FakeNode("Shape", input=("audio_half",), output=("audio_shape",)),
+            build_cast("audio_shape", "frame_count", ElementType.INT64),
+        ),
+        input=ENCODER_INPUTS,
+        output=(declare("audio_half", ElementType.FLOAT16),),
+        value_info=(
+            declare("audio_half", ElementType.FLOAT16),
+            declare("audio_shape", ElementType.INT64),
+            declare("frame_count", ElementType.INT64),
+        ),
+    )
+)
+
+
 class TestTheModelGraphs:
     class TestTheListExternalTensorsFunction:
         @pytest.mark.parametrize(
@@ -521,3 +747,139 @@ class TestTheModelGraphs:
 
             def test_should_count_none(self, training_graph_count: int) -> None:
                 assert training_graph_count == 0
+
+    class TestTheListOutputComputationsFunction:
+        class TestWhenTheLengthChainRoundsThroughBfloat16:
+            @pytest.fixture
+            def output_computations(self) -> tuple[TensorComputation, ...]:
+                return list_output_computations(index_main_graph(BFLOAT16_ENCODER))
+
+            def test_should_report_the_lengths_computed_through_bfloat16_beside_the_outputs(
+                self, output_computations: tuple[TensorComputation, ...]
+            ) -> None:
+                assert output_computations == (
+                    TensorComputation("outputs", ElementType.FLOAT, (ElementType.FLOAT,)),
+                    TensorComputation(
+                        "encoded_lengths",
+                        ElementType.INT64,
+                        (ElementType.FLOAT, ElementType.INT64, ElementType.BFLOAT16),
+                    ),
+                )
+
+        class TestWhenTheLengthChainIsKeptInFloat32:
+            @pytest.fixture
+            def output_computations(self) -> tuple[TensorComputation, ...]:
+                return list_output_computations(
+                    index_main_graph(build_encoder(ENCODER_NODES, FLOAT32_DECLARATIONS))
+                )
+
+            def test_should_report_the_lengths_computed_through_float32_and_int64_alone(
+                self, output_computations: tuple[TensorComputation, ...]
+            ) -> None:
+                assert output_computations[1] == TensorComputation(
+                    "encoded_lengths", ElementType.INT64, (ElementType.FLOAT, ElementType.INT64)
+                )
+
+        @pytest.mark.parametrize(
+            ("model", "expected_types"),
+            list(OUTPUT_COMPUTATIONS.values()),
+            ids=list(OUTPUT_COMPUTATIONS.keys()),
+        )
+        class TestWhenTheLengthChainHolds:
+            @pytest.fixture
+            def output_computations(self, model: FakeModel) -> tuple[TensorComputation, ...]:
+                return list_output_computations(index_main_graph(model))
+
+            def test_should_report_the_types_that_the_chain_writes_or_one_it_cannot_tell(
+                self,
+                output_computations: tuple[TensorComputation, ...],
+                expected_types: tuple[ElementType, ...],
+            ) -> None:
+                assert output_computations[1].computation_types == expected_types
+
+        class TestWhenAnInitializerBearsAGraphInput:
+            @pytest.fixture
+            def output_computations(self) -> tuple[TensorComputation, ...]:
+                return list_output_computations(index_main_graph(INPUT_BORNE_BY_AN_INITIALIZER))
+
+            def test_should_start_no_computation_from_it_since_it_is_a_parameter(
+                self, output_computations: tuple[TensorComputation, ...]
+            ) -> None:
+                assert output_computations == (
+                    TensorComputation("scaled", ElementType.FLOAT16, ()),
+                )
+
+        class TestWhenTheGraphListsTheLengthsBeforeTheOutputs:
+            @pytest.fixture
+            def output_computations(self) -> tuple[TensorComputation, ...]:
+                return list_output_computations(
+                    index_main_graph(
+                        build_encoder(
+                            ENCODER_NODES, FLOAT32_DECLARATIONS, outputs=ENCODER_OUTPUTS[::-1]
+                        )
+                    )
+                )
+
+            def test_should_report_the_outputs_in_the_graphs_order(
+                self, output_computations: tuple[TensorComputation, ...]
+            ) -> None:
+                assert [output.name for output in output_computations] == [
+                    "encoded_lengths",
+                    "outputs",
+                ]
+
+    class TestTheListCastComputationsFunction:
+        class TestWhenALengthGoesThroughTheCastPairThatTheConversionLeft:
+            @pytest.fixture
+            def cast_computations(self) -> tuple[TensorComputation, ...]:
+                return list_cast_computations(index_main_graph(CONVERTED_WITH_A_CAST_PAIR))
+
+            def test_should_report_the_cast_to_int64_computed_through_float16(
+                self, cast_computations: tuple[TensorComputation, ...]
+            ) -> None:
+                assert [cast for cast in cast_computations if cast.name == "_to_copy_5"] == [
+                    TensorComputation(
+                        "_to_copy_5",
+                        ElementType.INT64,
+                        (ElementType.FLOAT, ElementType.INT64, ElementType.FLOAT16),
+                    )
+                ]
+
+            def test_should_report_the_output_lengths_computed_through_float16_too(
+                self, cast_computations: tuple[TensorComputation, ...]
+            ) -> None:
+                assert [cast for cast in cast_computations if cast.name == "encoded_lengths"] == [
+                    TensorComputation(
+                        "encoded_lengths",
+                        ElementType.INT64,
+                        (ElementType.FLOAT, ElementType.INT64, ElementType.FLOAT16),
+                    )
+                ]
+
+        class TestWhenTheGraphCastsToSeveralTypes:
+            @pytest.fixture
+            def cast_computations(self) -> tuple[TensorComputation, ...]:
+                return list_cast_computations(index_main_graph(CONVERTED_WITH_A_CAST_PAIR))
+
+            def test_should_report_every_cast_in_the_graphs_order_with_its_target(
+                self, cast_computations: tuple[TensorComputation, ...]
+            ) -> None:
+                assert [(cast.name, cast.element_type) for cast in cast_computations] == [
+                    ("_to_copy", ElementType.FLOAT),
+                    ("add_9", ElementType.FLOAT16),
+                    ("_to_copy_5", ElementType.INT64),
+                    ("add_16_input", ElementType.FLOAT),
+                    ("encoded_lengths", ElementType.INT64),
+                ]
+
+        class TestWhenAnIntegerCastReadsTheShapeOfAFloat16Tensor:
+            @pytest.fixture
+            def cast_computations(self) -> tuple[TensorComputation, ...]:
+                return list_cast_computations(index_main_graph(SHAPE_OF_A_FLOAT16_TENSOR))
+
+            def test_should_leave_the_float16_values_out_since_a_shape_carries_none_of_them(
+                self, cast_computations: tuple[TensorComputation, ...]
+            ) -> None:
+                assert cast_computations[1] == TensorComputation(
+                    "frame_count", ElementType.INT64, (ElementType.INT64,)
+                )

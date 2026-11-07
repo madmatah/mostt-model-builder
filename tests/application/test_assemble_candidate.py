@@ -213,6 +213,8 @@ ENCODER_INSPECTION = FileInspection(
     ),
     training_graph_count=0,
     sparse_initializer_count=0,
+    outputs=(),
+    casts=(),
 )
 DECODER_INSPECTION = FileInspection(
     name=DECODER_NAME,
@@ -224,6 +226,8 @@ DECODER_INSPECTION = FileInspection(
     external_tensors=(),
     training_graph_count=0,
     sparse_initializer_count=0,
+    outputs=(),
+    casts=(),
 )
 REPORT = InspectionReport((ENCODER_INSPECTION, DECODER_INSPECTION))
 NOT_THE_HOSTS_COPY = (
@@ -293,6 +297,8 @@ EIGHT_BIT_ENCODER_INSPECTION = FileInspection(
     external_tensors=(),
     training_graph_count=0,
     sparse_initializer_count=0,
+    outputs=(),
+    casts=(),
 )
 EIGHT_BIT_DECODER_INSPECTION = replace(DECODER_INSPECTION, name=EIGHT_BIT_DECODER_NAME)
 

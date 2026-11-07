@@ -104,6 +104,8 @@ ENCODER_INSPECTION = FileInspection(
     external_tensors=(),
     training_graph_count=0,
     sparse_initializer_count=0,
+    outputs=(),
+    casts=(),
 )
 INSPECTION_REPORT = InspectionReport((ENCODER_INSPECTION,))
 REFUSED_INSPECTION_REPORT = InspectionReport(

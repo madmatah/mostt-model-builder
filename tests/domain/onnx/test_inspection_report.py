@@ -5,6 +5,7 @@ from functools import partial
 
 import pytest
 
+from mostt_model_builder.domain.onnx.element_types import ElementType
 from mostt_model_builder.domain.onnx.inspection_report import (
     INSPECTION_REPORT_MAX_SIZE_BYTES,
     MAX_COUNT,
@@ -22,6 +23,7 @@ from mostt_model_builder.domain.onnx.inspection_report import (
     NodeCount,
     NodeScope,
     Opset,
+    TensorComputation,
     WeightSource,
     parse_inspection_report,
     parse_inspection_request,
@@ -56,6 +58,22 @@ ENCODER = FileInspection(
     ),
     training_graph_count=0,
     sparse_initializer_count=0,
+    outputs=(
+        TensorComputation("outputs", ElementType.FLOAT, (ElementType.FLOAT, ElementType.INT64)),
+        TensorComputation(
+            "encoded_lengths",
+            ElementType.INT64,
+            (ElementType.FLOAT, ElementType.INT64, ElementType.BFLOAT16),
+        ),
+    ),
+    casts=(
+        TensorComputation("_to_copy", ElementType.FLOAT, (ElementType.FLOAT,)),
+        TensorComputation(
+            "_to_copy_5",
+            ElementType.INT64,
+            (ElementType.FLOAT, ElementType.INT64, ElementType.FLOAT16),
+        ),
+    ),
 )
 DECODER = FileInspection(
     name=DECODER_NAME,
@@ -67,6 +85,8 @@ DECODER = FileInspection(
     external_tensors=(),
     training_graph_count=2,
     sparse_initializer_count=1,
+    outputs=(),
+    casts=(),
 )
 REPORT = InspectionReport((ENCODER, DECODER))
 WHERE = "the inspection of encoder.onnx"
@@ -98,6 +118,14 @@ def build_external_tensor(**changes: object) -> dict[str, object]:
     return {"location": "encoder.onnx.data", "offset_bytes": 0, "length_bytes": 4096} | changes
 
 
+def build_tensor_computation(**changes: object) -> dict[str, object]:
+    return {
+        "name": "encoded_lengths",
+        "element_type": 7,
+        "computation_types": [1, 7, 16],
+    } | changes
+
+
 def build_file(name: object = ENCODER_NAME, **changes: object) -> dict[str, object]:
     return {
         "name": name,
@@ -109,6 +137,8 @@ def build_file(name: object = ENCODER_NAME, **changes: object) -> dict[str, obje
         "external_tensors": [build_external_tensor()],
         "training_graph_count": 0,
         "sparse_initializer_count": 0,
+        "outputs": [build_tensor_computation()],
+        "casts": [build_tensor_computation(name="_to_copy_5")],
     } | changes
 
 
@@ -159,13 +189,13 @@ REFUSED_REPORTS = {
     ),
     "a file without its products": (
         encode_report(remove_key(build_file(), "products"), build_file(DECODER_NAME)),
-        "a file of the report holds the keys ['external_tensors', 'functions', "
-        "'metadata_props_node_count', 'name', 'nodes', 'opsets', 'sparse_initializer_count', "
-        "'training_graph_count'], not",
+        "a file of the report holds the keys ['casts', 'external_tensors', 'functions', "
+        "'metadata_props_node_count', 'name', 'nodes', 'opsets', 'outputs', "
+        "'sparse_initializer_count', 'training_graph_count'], not",
     ),
     "a file with an unknown key": (
         build_report(command="rm"),
-        "a file of the report holds the keys ['command',",
+        "a file of the report holds the keys ['casts', 'command',",
     ),
     "a file named by a path": (
         encode_report(build_file("../encoder.onnx"), build_file(DECODER_NAME)),
@@ -347,6 +377,91 @@ REFUSED_REPORTS = {
     "an external length beyond the bound": (
         build_report(external_tensors=[build_external_tensor(length_bytes=MAX_OFFSET_BYTES + 1)]),
         f"{WHERE}: its external tensors: a length, {MAX_OFFSET_BYTES + 1}, is not a count",
+    ),
+    "outputs that are not a list": (
+        build_report(outputs={}),
+        f"{WHERE}: its outputs is not a list",
+    ),
+    "more outputs than the bound": (
+        build_report(outputs=[0] * (MAX_LIST_LENGTH + 1)),
+        f"{WHERE}: its outputs holds {MAX_LIST_LENGTH + 1} entries, more than {MAX_LIST_LENGTH}",
+    ),
+    "an output without its computation's types": (
+        build_report(outputs=[remove_key(build_tensor_computation(), "computation_types")]),
+        f"{WHERE}: its outputs holds the keys ['element_type', 'name'], not",
+    ),
+    "an output with an unknown key": (
+        build_report(outputs=[build_tensor_computation(command="rm")]),
+        f"{WHERE}: its outputs holds the keys ['command',",
+    ),
+    "an output named outside the grammar of tensor names": (
+        build_report(outputs=[build_tensor_computation(name="encoded lengths")]),
+        f"{WHERE}: its outputs: a name, 'encoded lengths', does not match "
+        "[A-Za-z0-9_.:/-]{1,256}",
+    ),
+    "an output whose name is empty": (
+        build_report(outputs=[build_tensor_computation(name="")]),
+        f"{WHERE}: its outputs: a name, '', does not match",
+    ),
+    "an output whose name is not a string": (
+        build_report(outputs=[build_tensor_computation(name=7)]),
+        f"{WHERE}: its outputs: a name, 7, does not match",
+    ),
+    "an element type beyond onnx's table": (
+        build_report(outputs=[build_tensor_computation(element_type=29)]),
+        f"{WHERE}: its outputs: an element type, 29, is not an element type of onnx 1.23.2",
+    ),
+    "a negative element type": (
+        build_report(outputs=[build_tensor_computation(element_type=-1)]),
+        f"{WHERE}: its outputs: an element type, -1, is not an element type",
+    ),
+    "a boolean element type": (
+        build_report(outputs=[build_tensor_computation(element_type=True)]),
+        f"{WHERE}: its outputs: an element type, True, is not an element type",
+    ),
+    "an element type given by its name": (
+        build_report(outputs=[build_tensor_computation(element_type="INT64")]),
+        f"{WHERE}: its outputs: an element type, 'INT64', is not an element type",
+    ),
+    "computation types that are not a list": (
+        build_report(outputs=[build_tensor_computation(computation_types=7)]),
+        f"{WHERE}: its outputs: the types of a computation is not a list",
+    ),
+    "a computation type beyond onnx's table": (
+        build_report(outputs=[build_tensor_computation(computation_types=[1, 100])]),
+        f"{WHERE}: its outputs: a type of a computation, 100, is not an element type",
+    ),
+    "a computation type twice": (
+        build_report(outputs=[build_tensor_computation(computation_types=[1, 16, 1])]),
+        f"{WHERE}: its outputs: a computation lists a type twice",
+    ),
+    "more computation types than onnx has element types": (
+        build_report(outputs=[build_tensor_computation(computation_types=[1] * 30)]),
+        f"{WHERE}: its outputs: the types of a computation holds 30 entries, more than 29",
+    ),
+    "casts that are not a list": (
+        build_report(casts={}),
+        f"{WHERE}: its casts is not a list",
+    ),
+    "more casts than the bound": (
+        build_report(casts=[0] * (MAX_LIST_LENGTH + 1)),
+        f"{WHERE}: its casts holds {MAX_LIST_LENGTH + 1} entries, more than {MAX_LIST_LENGTH}",
+    ),
+    "a cast without its target": (
+        build_report(casts=[remove_key(build_tensor_computation(), "element_type")]),
+        f"{WHERE}: its casts holds the keys ['computation_types', 'name'], not",
+    ),
+    "a cast named outside the grammar of tensor names": (
+        build_report(casts=[build_tensor_computation(name="_to_copy 5")]),
+        f"{WHERE}: its casts: a name, '_to_copy 5', does not match",
+    ),
+    "a cast whose target is beyond onnx's table": (
+        build_report(casts=[build_tensor_computation(element_type=29)]),
+        f"{WHERE}: its casts: an element type, 29, is not an element type of onnx 1.23.2",
+    ),
+    "a cast whose computation lists a type twice": (
+        build_report(casts=[build_tensor_computation(computation_types=[10, 10])]),
+        f"{WHERE}: its casts: a computation lists a type twice",
     ),
     "more external tensors than the bound": (
         build_report(external_tensors=[0] * (MAX_LIST_LENGTH + 1)),

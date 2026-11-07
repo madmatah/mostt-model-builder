@@ -6,6 +6,7 @@ from enum import StrEnum
 
 from mostt_model_builder.domain.formats.file_names import is_file_name
 from mostt_model_builder.domain.json_documents.json_depth import MAX_JSON_DEPTH, refuse_deep_json
+from mostt_model_builder.domain.onnx.element_types import ElementType
 
 INSPECTION_REPORT_FILE_NAME = "inspection.json"
 INSPECTION_REQUEST_FILE_NAME = "request.json"
@@ -21,6 +22,9 @@ MAX_RANK = 16
 MAX_OPSET_VERSION = 1000
 DOMAIN_GRAMMAR = re.compile(r"[A-Za-z0-9._-]{0,128}")
 OPERATOR_GRAMMAR = re.compile(r"[A-Za-z0-9_]{1,128}")
+# The names that torch's export and onnxconverter-common give a graph's tensors, and the separators
+# of their scopes.
+TENSOR_NAME_GRAMMAR = re.compile(r"[A-Za-z0-9_.:/-]{1,256}")
 # The producers the inspection traces a product's weight through: each holds only constants when
 # its own first input does, so that a weight reached through them is still a constant.
 CONSTANT_PRODUCERS = frozenset(
@@ -39,6 +43,8 @@ FILE_KEYS = frozenset(
         "external_tensors",
         "training_graph_count",
         "sparse_initializer_count",
+        "outputs",
+        "casts",
     }
 )
 OPSET_KEYS = frozenset({"domain", "version"})
@@ -46,7 +52,9 @@ FUNCTION_KEYS = frozenset({"domain", "name"})
 NODE_KEYS = frozenset({"scope", "domain", "operator", "count"})
 PRODUCT_KEYS = frozenset({"scope", "operator", "trace", "weight_source", "weight_rank"})
 EXTERNAL_TENSOR_KEYS = frozenset({"location", "offset_bytes", "length_bytes"})
+TENSOR_COMPUTATION_KEYS = frozenset({"name", "element_type", "computation_types"})
 REQUEST_KEYS = frozenset({"files"})
+ELEMENT_TYPES = frozenset(ElementType)
 
 
 class InspectionReportError(ValueError):
@@ -102,6 +110,13 @@ class ExternalTensor:
 
 
 @dataclass(frozen=True, slots=True)
+class TensorComputation:
+    name: str
+    element_type: ElementType
+    computation_types: tuple[ElementType, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class FileInspection:
     name: str
     opsets: tuple[Opset, ...]
@@ -112,6 +127,8 @@ class FileInspection:
     external_tensors: tuple[ExternalTensor, ...]
     training_graph_count: int
     sparse_initializer_count: int
+    outputs: tuple[TensorComputation, ...]
+    casts: tuple[TensorComputation, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -177,11 +194,21 @@ def render_inspection_report(report: InspectionReport) -> bytes:
                 ],
                 "training_graph_count": inspection.training_graph_count,
                 "sparse_initializer_count": inspection.sparse_initializer_count,
+                "outputs": [render_tensor_computation(output) for output in inspection.outputs],
+                "casts": [render_tensor_computation(cast) for cast in inspection.casts],
             }
             for inspection in report.files
         ]
     }
     return json.dumps(document, indent=1).encode("ascii")
+
+
+def render_tensor_computation(computation: TensorComputation) -> dict[str, object]:
+    return {
+        "name": computation.name,
+        "element_type": int(computation.element_type),
+        "computation_types": [int(element_type) for element_type in computation.computation_types],
+    }
 
 
 def parse_inspection_report(content: bytes, expected_names: Sequence[str]) -> InspectionReport:
@@ -242,6 +269,8 @@ def parse_file_inspection(entry: object) -> FileInspection:
         sparse_initializer_count=require_count(
             fields["sparse_initializer_count"], f"{where}: its count of sparse initializers"
         ),
+        outputs=parse_entries(fields["outputs"], f"{where}: its outputs", parse_tensor_computation),
+        casts=parse_entries(fields["casts"], f"{where}: its casts", parse_tensor_computation),
     )
 
 
@@ -318,6 +347,30 @@ def parse_external_tensor(entry: object, what: str) -> ExternalTensor:
     return ExternalTensor(
         require_file_name(fields["location"], f"{what}: a location"), offset_bytes, length_bytes
     )
+
+
+def parse_tensor_computation(entry: object, what: str) -> TensorComputation:
+    fields = require_object(entry, TENSOR_COMPUTATION_KEYS, what)
+    listed_types = require_list(
+        fields["computation_types"], f"{what}: the types of a computation", len(ElementType)
+    )
+    computation_types = tuple(
+        require_element_type(listed_type, f"{what}: a type of a computation")
+        for listed_type in listed_types
+    )
+    if len(set(computation_types)) != len(computation_types):
+        raise InspectionReportError(f"{what}: a computation lists a type twice")
+    return TensorComputation(
+        name=require_grammar(fields["name"], TENSOR_NAME_GRAMMAR, f"{what}: a name"),
+        element_type=require_element_type(fields["element_type"], f"{what}: an element type"),
+        computation_types=computation_types,
+    )
+
+
+def require_element_type(field: object, what: str) -> ElementType:
+    if isinstance(field, bool) or not isinstance(field, int) or field not in ELEMENT_TYPES:
+        raise InspectionReportError(f"{what}, {field!a}, is not an element type of onnx 1.23.2")
+    return ElementType(field)
 
 
 def require_object(entry: object, keys: frozenset[str], what: str) -> Mapping[str, object]:

@@ -22,7 +22,10 @@ from mostt_model_builder.domain.onnx.model_graphs import (
     count_nodes_with_metadata,
     count_sparse_initializers,
     count_training_graphs,
+    index_main_graph,
+    list_cast_computations,
     list_external_tensors,
+    list_output_computations,
     list_products,
 )
 from mostt_model_builder.steps.output_modes import finish_outputs
@@ -32,6 +35,7 @@ from mostt_model_builder.steps.output_modes import finish_outputs
 # messages match the Protocols of model_graphs, which name only fields of onnx/onnx.proto.
 def inspect_file(path: Path) -> FileInspection:
     model = onnx.load(str(path), load_external_data=False)
+    main_graph = index_main_graph(model)
     return FileInspection(
         name=path.name,
         opsets=tuple(Opset(opset.domain, opset.version) for opset in model.opset_import),
@@ -44,6 +48,8 @@ def inspect_file(path: Path) -> FileInspection:
         external_tensors=list_external_tensors(model),
         training_graph_count=count_training_graphs(model),
         sparse_initializer_count=count_sparse_initializers(model),
+        outputs=list_output_computations(main_graph),
+        casts=list_cast_computations(main_graph),
     )
 
 
