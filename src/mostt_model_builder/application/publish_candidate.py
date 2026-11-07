@@ -28,6 +28,10 @@ from mostt_model_builder.domain.containers.work_directory import (
     locate_publications,
     place_publication,
 )
+from mostt_model_builder.domain.publication.commit_message import (
+    CommitMessage,
+    describe_default_commit_message,
+)
 from mostt_model_builder.domain.publication.git_blobs import compute_git_blob_id
 from mostt_model_builder.domain.publication.hub_files import FileDecision, HubFile, decide_file
 from mostt_model_builder.domain.publication.hub_token import HubToken
@@ -42,7 +46,6 @@ from mostt_model_builder.domain.publication.publication_request import (
     PUBLICATION_REQUEST_FILE_NAME,
     PublicationRequest,
     PublishedFile,
-    describe_commit_title,
     render_publication_request,
 )
 from mostt_model_builder.domain.publication.published_tree import (
@@ -61,6 +64,8 @@ from mostt_model_builder.domain.sources.source_urls import build_tree_url
 
 # The container commits to the repository's main branch, so the summary reads that branch's head.
 HEAD_BRANCH = "main"
+COMMIT_MESSAGE_HEADER = "with the commit message:"
+COMMIT_MESSAGE_MARGIN = "  |"
 
 
 class PublicationPrompt(Protocol):
@@ -76,6 +81,7 @@ class CandidatePublication:
     card: CardRequest
     repository: str
     is_dry_run: bool = False
+    commit_message: CommitMessage | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -186,9 +192,14 @@ def build_publication_request(
     model = publication.card.model
     if model is None:
         raise PublicationError("the recipe describes no model")
+    commit_message = (
+        describe_default_commit_message(model.title)
+        if publication.commit_message is None
+        else publication.commit_message
+    )
     return PublicationRequest(
         repository=publication.repository,
-        commit_message=describe_commit_title(model.title),
+        commit_message=commit_message.title,
         candidate=tuple(
             PublishedFile(digest.name, digest.size_bytes, digest.sha256)
             for digest in prepared.verified.verification.candidate
@@ -196,6 +207,7 @@ def build_publication_request(
         card=PublishedFile(
             MODEL_CARD_FILE_NAME, len(prepared.card), hashlib.sha256(prepared.card).hexdigest()
         ),
+        commit_description=commit_message.description,
     )
 
 
@@ -279,4 +291,16 @@ def describe_upload(request: PublicationRequest) -> list[str]:
             f"  {published.name}, {published.size_bytes} bytes, sha256 {published.sha256}"
             for published in request.files
         ),
+        COMMIT_MESSAGE_HEADER,
+        *(quote_commit_message_line(line) for line in list_commit_message_lines(request)),
     ]
+
+
+def list_commit_message_lines(request: PublicationRequest) -> list[str]:
+    if not request.commit_description:
+        return [request.commit_message]
+    return [request.commit_message, "", *request.commit_description.split("\n")]
+
+
+def quote_commit_message_line(line: str) -> str:
+    return f"{COMMIT_MESSAGE_MARGIN} {line}" if line else COMMIT_MESSAGE_MARGIN
