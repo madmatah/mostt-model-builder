@@ -79,6 +79,7 @@ class Hub(Protocol):
         repository: str,
         staged_files: Sequence[StagedFile],
         commit_message: str,
+        commit_description: str,
         parent_revision: str,
     ) -> str: ...
 
@@ -127,12 +128,14 @@ class HuggingFaceHub:
         repository: str,
         staged_files: Sequence[StagedFile],
         commit_message: str,
+        commit_description: str,
         parent_revision: str,
     ) -> str:
         commit_info = self.api.create_commit(
             repository,
             [staged.operation for staged in staged_files],
             commit_message=commit_message,
+            commit_description=commit_description,
             parent_commit=parent_revision,
         )
         return str(commit_info.oid)
@@ -231,7 +234,11 @@ def publish(
     revision = head.revision
     if staged_files:
         revision = hub.commit(
-            request.repository, staged_files, request.commit_message, head.revision
+            request.repository,
+            staged_files,
+            request.commit_message,
+            request.commit_description,
+            head.revision,
         )
     return PublicationReport(
         repository=request.repository,
