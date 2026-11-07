@@ -103,10 +103,6 @@ class GitTree:
             )
         return completed.stdout
 
-    def find_head_commit(self) -> str:
-        output = self.run_git(["rev-parse", "--verify", "HEAD^{commit}"])
-        return require_object_name(show_printable(output).strip(), "the commit of HEAD")
-
     def find_head_tree(self) -> str:
         output = self.run_git(["rev-parse", "--verify", "HEAD^{tree}"])
         return require_object_name(show_printable(output).strip(), "the tree of HEAD")

@@ -18,11 +18,13 @@ from run_step_fakes import (
 )
 
 from mostt_model_builder.application.assemble_candidate import (
-    AssembledCandidate,
+    CandidateAssembly,
     CandidateCopy,
     CandidateError,
     CandidateRequest,
-    assemble_candidate,
+    check_candidate_copies,
+    copy_candidate,
+    inspect_candidate,
     read_candidate_texts,
 )
 from mostt_model_builder.application.run_step import HostIdentity, ImageFacts
@@ -53,6 +55,10 @@ from mostt_model_builder.domain.containers.step_peaks import (
     StepPeaks,
     render_step_peaks,
 )
+from mostt_model_builder.domain.containers.work_directory import (
+    locate_candidate_files,
+    place_entry,
+)
 from mostt_model_builder.domain.contract.recipe_contract import (
     HostContentOrigin,
     JudgedCandidateFile,
@@ -80,13 +86,17 @@ from mostt_model_builder.domain.onnx.inspection_report import (
 
 WORK_ROOT = PurePosixPath("/data/builds/work")
 HEAD_TREE = "3f1d1ffe79bc3336eb583331cfbf9b189fd45f01"
-COMMIT = "0123456789abcdef0123456789abcdef01234567"
+KEY = "91aa3c0e7d45" + "0" * 52
 IMAGE_ID = "sha256:" + "a" * 64
 RECIPE_NAME = "family"
-RUN_DIRECTORY = PurePosixPath("runs/family", COMMIT)
-CANDIDATE_DIRECTORY = WORK_ROOT / RUN_DIRECTORY / "candidate"
+CANDIDATE_FILES = locate_candidate_files(RECIPE_NAME, KEY)
+CANDIDATE_DIRECTORY = WORK_ROOT / CANDIDATE_FILES
+INSPECTION_PLACEMENT = place_entry(RECIPE_NAME, INSPECT_ROW.name, KEY, CANDIDATE_FILES)
 INSPECTION_REQUEST_PATH = (
-    WORK_ROOT / RUN_DIRECTORY / "requests/inspect" / INSPECTION_REQUEST_FILE_NAME
+    WORK_ROOT
+    / INSPECTION_PLACEMENT.output_directory.parent
+    / "request"
+    / INSPECTION_REQUEST_FILE_NAME
 )
 EXPORT_STEP = "export"
 DESCRIBE_STEP = "describe"
@@ -165,14 +175,14 @@ CANDIDATE_CONTENTS = {
 }
 HOST = HostIdentity(USER_ID, GROUP_ID, 20, HostAccounts(False, (), ()))
 REQUEST = CandidateRequest(
-    recipe_name=RECIPE_NAME,
-    commit=COMMIT,
     work_root=WORK_ROOT,
     head_tree=HEAD_TREE,
     host=HOST,
     candidate=CANDIDATE,
     rows=(EXPORT_ROW, DESCRIBE_ROW),
     conversion_input=StepOutputOrigin(EXPORT_STEP, ENCODER_NAME),
+    candidate_directory=CANDIDATE_FILES,
+    inspection_directory=INSPECTION_PLACEMENT.output_directory,
 )
 STEP_OUTPUTS = {
     EXPORT_STEP: {
@@ -294,6 +304,42 @@ def build_conversion_report(eight_bit_encoder: FileInspection) -> InspectionRepo
 
 
 @dataclass(frozen=True)
+class AssembledCandidate:
+    files: tuple[CandidateCopy, ...]
+    report: InspectionReport
+    peaks: StepPeaks
+
+
+def locate_output(step: str) -> PurePosixPath:
+    return place_entry(RECIPE_NAME, step, KEY).output_directory
+
+
+def describe_assembly(request: CandidateRequest) -> CandidateAssembly:
+    return CandidateAssembly(
+        work_root=request.work_root,
+        host=request.host,
+        candidate=request.candidate,
+        rows=request.rows,
+        candidate_directory=request.candidate_directory,
+        origin_directories={row.name: locate_output(row.name) for row in request.rows},
+    )
+
+
+def assemble_candidate(
+    request: CandidateRequest, engine: FakeContainerEngine, files: FakeStepFiles
+) -> AssembledCandidate:
+    copies = copy_candidate(describe_assembly(request), files)
+    inspected = inspect_candidate(
+        request,
+        INSPECTION_PLACEMENT,
+        {copy.name: copy.size_bytes for copy in copies},
+        engine,
+        files,
+    )
+    return AssembledCandidate(copies, inspected.report, inspected.peaks)
+
+
+@dataclass(frozen=True)
 class AssemblyRecord:
     assembled: AssembledCandidate
     runs: list[ContainerRun]
@@ -336,19 +382,13 @@ class RefusedRead:
     message: str
 
 
-@dataclass(frozen=True)
-class EarlierInspection:
-    assemble_act: Callable[[], AssembledCandidate]
-    files: FakeStepFiles
-
-
 def build_files(
     step_outputs: Mapping[str, Mapping[str, tuple[FileFacts, bytes]]] = STEP_OUTPUTS,
 ) -> FakeStepFiles:
     files = FakeStepFiles()
     files.add_directory(WORK_ROOT)
     for step, outputs in step_outputs.items():
-        output_directory = WORK_ROOT / RUN_DIRECTORY / step
+        output_directory = WORK_ROOT / locate_output(step)
         files.add_directory(output_directory, build_directory_facts(0o2770))
         for name, (facts, content) in outputs.items():
             files.add_file(output_directory / name, facts, content)
@@ -398,7 +438,7 @@ def build_candidate_files(vocabulary_facts: FileFacts | None) -> FakeStepFiles:
 
 
 class TestTheCandidateAssembly:
-    class TestTheAssembleCandidateFunction:
+    class TestTheInspectCandidateFunction:
         class TestWhenEveryFileOfTheCandidateHoldsWhatItDeclares:
             @pytest.fixture
             def assembly(self) -> AssemblyRecord:
@@ -451,7 +491,7 @@ class TestTheCandidateAssembly:
                 self, assembly: AssemblyRecord
             ) -> None:
                 assert BindMount(
-                    RUN_DIRECTORY / "candidate",
+                    CANDIDATE_FILES,
                     CANDIDATE_IN_THE_CONTAINER,
                     is_read_only=True,
                     is_file=False,
@@ -479,42 +519,14 @@ class TestTheCandidateAssembly:
                 files.add_directory(CANDIDATE_DIRECTORY, build_directory_facts(0o750))
                 return partial(assemble_candidate, REQUEST, build_engine(files), files)
 
-            def test_should_refuse_to_overwrite_it_and_name_the_command_that_removes_it(
+            def test_should_refuse_to_overwrite_it(
                 self, assemble_act: Callable[[], AssembledCandidate]
             ) -> None:
                 with pytest.raises(
                     CandidateError,
-                    match=re.escape(
-                        f"the candidate already exists in {RUN_DIRECTORY}/candidate: remove it "
-                        "with ./model-build.sh --work <dir> --recipe <name> clean inspect"
-                    ),
+                    match=re.escape(f"the candidate already exists in {CANDIDATE_FILES}"),
                 ):
                     assemble_act()
-
-        class TestWhenTheInspectionsOutputsRemainFromAnEarlierRun:
-            @pytest.fixture
-            def earlier_inspection(self) -> EarlierInspection:
-                files = build_files()
-                files.add_directory(
-                    WORK_ROOT / RUN_DIRECTORY / "inspect", build_directory_facts(0o2770)
-                )
-                return EarlierInspection(
-                    partial(assemble_candidate, REQUEST, build_engine(files), files), files
-                )
-
-            def test_should_refuse_it_before_copying_a_file(
-                self, earlier_inspection: EarlierInspection
-            ) -> None:
-                with pytest.raises(
-                    CandidateError,
-                    match=re.escape(
-                        f"the outputs of an earlier inspection remain in {RUN_DIRECTORY}/inspect: "
-                        "remove them with ./model-build.sh --work <dir> --recipe <name> clean "
-                        "inspect"
-                    ),
-                ):
-                    earlier_inspection.assemble_act()
-                assert CANDIDATE_DIRECTORY not in earlier_inspection.files.entries
 
         class TestWhenAnOutputOfAStepIsRefused:
             @pytest.fixture(
@@ -824,6 +836,59 @@ class TestTheCandidateAssembly:
             ) -> None:
                 with pytest.raises(GraphRuleError, match=re.escape(reason)):
                     assemble_act()
+
+    class TestTheCheckCandidateCopiesFunction:
+        class TestWhenEveryCopyIsTheHostsOwn:
+            @pytest.fixture
+            def checked_copies(self) -> tuple[CandidateCopy, ...]:
+                files = build_files()
+                copy_candidate(describe_assembly(REQUEST), files)
+                return check_candidate_copies(describe_assembly(REQUEST), files)
+
+            def test_should_give_back_each_copy_with_its_format_size_and_sha256(
+                self, checked_copies: tuple[CandidateCopy, ...]
+            ) -> None:
+                assert checked_copies == tuple(
+                    describe_copy(candidate_file.name, candidate_file.file_format)
+                    for candidate_file in CANDIDATE
+                )
+
+        class TestWhenACopyBeginsWithTheSignatureOfAnArchive:
+            @pytest.fixture
+            def check_act(self) -> Callable[[], tuple[CandidateCopy, ...]]:
+                files = build_files()
+                copy_candidate(describe_assembly(REQUEST), files)
+                archive = b"PK\x03\x04" + bytes(len(VOCABULARY) - 4)
+                files.contents[CANDIDATE_DIRECTORY / VOCABULARY_NAME] = archive
+                return partial(check_candidate_copies, describe_assembly(REQUEST), files)
+
+            def test_should_refuse_it_as_the_checks_of_today_would_at_its_copy(
+                self, check_act: Callable[[], tuple[CandidateCopy, ...]]
+            ) -> None:
+                with pytest.raises(
+                    CandidateError,
+                    match=re.escape(f"the candidate file {VOCABULARY_NAME} begins as"),
+                ):
+                    check_act()
+
+        class TestWhenACopyIsWritableByItsOwner:
+            @pytest.fixture
+            def check_act(self) -> Callable[[], tuple[CandidateCopy, ...]]:
+                files = build_files()
+                copy_candidate(describe_assembly(REQUEST), files)
+                files.entries[CANDIDATE_DIRECTORY / VOCABULARY_NAME] = build_file_facts(
+                    len(VOCABULARY), 0o644
+                )
+                return partial(check_candidate_copies, describe_assembly(REQUEST), files)
+
+            def test_should_refuse_it_as_not_the_hosts_own_copy(
+                self, check_act: Callable[[], tuple[CandidateCopy, ...]]
+            ) -> None:
+                with pytest.raises(
+                    ContainerFileError,
+                    match=re.escape(f"the candidate file {VOCABULARY_NAME} is not the host's own"),
+                ):
+                    check_act()
 
     class TestTheReadCandidateTextsFunction:
         class TestWhenTheCandidateHoldsTheHostsCopies:

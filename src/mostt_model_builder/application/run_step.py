@@ -242,16 +242,29 @@ def judge_earlier_outputs(request: StepRunRequest, files: StepFiles) -> None:
 def read_outputs(
     request: StepRunRequest, parsed_names: frozenset[str], files: StepFiles
 ) -> StepOutputs:
-    output_directory = request.placement.output_directory
+    return read_step_outputs(
+        request.row,
+        request.placement.output_directory,
+        request.work_root,
+        request.host.user_id,
+        parsed_names,
+        files,
+    )
+
+
+def read_step_outputs(
+    row: StepRow,
+    output_directory: PurePosixPath,
+    work_root: PurePosixPath,
+    user_id: int,
+    parsed_names: frozenset[str],
+    files: StepFiles,
+) -> StepOutputs:
     judge_mount(
-        files.inspect_components(request.work_root, output_directory),
-        is_file=False,
-        user_id=request.host.user_id,
+        files.inspect_components(work_root, output_directory), is_file=False, user_id=user_id
     )
-    declared = {output.name: output.max_size_bytes for output in request.row.outputs}
-    written = files.read_written_outputs(
-        request.work_root / output_directory, declared, parsed_names
-    )
+    declared = {output.name: output.max_size_bytes for output in row.outputs}
+    written = files.read_written_outputs(work_root / output_directory, declared, parsed_names)
     judge_output_entries(written.entry_names, declared)
     for name, max_size_bytes in declared.items():
         judge_written_file(name, written.files[name].facts, max_size_bytes, CONTAINER_USER_ID)

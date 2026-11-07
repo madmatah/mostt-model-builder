@@ -16,6 +16,7 @@ from mostt_model_builder.application.fetch_sources import (
     fetch_source,
 )
 from mostt_model_builder.application.prepare_publication import CARD_COMMAND_LINE
+from mostt_model_builder.domain.containers.container_files import FileKind, judge_mount
 from mostt_model_builder.domain.containers.work_directory import (
     WorkDirectory,
     locate_model_card,
@@ -51,6 +52,7 @@ class PublishedCheckFiles(CandidateFiles, DigestFiles, Protocol):
 
 @dataclass(frozen=True, slots=True)
 class PublishedCheckRequest:
+    recipe_name: str
     repository: str
     revision: str
     candidate: CandidateRequest
@@ -76,9 +78,12 @@ def check_published(
     candidate = request.candidate
     if request.model is None:
         raise PublishedCheckError(
-            f"the recipe {candidate.recipe_name} describes no model, so it publishes none"
+            f"the recipe {request.recipe_name} describes no model, so it publishes none"
         )
-    expected_files = (*collect_candidate_files(candidate, files), read_card_file(candidate, files))
+    expected_files = (
+        *collect_candidate_files(candidate, files),
+        read_card_file(request.recipe_name, candidate, files),
+    )
     entries = parse_published_listing(
         listing.read_listing(
             build_tree_url(request.repository, request.revision),
@@ -107,12 +112,26 @@ def collect_candidate_files(
     )
 
 
-def read_card_file(candidate: CandidateRequest, files: PublishedCheckFiles) -> ExpectedFile:
-    card_path = locate_model_card(candidate.recipe_name, candidate.commit)
-    card = files.read_host_file(
-        candidate.work_root / card_path.parent, card_path.name, MODEL_CARD_MAX_SIZE_BYTES
-    )
-    if card.content is None or not is_written_card(card.facts, candidate.host.user_id):
+def read_card_file(
+    recipe_name: str, candidate: CandidateRequest, files: PublishedCheckFiles
+) -> ExpectedFile:
+    card_path = locate_model_card(recipe_name)
+    build_directory = files.inspect_components(candidate.work_root, card_path.parent)[-1]
+    card = None
+    if build_directory.facts.kind is not FileKind.MISSING:
+        judge_mount(
+            files.inspect_components(candidate.work_root, card_path.parent),
+            is_file=False,
+            user_id=candidate.host.user_id,
+        )
+        card = files.read_host_file(
+            candidate.work_root / card_path.parent, card_path.name, MODEL_CARD_MAX_SIZE_BYTES
+        )
+    if (
+        card is None
+        or card.content is None
+        or not is_written_card(card.facts, candidate.host.user_id)
+    ):
         raise PublishedCheckError(
             f"{card_path} is missing, or is not the card that card writes: write it with "
             f"{CARD_COMMAND_LINE}"

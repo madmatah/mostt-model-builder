@@ -34,11 +34,11 @@ from mostt_model_builder.domain.containers.step_peaks import (
     StepPeaks,
     render_step_peaks,
 )
-from mostt_model_builder.domain.containers.work_directory import WorkDirectoryError
+from mostt_model_builder.domain.containers.work_directory import WorkDirectoryError, place_entry
 from mostt_model_builder.domain.sources.source_pins import RepositoryType, SourcePin
 
 WORK_ROOT = PurePosixPath("/data/builds/work")
-COMMIT = "e949fa3a2eb8bf218e96c2c03625bbd36e4342b1"
+KEY = "7b1e04c9a2f3" + "0" * 52
 HEAD_TREE = "3f1d1ffe79bc3336eb583331cfbf9b189fd45f01"
 REVISION = "70bb2e84b976b7e960aa89f1c648e09c59f894dd"
 IMAGE_ID = "sha256:" + "f" * 64
@@ -62,8 +62,9 @@ REPORT = FleursCheckReport(
 )
 PEAKS = StepPeaks(memory_peak_bytes=21 * 2**20, process_count_peak=6)
 RECIPE_NAME = "parakeet-tdt"
-RUN = FleursCheckRun(PINS, RECIPE_NAME, COMMIT, WORK_ROOT, HEAD_TREE, HOST)
-REQUEST_PATH = WORK_ROOT / f"runs/{RECIPE_NAME}/{COMMIT}/requests/fleurs-check/request.json"
+PLACEMENT = place_entry(RECIPE_NAME, FLEURS_CHECK_ROW.name, KEY)
+RUN = FleursCheckRun(PINS, PLACEMENT, WORK_ROOT, HEAD_TREE, HOST)
+REQUEST_PATH = WORK_ROOT / f"cache/{RECIPE_NAME}/fleurs-check/{KEY}/request/request.json"
 
 
 @dataclass(frozen=True)

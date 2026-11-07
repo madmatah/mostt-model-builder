@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 
@@ -9,8 +10,7 @@ from mostt_model_builder.application.run_step import (
     StepRunRequest,
     run_step,
 )
-from mostt_model_builder.domain.containers.container_steps import StepRow
-from mostt_model_builder.domain.containers.work_directory import place_step
+from mostt_model_builder.domain.containers.container_steps import StepPlacement, StepRow
 from mostt_model_builder.domain.onnx.conversion_report import (
     CONVERSION_REPORT_FILE_NAME,
     ConversionReport,
@@ -22,13 +22,15 @@ from mostt_model_builder.domain.onnx.conversion_request import (
     render_conversion_request,
 )
 
+CONVERSION_PARSED_NAMES = frozenset({CONVERSION_REPORT_FILE_NAME})
+
 
 @dataclass(frozen=True, slots=True)
 class ConversionRun:
     row: StepRow
     request: ConversionRequest
-    recipe_name: str
-    commit: str
+    placement: StepPlacement
+    earlier_output_directories: Mapping[str, PurePosixPath]
     work_root: PurePosixPath
     head_tree: str
     host: HostIdentity
@@ -46,22 +48,21 @@ def convert_variants(
     outputs = run_step(
         StepRunRequest(
             row=run.row,
-            placement=place_step(run.recipe_name, run.commit, run.row.name),
+            placement=run.placement,
             request_files={CONVERSION_REQUEST_FILE_NAME: render_conversion_request(run.request)},
             source_paths={},
             work_root=run.work_root,
             head_tree=run.head_tree,
             host=run.host,
-            earlier_output_directories={
-                earlier_output.step: place_step(
-                    run.recipe_name, run.commit, earlier_output.step
-                ).output_directory
-                for earlier_output in run.row.earlier_outputs
-            },
-            parsed_output_names=frozenset({CONVERSION_REPORT_FILE_NAME}),
+            earlier_output_directories=run.earlier_output_directories,
+            parsed_output_names=CONVERSION_PARSED_NAMES,
         ),
         engine,
         files,
     )
-    report = parse_conversion_report(outputs.contents[CONVERSION_REPORT_FILE_NAME], run.request)
+    return read_conversion(run.request, outputs)
+
+
+def read_conversion(request: ConversionRequest, outputs: StepOutputs) -> ConversionOutcome:
+    report = parse_conversion_report(outputs.contents[CONVERSION_REPORT_FILE_NAME], request)
     return ConversionOutcome(outputs, report)

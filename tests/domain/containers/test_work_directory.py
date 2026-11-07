@@ -16,19 +16,23 @@ from mostt_model_builder.domain.containers.work_directory import (
     WorkDirectoryError,
     find_next_run_number,
     judge_work_directory,
+    locate_candidate_files,
     locate_image_build_log,
+    locate_model_card,
     locate_referenced_sources,
     locate_source,
-    place_clean,
+    locate_verification_report,
+    place_entry,
+    place_entry_clean,
     place_lock,
     place_publication,
-    place_step,
     require_absolute_home,
 )
 from mostt_model_builder.domain.sources.source_pins import RepositoryType, SourcePin
 
 USER_ID = 1000
-COMMIT = "e949fa3a2eb8bf218e96c2c03625bbd36e4342b1"
+KEY = "4e7a2b90c1d3" + "0" * 52
+CANDIDATE_DIRECTORY = PurePosixPath(f"cache/parakeet-tdt/candidate/{KEY}/files")
 OTHER_USER_ID = 1001
 WORK_PATH = "/data/builds/work"
 HOME = "/home/user"
@@ -310,36 +314,70 @@ class TestTheWorkDirectory:
                 ):
                     locate_act()
 
-    class TestThePlaceStepFunction:
-        class TestWhenACoreStepRunsAtACommit:
+    class TestThePlaceEntryFunction:
+        class TestWhenARowIsPlacedUnderItsKey:
             @pytest.fixture
             def placement(self) -> StepPlacement:
-                return place_step("core", COMMIT, "fleurs-check")
-
-            def test_should_keep_its_outputs_request_log_and_candidate_apart_under_the_commit(
-                self, placement: StepPlacement
-            ) -> None:
-                assert placement == StepPlacement(
-                    output_directory=PurePosixPath(f"runs/core/{COMMIT}/fleurs-check"),
-                    request_directory=PurePosixPath(f"runs/core/{COMMIT}/requests/fleurs-check"),
-                    log_path=PurePosixPath(f"runs/core/{COMMIT}/logs/fleurs-check.log"),
-                    candidate_directory=PurePosixPath(f"runs/core/{COMMIT}/candidate"),
+                return place_entry(
+                    "parakeet-tdt", "transcribe-float32-cpu-fr_fr-0", KEY, CANDIDATE_DIRECTORY
                 )
 
-    class TestThePlaceCleanFunction:
-        class TestWhenAStepIsCleaned:
+            def test_should_keep_its_outputs_request_and_log_apart_in_its_entry(
+                self, placement: StepPlacement
+            ) -> None:
+                entry = PurePosixPath(f"cache/parakeet-tdt/transcribe-float32-cpu-fr_fr-0/{KEY}")
+                assert placement == StepPlacement(
+                    output_directory=entry / "output",
+                    request_directory=entry / "request",
+                    log_path=entry / "step.log",
+                    candidate_directory=CANDIDATE_DIRECTORY,
+                )
+
+    class TestTheLocateCandidateFilesFunction:
+        class TestWhenACandidateIsPlacedUnderItsKey:
+            @pytest.fixture
+            def candidate_directory(self) -> PurePosixPath:
+                return locate_candidate_files("parakeet-tdt", KEY)
+
+            def test_should_hold_its_files_in_its_own_entry_of_the_cache(
+                self, candidate_directory: PurePosixPath
+            ) -> None:
+                assert candidate_directory == CANDIDATE_DIRECTORY
+
+    class TestThePlaceEntryCleanFunction:
+        class TestWhenAnEntryIsCleaned:
             @pytest.fixture
             def placement(self) -> StepPlacement:
-                return place_clean("core", COMMIT, "fleurs-check")
+                return place_entry_clean("parakeet-tdt", "export", KEY)
 
-            def test_should_mount_the_steps_outputs_alone_and_log_apart(
+            def test_should_mount_the_entrys_outputs_alone_and_log_beside_the_entry(
                 self, placement: StepPlacement
             ) -> None:
                 assert placement == StepPlacement(
-                    output_directory=PurePosixPath(f"runs/core/{COMMIT}/fleurs-check"),
+                    output_directory=PurePosixPath(f"cache/parakeet-tdt/export/{KEY}/output"),
                     request_directory=None,
-                    log_path=PurePosixPath(f"runs/core/{COMMIT}/logs/clean-fleurs-check.log"),
+                    log_path=PurePosixPath(f"cache/parakeet-tdt/export/clean-{KEY}.log"),
                 )
+
+    class TestTheLocateVerificationReportFunction:
+        class TestWhenGivenARecipe:
+            @pytest.fixture
+            def report_path(self) -> PurePosixPath:
+                return locate_verification_report("parakeet-tdt")
+
+            def test_should_place_it_in_the_recipes_build(self, report_path: PurePosixPath) -> None:
+                assert report_path == PurePosixPath("builds/parakeet-tdt/verification.json")
+
+    class TestTheLocateModelCardFunction:
+        class TestWhenGivenARecipe:
+            @pytest.fixture
+            def card_path(self) -> PurePosixPath:
+                return locate_model_card("parakeet-tdt")
+
+            def test_should_place_it_beside_the_verification(
+                self, card_path: PurePosixPath
+            ) -> None:
+                assert card_path == PurePosixPath("builds/parakeet-tdt/README.md")
 
     class TestThePlaceLockFunction:
         class TestWhenALockRuns:
@@ -360,22 +398,16 @@ class TestTheWorkDirectory:
         class TestWhenAPublicationRuns:
             @pytest.fixture
             def placement(self) -> StepPlacement:
-                return place_publication("parakeet-tdt", COMMIT, 2)
+                return place_publication("parakeet-tdt", 2, CANDIDATE_DIRECTORY)
 
-            def test_should_number_it_under_the_run_and_bind_the_runs_candidate(
+            def test_should_number_it_under_the_build_and_bind_the_candidate_it_publishes(
                 self, placement: StepPlacement
             ) -> None:
                 assert placement == StepPlacement(
-                    output_directory=PurePosixPath(
-                        f"runs/parakeet-tdt/{COMMIT}/publications/2/output"
-                    ),
-                    request_directory=PurePosixPath(
-                        f"runs/parakeet-tdt/{COMMIT}/publications/2/request"
-                    ),
-                    log_path=PurePosixPath(
-                        f"runs/parakeet-tdt/{COMMIT}/publications/2/logs/publish.log"
-                    ),
-                    candidate_directory=PurePosixPath(f"runs/parakeet-tdt/{COMMIT}/candidate"),
+                    output_directory=PurePosixPath("builds/parakeet-tdt/publications/2/output"),
+                    request_directory=PurePosixPath("builds/parakeet-tdt/publications/2/request"),
+                    log_path=PurePosixPath("builds/parakeet-tdt/publications/2/logs/publish.log"),
+                    candidate_directory=CANDIDATE_DIRECTORY,
                 )
 
     class TestTheFindNextRunNumberFunction:

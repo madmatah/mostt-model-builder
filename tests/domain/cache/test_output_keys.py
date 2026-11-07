@@ -14,6 +14,7 @@ from mostt_model_builder.domain.cache.output_keys import (
     compute_key,
     document_candidate_key,
     document_row_key,
+    lacks_gpu_for_key,
     name_image_extra,
     select_image_files,
 )
@@ -330,6 +331,33 @@ class TestTheOutputKeys:
                 self, keys: tuple[str, str], is_changed: bool
             ) -> None:
                 assert (keys[0] != keys[1]) is is_changed
+
+    class TestTheLacksGpuForKeyFunction:
+        @pytest.mark.parametrize(
+            ("row", "hardware", "is_lacking"),
+            [
+                pytest.param(
+                    ROW,
+                    HardwareFacts(GPU_FACTS.cpu_models),
+                    True,
+                    id="a row on the GPU without a GPU",
+                ),
+                pytest.param(ROW, None, True, id="a row on the GPU without hardware facts"),
+                pytest.param(ROW, GPU_FACTS, False, id="a row on the GPU with a GPU"),
+                pytest.param(
+                    replace(ROW, uses_gpu=False), None, False, id="a row on the CPU without facts"
+                ),
+            ],
+        )
+        class TestWhenGivenARowAndTheHardware:
+            @pytest.fixture
+            def lacks_gpu(self, row: StepRow, hardware: HardwareFacts | None) -> bool:
+                return lacks_gpu_for_key(row, hardware)
+
+            def test_should_lack_a_gpu_exactly_for_a_row_on_the_gpu_without_one(
+                self, lacks_gpu: bool, is_lacking: bool
+            ) -> None:
+                assert lacks_gpu is is_lacking
 
     class TestTheNameImageExtraFunction:
         @pytest.mark.parametrize(

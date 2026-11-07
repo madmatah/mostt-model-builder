@@ -387,6 +387,86 @@ class TestTheWorkFiles:
                 with pytest.raises(NotADirectoryError):
                     read_act()
 
+    class TestTheStreamHostFileMethod:
+        class TestWhenTheFileIsRegularAndWithinItsBound:
+            @pytest.fixture
+            def streamed(self, tmp_path: Path) -> tuple[FileFacts, bytes]:
+                (tmp_path / "vocab.txt").write_bytes(COPIED_CONTENT)
+                (tmp_path / "vocab.txt").chmod(0o444)
+                chunks: list[bytes] = []
+                facts = WorkFiles().stream_host_file(
+                    PurePosixPath(tmp_path), "vocab.txt", len(COPIED_CONTENT), chunks.append
+                )
+                return facts, b"".join(chunks)
+
+            def test_should_stream_its_bytes_and_give_the_facts_of_its_descriptor(
+                self, streamed: tuple[FileFacts, bytes]
+            ) -> None:
+                assert streamed == (
+                    FileFacts(FileKind.REGULAR, os.getuid(), 0o444, len(COPIED_CONTENT), 1),
+                    COPIED_CONTENT,
+                )
+
+        class TestWhenTheFileIsALink:
+            @pytest.fixture
+            def streamed(self, tmp_path: Path) -> tuple[FileFacts, list[bytes]]:
+                (tmp_path / "vocab.txt").symlink_to("/etc/passwd")
+                chunks: list[bytes] = []
+                facts = WorkFiles().stream_host_file(
+                    PurePosixPath(tmp_path), "vocab.txt", MAX_SIZE_BYTES, chunks.append
+                )
+                return facts, chunks
+
+            def test_should_stream_nothing_since_it_follows_no_link(
+                self, streamed: tuple[FileFacts, list[bytes]]
+            ) -> None:
+                assert (streamed[0].kind, streamed[1]) == (FileKind.LINK, [])
+
+        class TestWhenTheFileExceedsItsBound:
+            @pytest.fixture
+            def streamed(self, tmp_path: Path) -> tuple[FileFacts, list[bytes]]:
+                (tmp_path / "vocab.txt").write_bytes(COPIED_CONTENT)
+                chunks: list[bytes] = []
+                facts = WorkFiles().stream_host_file(
+                    PurePosixPath(tmp_path), "vocab.txt", len(COPIED_CONTENT) - 1, chunks.append
+                )
+                return facts, chunks
+
+            def test_should_stream_nothing_and_give_its_size(
+                self, streamed: tuple[FileFacts, list[bytes]]
+            ) -> None:
+                assert (streamed[0].size_bytes, streamed[1]) == (len(COPIED_CONTENT), [])
+
+    class TestTheWriteNewFileAtomicallyMethod:
+        class TestWhenTheFileIsNew:
+            @pytest.fixture
+            def written(self, tmp_path: Path) -> tuple[bytes, int, list[str]]:
+                WorkFiles().write_new_file_atomically(
+                    PurePosixPath(tmp_path / "record.json"), FILE_CONTENT, 0o444
+                )
+                path = tmp_path / "record.json"
+                return path.read_bytes(), stat.S_IMODE(path.lstat().st_mode), os.listdir(tmp_path)
+
+            def test_should_write_it_whole_in_its_mode_and_leave_no_partial_file(
+                self, written: tuple[bytes, int, list[str]]
+            ) -> None:
+                assert written == (FILE_CONTENT, 0o444, ["record.json"])
+
+        class TestWhenTheFileExists:
+            @pytest.fixture
+            def write_act(self, tmp_path: Path) -> Callable[[], None]:
+                (tmp_path / "record.json").write_bytes(FILE_CONTENT)
+                return partial(
+                    WorkFiles().write_new_file_atomically,
+                    PurePosixPath(tmp_path / "record.json"),
+                    b"other",
+                    0o444,
+                )
+
+            def test_should_refuse_to_replace_it(self, write_act: Callable[[], None]) -> None:
+                with pytest.raises(FileExistsError, match="File exists"):
+                    write_act()
+
     class TestTheReplaceFileMethod:
         class TestWhenTheFileExists:
             @pytest.fixture
@@ -410,6 +490,17 @@ class TestTheWorkFiles:
                 return os.listdir(tmp_path)
 
             def test_should_remove_its_files_and_itself(self, entries_left: list[str]) -> None:
+                assert entries_left == []
+
+    class TestTheRemoveReplacementIfPresentMethod:
+        class TestWhenAnInterruptedAtomicWriteLeftItsReplacement:
+            @pytest.fixture
+            def entries_left(self, tmp_path: Path) -> list[str]:
+                (tmp_path / "record.json.new").write_bytes(FILE_CONTENT)
+                WorkFiles().remove_replacement_if_present(PurePosixPath(tmp_path / "record.json"))
+                return os.listdir(tmp_path)
+
+            def test_should_remove_the_replacement(self, entries_left: list[str]) -> None:
                 assert entries_left == []
 
     class TestTheCopyWrittenFileMethod:
@@ -514,7 +605,7 @@ class TestTheWorkFiles:
             def test_should_refuse_to_overwrite_it(
                 self, copy_act: Callable[[], SkippedCopy]
             ) -> None:
-                with pytest.raises(FileExistsError):
+                with pytest.raises(FileExistsError, match="File exists"):
                     copy_act()
 
         class TestWhenTheDirectoryIsALink:

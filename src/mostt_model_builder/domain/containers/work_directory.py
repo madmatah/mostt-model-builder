@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from pathlib import PurePosixPath
 
+from mostt_model_builder.domain.acceptance.verification import VERIFICATION_REPORT_FILE_NAME
 from mostt_model_builder.domain.containers.container_steps import (
     CLEAN_STEP_NAME,
     LOCK_STEP_NAME,
@@ -16,11 +17,14 @@ from mostt_model_builder.domain.sources.source_pins import SourcePin
 WORK_DIRECTORY_GRAMMAR = re.compile(r"/[A-Za-z0-9._/-]+")
 WORK_DIRECTORY_MODE = 0o700
 SOURCES_DIRECTORY_NAME = "sources"
-RUNS_DIRECTORY_NAME = "runs"
-REQUESTS_DIRECTORY_NAME = "requests"
+CACHE_DIRECTORY_NAME = "cache"
+BUILDS_DIRECTORY_NAME = "builds"
+ENTRY_OUTPUT_DIRECTORY_NAME = "output"
+ENTRY_REQUEST_DIRECTORY_NAME = "request"
+ENTRY_LOG_NAME = "step.log"
+CANDIDATE_ENTRY_NAME = "candidate"
+CANDIDATE_FILES_DIRECTORY_NAME = "files"
 LOGS_DIRECTORY_NAME = "logs"
-CANDIDATE_DIRECTORY_NAME = "candidate"
-# The name under which a Hugging Face repository takes its model card.
 LOCK_DIRECTORY_NAME = "lock"
 LOCK_REQUEST_DIRECTORY_NAME = "request"
 LOCK_OUTPUT_DIRECTORY_NAME = "output"
@@ -154,31 +158,54 @@ def locate_referenced_sources(
     return {reference: locate_source(pins_by_reference[reference]) for reference in references}
 
 
-def locate_run(owner: str, commit: str) -> PurePosixPath:
-    return PurePosixPath(RUNS_DIRECTORY_NAME, owner, commit)
+def locate_cache(recipe_name: str) -> PurePosixPath:
+    return PurePosixPath(CACHE_DIRECTORY_NAME, recipe_name)
 
 
-def place_step(owner: str, commit: str, step_name: str) -> StepPlacement:
-    run = locate_run(owner, commit)
+def locate_entry(recipe_name: str, entry_name: str, key: str) -> PurePosixPath:
+    return locate_cache(recipe_name) / entry_name / key
+
+
+def place_entry(
+    recipe_name: str,
+    row_name: str,
+    key: str,
+    candidate_directory: PurePosixPath | None = None,
+) -> StepPlacement:
+    entry = locate_entry(recipe_name, row_name, key)
     return StepPlacement(
-        output_directory=run / step_name,
-        request_directory=run / REQUESTS_DIRECTORY_NAME / step_name,
-        log_path=run / LOGS_DIRECTORY_NAME / f"{step_name}{LOG_SUFFIX}",
-        candidate_directory=run / CANDIDATE_DIRECTORY_NAME,
+        output_directory=entry / ENTRY_OUTPUT_DIRECTORY_NAME,
+        request_directory=entry / ENTRY_REQUEST_DIRECTORY_NAME,
+        log_path=entry / ENTRY_LOG_NAME,
+        candidate_directory=candidate_directory,
     )
 
 
-def locate_model_card(owner: str, commit: str) -> PurePosixPath:
-    return locate_run(owner, commit) / MODEL_CARD_FILE_NAME
+def locate_candidate_files(recipe_name: str, key: str) -> PurePosixPath:
+    return locate_entry(recipe_name, CANDIDATE_ENTRY_NAME, key) / CANDIDATE_FILES_DIRECTORY_NAME
 
 
-def place_clean(owner: str, commit: str, step_name: str) -> StepPlacement:
-    run = locate_run(owner, commit)
+# The cleaning container writes its log beside the entry it empties, so that the entry can be
+# removed whole once it is empty.
+def place_entry_clean(recipe_name: str, row_name: str, key: str) -> StepPlacement:
+    entry = locate_entry(recipe_name, row_name, key)
     return StepPlacement(
-        output_directory=run / step_name,
+        output_directory=entry / ENTRY_OUTPUT_DIRECTORY_NAME,
         request_directory=None,
-        log_path=run / LOGS_DIRECTORY_NAME / f"{CLEAN_STEP_NAME}-{step_name}{LOG_SUFFIX}",
+        log_path=entry.parent / f"{CLEAN_STEP_NAME}-{key}{LOG_SUFFIX}",
     )
+
+
+def locate_build(recipe_name: str) -> PurePosixPath:
+    return PurePosixPath(BUILDS_DIRECTORY_NAME, recipe_name)
+
+
+def locate_verification_report(recipe_name: str) -> PurePosixPath:
+    return locate_build(recipe_name) / VERIFICATION_REPORT_FILE_NAME
+
+
+def locate_model_card(recipe_name: str) -> PurePosixPath:
+    return locate_build(recipe_name) / MODEL_CARD_FILE_NAME
 
 
 def find_next_run_number(entry_names: Sequence[str]) -> int:
@@ -195,17 +222,19 @@ def place_lock(lock_number: int) -> StepPlacement:
     )
 
 
-def locate_publications(owner: str, commit: str) -> PurePosixPath:
-    return locate_run(owner, commit) / PUBLICATIONS_DIRECTORY_NAME
+def locate_publications(recipe_name: str) -> PurePosixPath:
+    return locate_build(recipe_name) / PUBLICATIONS_DIRECTORY_NAME
 
 
-def place_publication(owner: str, commit: str, publication_number: int) -> StepPlacement:
-    publication = locate_publications(owner, commit) / str(publication_number)
+def place_publication(
+    recipe_name: str, publication_number: int, candidate_directory: PurePosixPath
+) -> StepPlacement:
+    publication = locate_publications(recipe_name) / str(publication_number)
     return StepPlacement(
         output_directory=publication / PUBLICATION_OUTPUT_DIRECTORY_NAME,
         request_directory=publication / PUBLICATION_REQUEST_DIRECTORY_NAME,
         log_path=publication / LOGS_DIRECTORY_NAME / PUBLISH_LOG_NAME,
-        candidate_directory=locate_run(owner, commit) / CANDIDATE_DIRECTORY_NAME,
+        candidate_directory=candidate_directory,
     )
 
 

@@ -5,7 +5,6 @@ from functools import partial
 
 import pytest
 from accepted_build import (
-    COMMIT,
     WORK_ROOT,
     build_files,
 )
@@ -55,11 +54,8 @@ class TestThePublicationPreparation:
             def test_should_say_it_wrote_it(self, written_card: WrittenCard) -> None:
                 assert written_card.outcome is CardOutcome.WRITTEN
 
-            def test_should_hold_neither_the_commit_nor_the_work_directory(
-                self, written_card: WrittenCard
-            ) -> None:
-                card = written_card.prepared.card.decode()
-                assert (COMMIT in card, str(WORK_ROOT) in card) == (False, False)
+            def test_should_not_hold_the_work_directory(self, written_card: WrittenCard) -> None:
+                assert str(WORK_ROOT) not in written_card.prepared.card.decode()
 
             def test_should_state_the_versions_that_the_images_of_the_variants_runs_pin(
                 self, written_card: WrittenCard

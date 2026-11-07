@@ -39,6 +39,7 @@ class CloneChanges(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class CardRequest:
+    recipe_name: str
     verification: VerificationRequest
     model: ModelDescription | None
     template: str | None
@@ -67,10 +68,9 @@ def prepare_publication(
     request: CardRequest, clone: CloneChanges, files: VerificationFiles
 ) -> PreparedPublication:
     refuse_card_of_changed_clone(clone.list_changes())
-    candidate = request.verification.candidate
     if request.model is None or request.template is None:
         raise PublicationError(
-            f"the recipe {candidate.recipe_name} describes no model: its contract gives no "
+            f"the recipe {request.recipe_name} describes no model: its contract gives no "
             "model, which the card is written from"
         )
     verified = verify_build(request.verification, files)
@@ -90,9 +90,7 @@ def prepare_publication(
             ),
         )
     )
-    return PreparedPublication(
-        verified, card, locate_model_card(candidate.recipe_name, candidate.commit)
-    )
+    return PreparedPublication(verified, card, locate_model_card(request.recipe_name))
 
 
 def read_reviewed_card(

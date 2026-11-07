@@ -18,11 +18,8 @@ from mostt_model_builder.application.run_step import (
 from mostt_model_builder.domain.acceptance.parity_reports import ParityReport, parse_parity_report
 from mostt_model_builder.domain.bench.hypotheses import Hypothesis, RunReader, judge_hypotheses
 from mostt_model_builder.domain.bench.run_lines import RUN_LINES_FILE_NAME
-from mostt_model_builder.domain.containers.container_steps import StepRow
-from mostt_model_builder.domain.containers.work_directory import (
-    locate_referenced_sources,
-    place_step,
-)
+from mostt_model_builder.domain.containers.container_steps import StepPlacement, StepRow
+from mostt_model_builder.domain.containers.work_directory import locate_referenced_sources
 from mostt_model_builder.domain.contract.recipe_contract import Parity
 from mostt_model_builder.domain.contract.shard_request import (
     SHARD_REQUEST_FILE_NAME,
@@ -48,9 +45,9 @@ class RunShard:
 @dataclass(frozen=True, slots=True)
 class RecipeStepRun:
     row: StepRow
-    recipe_name: str
     pins: Sequence[SourcePin]
-    commit: str
+    placement: StepPlacement
+    earlier_output_directories: Mapping[str, PurePosixPath]
     work_root: PurePosixPath
     head_tree: str
     host: HostIdentity
@@ -83,36 +80,43 @@ def run_recipe_step(
                 f"the step {row.name} reads the candidate, and was given no request of it"
             )
         judge_inspected_copies(run.candidate, files)
-    placement = place_step(run.recipe_name, run.commit, row.name)
-    declared_names = {output.name for output in row.outputs}
-    parsed_names = {parity.output for parity in run.parities if parity.step == row.name}
-    request_files = {}
-    if run.shard is not None:
-        request_files[SHARD_REQUEST_FILE_NAME] = render_shard_request(run.shard.request)
-        parsed_names |= {RUN_LINES_FILE_NAME, PLACEMENT_FILE_NAME} & declared_names
-    else:
+    placement = run.placement
+    if run.shard is None:
         placement = replace(placement, request_directory=None)
     outputs = run_step(
         StepRunRequest(
             row=row,
             placement=placement,
-            request_files=request_files,
+            request_files=list_request_files(run),
             source_paths=locate_referenced_sources(row.sources, run.pins),
             work_root=run.work_root,
             head_tree=run.head_tree,
             host=run.host,
-            earlier_output_directories={
-                earlier_output.step: place_step(
-                    run.recipe_name, run.commit, earlier_output.step
-                ).output_directory
-                for earlier_output in row.earlier_outputs
-            },
-            parsed_output_names=frozenset(parsed_names),
+            earlier_output_directories=run.earlier_output_directories,
+            parsed_output_names=list_parsed_names(run),
         ),
         engine,
         files,
     )
-    parities = read_parities(run.parities, row.name, outputs.contents)
+    return read_recipe_step(run, outputs)
+
+
+def list_request_files(run: RecipeStepRun) -> dict[str, bytes]:
+    if run.shard is None:
+        return {}
+    return {SHARD_REQUEST_FILE_NAME: render_shard_request(run.shard.request)}
+
+
+def list_parsed_names(run: RecipeStepRun) -> frozenset[str]:
+    parsed_names = {parity.output for parity in run.parities if parity.step == run.row.name}
+    if run.shard is not None:
+        declared_names = {output.name for output in run.row.outputs}
+        parsed_names |= {RUN_LINES_FILE_NAME, PLACEMENT_FILE_NAME} & declared_names
+    return frozenset(parsed_names)
+
+
+def read_recipe_step(run: RecipeStepRun, outputs: StepOutputs) -> RecipeStepOutcome:
+    parities = read_parities(run.parities, run.row.name, outputs.contents)
     if run.shard is None:
         return RecipeStepOutcome(outputs, parities)
     return RecipeStepOutcome(

@@ -76,11 +76,11 @@ from mostt_model_builder.domain.sources.source_pins import RepositoryType, Sourc
 
 WORK_ROOT = PurePosixPath("/data/builds/work")
 HEAD_TREE = "3f1d1ffe79bc3336eb583331cfbf9b189fd45f01"
-COMMIT = "0123456789abcdef0123456789abcdef01234567"
 FLEURS_REVISION = "70bb2e84b976b7e960aa89f1c648e09c59f894dd"
 RECIPE_NAME = "family"
-RUN_DIRECTORY = PurePosixPath("runs/family", COMMIT)
-REPORT_PATH = RUN_DIRECTORY / "verification.json"
+ENTRIES_DIRECTORY = PurePosixPath("cache/family")
+BUILD_DIRECTORY = PurePosixPath("builds/family")
+REPORT_PATH = BUILD_DIRECTORY / "verification.json"
 HOST = HostIdentity(USER_ID, GROUP_ID, 20, HostAccounts(False, (), ()))
 LIMITS = StepLimits(memory_mib=1024, process_count=64, cpu_count=2, temporary_directory_mib=64)
 PEAKS = render_step_peaks(StepPeaks(memory_peak_bytes=64 * 2**20, process_count_peak=6))
@@ -247,7 +247,7 @@ def build_files(
             build_file_facts(len(content), mode=0o444),
             content,
         )
-    candidate_directory = WORK_ROOT / RUN_DIRECTORY / "candidate"
+    candidate_directory = WORK_ROOT / ENTRIES_DIRECTORY / "candidate"
     files.add_directory(candidate_directory, build_directory_facts(0o750))
     files.add_file(
         candidate_directory / "vocab.txt", build_file_facts(len(VOCABULARY), mode=0o444), VOCABULARY
@@ -258,14 +258,14 @@ def build_files(
         ENCODER,
     )
     if inspection_report is not None:
-        inspect_directory = WORK_ROOT / RUN_DIRECTORY / INSPECT_STEP_NAME
+        inspect_directory = WORK_ROOT / ENTRIES_DIRECTORY / INSPECT_STEP_NAME
         files.add_directory(inspect_directory, build_directory_facts(0o2770))
         files.add_file(
             inspect_directory / INSPECTION_REPORT_FILE_NAME,
             *build_step_output(render_inspection_report(inspection_report)),
         )
         files.add_file(inspect_directory / PEAKS_FILE_NAME, *build_step_output(PEAKS))
-    export_directory = WORK_ROOT / RUN_DIRECTORY / "export"
+    export_directory = WORK_ROOT / ENTRIES_DIRECTORY / "export"
     files.add_directory(export_directory, build_directory_facts(0o2770))
     for name, content in (
         ("vocab.txt", VOCABULARY),
@@ -275,7 +275,7 @@ def build_files(
     ):
         files.add_file(export_directory / name, *build_step_output(content))
     for row_name, lines in shard_lines.items():
-        shard_directory = WORK_ROOT / RUN_DIRECTORY / row_name
+        shard_directory = WORK_ROOT / ENTRIES_DIRECTORY / row_name
         files.add_directory(shard_directory, build_directory_facts(0o2770))
         files.add_file(shard_directory / RUN_LINES_FILE_NAME, *build_step_output(lines))
         files.add_file(shard_directory / PEAKS_FILE_NAME, *build_step_output(PEAKS))
@@ -287,21 +287,26 @@ def build_files(
     return files
 
 
+ROWS = (EXPORT_ROW, *(derived_row.row for derived_row in DERIVED_ROWS))
+
+
 def build_request(comparison: Comparison = CROSS_DEVICE) -> VerificationRequest:
     return VerificationRequest(
         candidate=CandidateRequest(
-            recipe_name=RECIPE_NAME,
-            commit=COMMIT,
             work_root=WORK_ROOT,
             head_tree=HEAD_TREE,
             host=HOST,
             candidate=(ENCODER_FILE, VOCABULARY_FILE),
-            rows=(EXPORT_ROW, *(derived_row.row for derived_row in DERIVED_ROWS)),
+            rows=ROWS,
             conversion_input=None,
+            candidate_directory=ENTRIES_DIRECTORY / "candidate",
+            inspection_directory=ENTRIES_DIRECTORY / INSPECT_STEP_NAME,
         ),
         pins=PINS,
         runs=RUNS,
         derived_rows=DERIVED_ROWS,
         parities=(ENCODER_PARITY,),
         comparisons=(comparison,),
+        output_directories={row.name: ENTRIES_DIRECTORY / row.name for row in ROWS},
+        report_path=REPORT_PATH,
     )

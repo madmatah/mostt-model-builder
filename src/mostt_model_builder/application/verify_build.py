@@ -19,14 +19,12 @@ from mostt_model_builder.application.run_recipe_step import (
 )
 from mostt_model_builder.application.run_step import (
     StepOutputs,
-    StepRunRequest,
     find_parsed_names,
-    read_outputs,
+    read_step_outputs,
 )
 from mostt_model_builder.domain.acceptance.acceptance import Comparison
 from mostt_model_builder.domain.acceptance.parity_reports import parse_parity_report
 from mostt_model_builder.domain.acceptance.verification import (
-    VERIFICATION_REPORT_FILE_NAME,
     ParityMeasure,
     RunTranscripts,
     Verification,
@@ -48,11 +46,7 @@ from mostt_model_builder.domain.bench.hypotheses import Hypothesis
 from mostt_model_builder.domain.bench.run_lines import RUN_LINES_FILE_NAME
 from mostt_model_builder.domain.containers.container_files import judge_mount
 from mostt_model_builder.domain.containers.container_steps import StepRow
-from mostt_model_builder.domain.containers.work_directory import (
-    locate_run,
-    locate_source,
-    place_step,
-)
+from mostt_model_builder.domain.containers.work_directory import locate_source
 from mostt_model_builder.domain.contract.derived_rows import DerivedRow
 from mostt_model_builder.domain.contract.recipe_contract import JudgedRun, Parity
 from mostt_model_builder.domain.onnx.node_placement import PLACEMENT_FILE_NAME
@@ -78,6 +72,8 @@ class VerificationRequest:
     derived_rows: Sequence[DerivedRow]
     parities: Sequence[Parity]
     comparisons: Sequence[Comparison]
+    output_directories: Mapping[str, PurePosixPath]
+    report_path: PurePosixPath
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,13 +102,13 @@ def verify_build(request: VerificationRequest, files: VerificationFiles) -> Veri
         read_parity_measures(request.parities, outputs),
         candidate_digests,
     )
-    run_directory = locate_run(candidate.recipe_name, candidate.commit)
+    report_path = request.report_path
+    files.make_directories(candidate.work_root, report_path.parent)
     judge_mount(
-        files.inspect_components(candidate.work_root, run_directory),
+        files.inspect_components(candidate.work_root, report_path.parent),
         is_file=False,
         user_id=candidate.host.user_id,
     )
-    report_path = run_directory / VERIFICATION_REPORT_FILE_NAME
     files.replace_file(candidate.work_root / report_path, render_verification_report(verification))
     return VerifiedBuild(verification, report_path)
 
@@ -179,27 +175,29 @@ def read_verified_outputs(
     for parity in request.parities:
         parsed_names.setdefault(parity.step, set()).add(parity.output)
     return {
-        row_name: read_row_outputs(rows[row_name], frozenset(names), request.candidate, files)
+        row_name: read_row_outputs(
+            rows[row_name],
+            request.output_directories[row_name],
+            frozenset(names),
+            request.candidate,
+            files,
+        )
         for row_name, names in parsed_names.items()
     }
 
 
 def read_row_outputs(
     row: StepRow,
+    output_directory: PurePosixPath,
     parsed_names: frozenset[str],
     candidate: CandidateRequest,
     files: VerificationFiles,
 ) -> StepOutputs:
-    return read_outputs(
-        StepRunRequest(
-            row=row,
-            placement=place_step(candidate.recipe_name, candidate.commit, row.name),
-            request_files={},
-            source_paths={},
-            work_root=candidate.work_root,
-            head_tree=candidate.head_tree,
-            host=candidate.host,
-        ),
+    return read_step_outputs(
+        row,
+        output_directory,
+        candidate.work_root,
+        candidate.host.user_id,
         find_parsed_names(row, parsed_names),
         files,
     )

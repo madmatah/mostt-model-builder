@@ -78,12 +78,13 @@ def publish_candidate(
     prompt.announce(describe_upload(request))
     judge_repository_confirmation(publication.repository, prompt.ask_repository())
     token = prompt.ask_token()
-    publications_directory = locate_publications(candidate.recipe_name, candidate.commit)
+    recipe_name = publication.card.recipe_name
+    publications_directory = locate_publications(recipe_name)
     files.make_directories(candidate.work_root, publications_directory)
     placement = place_publication(
-        candidate.recipe_name,
-        candidate.commit,
+        recipe_name,
         find_next_run_number(files.list_entry_names(candidate.work_root / publications_directory)),
+        candidate.candidate_directory,
     )
     judge_inspected_copies(candidate, files)
     prompt.announce([f"uploading; its log is {placement.log_path}"])

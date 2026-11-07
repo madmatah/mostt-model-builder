@@ -9,17 +9,17 @@ from mostt_model_builder.application.run_step import (
     HostIdentity,
     StepError,
     StepFiles,
+    StepOutputs,
     StepRunRequest,
     WrittenFile,
     find_parsed_names,
-    read_outputs,
+    read_step_outputs,
     run_step,
 )
 from mostt_model_builder.domain.acceptance.verification import CandidateDigest
 from mostt_model_builder.domain.containers.container_files import (
     CANDIDATE_FILE_MODE,
     FileFacts,
-    FileKind,
     MissingCandidateFileError,
     judge_candidate_copy,
     judge_mount,
@@ -33,7 +33,6 @@ from mostt_model_builder.domain.containers.container_steps import (
     StepRow,
 )
 from mostt_model_builder.domain.containers.step_peaks import StepPeaks
-from mostt_model_builder.domain.containers.work_directory import place_step
 from mostt_model_builder.domain.contract.recipe_contract import (
     HostContentOrigin,
     JudgedCandidateFile,
@@ -41,6 +40,7 @@ from mostt_model_builder.domain.contract.recipe_contract import (
     VariantConversion,
     find_candidate_file_max_size_bytes,
     find_graph_source,
+    list_onnx_names,
 )
 from mostt_model_builder.domain.formats.external_data import judge_external_data
 from mostt_model_builder.domain.formats.file_formats import (
@@ -65,7 +65,7 @@ from mostt_model_builder.domain.onnx.inspection_report import (
 CANDIDATE_DIRECTORY_MODE = 0o750
 DIGEST_ALGORITHM = "sha256"
 INSPECT_COMMAND = "./model-build.sh --work <dir> --recipe <name> step inspect"
-CLEAN_INSPECT_COMMAND = "./model-build.sh --work <dir> --recipe <name> clean inspect"
+INSPECTION_PARSED_NAMES = frozenset({INSPECTION_REPORT_FILE_NAME})
 
 
 class CandidateError(Exception):
@@ -86,6 +86,14 @@ class CandidateFiles(StepFiles, Protocol):
         self, directory: PurePosixPath, name: str, max_size_bytes: int
     ) -> WrittenFile: ...
 
+    def stream_host_file(
+        self,
+        directory: PurePosixPath,
+        name: str,
+        max_size_bytes: int,
+        observe_chunk: Callable[[bytes], None],
+    ) -> FileFacts: ...
+
 
 @dataclass(frozen=True, slots=True)
 class HashedFile:
@@ -101,15 +109,25 @@ class DigestFiles(StepFiles, Protocol):
 
 @dataclass(frozen=True, slots=True)
 class CandidateRequest:
-    recipe_name: str
-    commit: str
     work_root: PurePosixPath
     head_tree: str
     host: HostIdentity
     candidate: Sequence[JudgedCandidateFile]
     rows: Sequence[StepRow]
     conversion_input: StepOutputOrigin | None
+    candidate_directory: PurePosixPath
+    inspection_directory: PurePosixPath
     conversions: Sequence[VariantConversion] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class CandidateAssembly:
+    work_root: PurePosixPath
+    host: HostIdentity
+    candidate: Sequence[JudgedCandidateFile]
+    rows: Sequence[StepRow]
+    candidate_directory: PurePosixPath
+    origin_directories: Mapping[str, PurePosixPath]
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,8 +139,7 @@ class CandidateCopy:
 
 
 @dataclass(frozen=True, slots=True)
-class AssembledCandidate:
-    files: tuple[CandidateCopy, ...]
+class InspectionOutcome:
     report: InspectionReport
     peaks: StepPeaks
 
@@ -157,82 +174,96 @@ class CopyCheck:
         return CandidateCopy(name, file_format, self.size_bytes, self.digest.hexdigest())
 
 
-def assemble_candidate(
-    request: CandidateRequest, engine: ContainerEngine, files: CandidateFiles
-) -> AssembledCandidate:
-    placement = place_step(request.recipe_name, request.commit, INSPECT_ROW.name)
-    refuse_earlier_inspection(request, placement, files)
-    candidate_directory = make_candidate_directory(request, placement, files)
-    rows = {row.name: row for row in request.rows}
-    copies = tuple(
-        copy_candidate_file(request, candidate_file, candidate_directory, rows, files)
-        for candidate_file in request.candidate
+def copy_candidate(assembly: CandidateAssembly, files: CandidateFiles) -> tuple[CandidateCopy, ...]:
+    candidate_directory = make_candidate_directory(assembly, files)
+    rows = {row.name: row for row in assembly.rows}
+    return tuple(
+        copy_candidate_file(assembly, candidate_file, candidate_directory, rows, files)
+        for candidate_file in assembly.candidate
     )
-    onnx_names = list_onnx_names(request)
+
+
+# Today's checks may have grown since the candidate was assembled.
+def check_candidate_copies(
+    assembly: CandidateAssembly, files: CandidateFiles
+) -> tuple[CandidateCopy, ...]:
+    candidate_directory = assembly.candidate_directory
+    judge_mount(
+        files.inspect_components(assembly.work_root, candidate_directory),
+        is_file=False,
+        user_id=assembly.host.user_id,
+    )
+    copies = []
+    for candidate_file in assembly.candidate:
+        max_size_bytes = find_candidate_file_max_size_bytes(candidate_file.origin, assembly.rows)
+        check = CopyCheck(candidate_file.file_format)
+        facts = files.stream_host_file(
+            assembly.work_root / candidate_directory,
+            candidate_file.name,
+            max_size_bytes,
+            check.observe_chunk,
+        )
+        judge_candidate_copy(candidate_file.name, facts, max_size_bytes, assembly.host.user_id)
+        copies.append(check.finish(candidate_file.name, candidate_file.file_format))
+    return tuple(copies)
+
+
+def inspect_candidate(
+    request: CandidateRequest,
+    placement: StepPlacement,
+    sizes_bytes: Mapping[str, int],
+    engine: ContainerEngine,
+    files: StepFiles,
+) -> InspectionOutcome:
     outputs = run_step(
         StepRunRequest(
             row=INSPECT_ROW,
             placement=placement,
-            request_files={INSPECTION_REQUEST_FILE_NAME: render_inspection_request(onnx_names)},
+            request_files={
+                INSPECTION_REQUEST_FILE_NAME: render_inspection_request(
+                    list_onnx_names(request.candidate)
+                )
+            },
             source_paths={},
             work_root=request.work_root,
             head_tree=request.head_tree,
             host=request.host,
-            parsed_output_names=frozenset({INSPECTION_REPORT_FILE_NAME}),
+            parsed_output_names=INSPECTION_PARSED_NAMES,
         ),
         engine,
         files,
     )
-    report = parse_inspection_report(outputs.contents[INSPECTION_REPORT_FILE_NAME], onnx_names)
-    judge_inspected_candidate(request, report, {copy.name: copy.size_bytes for copy in copies})
-    return AssembledCandidate(copies, report, outputs.peaks)
+    return read_inspection(request, outputs, sizes_bytes)
 
 
-def list_onnx_names(request: CandidateRequest) -> list[str]:
-    return [
-        candidate_file.name
-        for candidate_file in request.candidate
-        if candidate_file.file_format is FileFormat.ONNX
-    ]
+def read_inspection(
+    request: CandidateRequest, outputs: StepOutputs, sizes_bytes: Mapping[str, int]
+) -> InspectionOutcome:
+    report = parse_inspection_report(
+        outputs.contents[INSPECTION_REPORT_FILE_NAME], list_onnx_names(request.candidate)
+    )
+    judge_inspected_candidate(request, report, sizes_bytes)
+    return InspectionOutcome(report, outputs.peaks)
 
 
-def refuse_earlier_inspection(
-    request: CandidateRequest, placement: StepPlacement, files: StepFiles
-) -> None:
-    output_path = request.work_root / placement.output_directory
-    last_component = files.inspect_components(request.work_root, placement.output_directory)[-1]
-    if last_component.path == output_path and last_component.facts.kind is not FileKind.MISSING:
-        raise CandidateError(
-            f"the outputs of an earlier inspection remain in {placement.output_directory}: "
-            f"remove them with {CLEAN_INSPECT_COMMAND}"
-        )
-
-
-def make_candidate_directory(
-    request: CandidateRequest, placement: StepPlacement, files: CandidateFiles
-) -> PurePosixPath:
-    candidate_directory = placement.candidate_directory
-    if candidate_directory is None:
-        raise CandidateError("the inspection was placed without a candidate")
-    files.make_directories(request.work_root, candidate_directory.parent)
+def make_candidate_directory(assembly: CandidateAssembly, files: CandidateFiles) -> PurePosixPath:
+    candidate_directory = assembly.candidate_directory
+    files.make_directories(assembly.work_root, candidate_directory.parent)
     if not files.make_step_directory(
-        request.work_root / candidate_directory, CANDIDATE_DIRECTORY_MODE
+        assembly.work_root / candidate_directory, CANDIDATE_DIRECTORY_MODE
     ):
-        raise CandidateError(
-            f"the candidate already exists in {candidate_directory}: remove it with "
-            f"{CLEAN_INSPECT_COMMAND}"
-        )
+        raise CandidateError(f"the candidate already exists in {candidate_directory}")
     return candidate_directory
 
 
 def copy_candidate_file(
-    request: CandidateRequest,
+    assembly: CandidateAssembly,
     candidate_file: JudgedCandidateFile,
     candidate_directory: PurePosixPath,
     rows: Mapping[str, StepRow],
     files: CandidateFiles,
 ) -> CandidateCopy:
-    target = request.work_root / candidate_directory / candidate_file.name
+    target = assembly.work_root / candidate_directory / candidate_file.name
     check = CopyCheck(candidate_file.file_format)
     origin = candidate_file.origin
     if isinstance(origin, HostContentOrigin):
@@ -241,26 +272,26 @@ def copy_candidate_file(
         files.write_new_file(target, origin.content, CANDIDATE_FILE_MODE)
         return copy
     row = rows.get(origin.step)
-    if row is None:
+    output_directory = assembly.origin_directories.get(origin.step)
+    if row is None or output_directory is None:
         raise CandidateError(f"the candidate file {candidate_file.name} comes from no step")
-    output_directory = place_step(request.recipe_name, request.commit, row.name).output_directory
     max_sizes_bytes = {output.name: output.max_size_bytes for output in row.outputs}
     judge_mount(
-        files.inspect_components(request.work_root, output_directory),
+        files.inspect_components(assembly.work_root, output_directory),
         is_file=False,
-        user_id=request.host.user_id,
+        user_id=assembly.host.user_id,
     )
     judge_output_entries(
-        files.list_entry_names(request.work_root / output_directory), max_sizes_bytes
+        files.list_entry_names(assembly.work_root / output_directory), max_sizes_bytes
     )
     judge_written_file(
         origin.output,
-        files.inspect_components(request.work_root, output_directory / origin.output)[-1].facts,
+        files.inspect_components(assembly.work_root, output_directory / origin.output)[-1].facts,
         max_sizes_bytes[origin.output],
         CONTAINER_USER_ID,
     )
     facts = files.copy_written_file(
-        request.work_root / output_directory,
+        assembly.work_root / output_directory,
         origin.output,
         max_sizes_bytes[origin.output],
         target,
@@ -309,21 +340,16 @@ def judge_inspected_candidate(
 # The inspection judged the copies as they were when it ran: a copy judged again as the host left it
 # is the file that the inspection read.
 def judge_inspected_copies(request: CandidateRequest, files: StepFiles) -> None:
-    outputs = read_outputs(
-        StepRunRequest(
-            row=INSPECT_ROW,
-            placement=place_step(request.recipe_name, request.commit, INSPECT_ROW.name),
-            request_files={},
-            source_paths={},
-            work_root=request.work_root,
-            head_tree=request.head_tree,
-            host=request.host,
-        ),
-        find_parsed_names(INSPECT_ROW, frozenset({INSPECTION_REPORT_FILE_NAME})),
+    outputs = read_step_outputs(
+        INSPECT_ROW,
+        request.inspection_directory,
+        request.work_root,
+        request.host.user_id,
+        find_parsed_names(INSPECT_ROW, INSPECTION_PARSED_NAMES),
         files,
     )
     report = parse_inspection_report(
-        outputs.contents[INSPECTION_REPORT_FILE_NAME], list_onnx_names(request)
+        outputs.contents[INSPECTION_REPORT_FILE_NAME], list_onnx_names(request.candidate)
     )
     judge_inspected_candidate(request, report, judge_candidate_copies(request, files))
 
@@ -390,17 +416,12 @@ def digest_candidate(request: CandidateRequest, files: DigestFiles) -> tuple[Can
 
 
 def locate_candidate_directory(request: CandidateRequest, files: StepFiles) -> PurePosixPath:
-    candidate_directory = place_step(
-        request.recipe_name, request.commit, INSPECT_ROW.name
-    ).candidate_directory
-    if candidate_directory is None:
-        raise CandidateError("the inspection was placed without a candidate")
     judge_mount(
-        files.inspect_components(request.work_root, candidate_directory),
+        files.inspect_components(request.work_root, request.candidate_directory),
         is_file=False,
         user_id=request.host.user_id,
     )
-    return candidate_directory
+    return request.candidate_directory
 
 
 def judge_candidate_file(name: str, facts: FileFacts, max_size_bytes: int, user_id: int) -> None:
