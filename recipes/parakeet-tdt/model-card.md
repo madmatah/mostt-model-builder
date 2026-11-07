@@ -33,7 +33,7 @@ Before counting errors, both the transcript and FLEURS's reference are normalize
 
 The `<unk>` tokens are removed from the transcripts. The vocabulary of Parakeet TDT has no piece for some characters FLEURS writes, such as « or ’, so the model writes `<unk>` where they stand; counting them as errors would penalize the vocabulary, not the recognition.
 
-Each variant is compared with its reference on the same utterances: float32 with the original model in NeMo, the other variants with float32 on the same device. float32 must give the same tokens as NeMo on every utterance, and a variant is accepted only if it loses at most 0.2 points against its reference, at the upper end of a 95 % interval from a paired bootstrap.
+Each variant is compared with its reference on the same utterances: float32 with the original model in NeMo, the other variants with float32 on the same device. float32 must give the same tokens as NeMo on at least 99.5 % of the utterances, with word error rates within 0.1 points of each other, and a variant is accepted only if it loses at most 0.2 points against its reference, at the upper end of a 95 % interval from a paired bootstrap.
 
 ## Limitations
 

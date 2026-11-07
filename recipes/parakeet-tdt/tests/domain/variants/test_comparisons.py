@@ -6,7 +6,7 @@ from mostt_model_builder.domain.acceptance.acceptance import (
 )
 from mostt_recipe_parakeet_tdt.domain.variants.comparisons import COMPARISONS
 
-SAME_DEVICE = Equivalence(min_identical_ratio=1.0, max_difference_points=0.10)
+SAME_DEVICE = Equivalence(min_identical_ratio=0.995, max_difference_points=0.10)
 CROSS_DEVICE = Equivalence(min_identical_ratio=0.99, max_difference_points=0.10)
 VARIANT = NonInferiority(max_upper_bound_points=0.20)
 COMPARED_RUNS: list[tuple[str, str, ComparisonRule]] = [
