@@ -46,7 +46,6 @@ class CardInputs:
     runs: tuple[JudgedRun, ...]
     conversions: tuple[VariantConversion, ...]
     measuring_libraries: tuple[MeasuringLibrary, ...]
-    build_commit: str
 
 
 def render_model_card(inputs: CardInputs) -> bytes:
@@ -64,7 +63,6 @@ def render_model_card(inputs: CardInputs) -> bytes:
         "measured_languages": " and ".join(list_measured_languages(inputs.verification)),
         "sources": render_sources(inputs.pins),
         "measured_with": describe_measuring_libraries(inputs.measuring_libraries),
-        "build_commit": inputs.build_commit,
     }
     for pinned in inputs.description.pinned_revisions:
         if pinned.placeholder in fills:

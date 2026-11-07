@@ -50,11 +50,10 @@ from mostt_model_builder.domain.sources.source_pins import RepositoryType, Sourc
 
 WEIGHTS_REVISION = "0123456789abcdef0123456789abcdef01234567"
 FLEURS_REVISION = "70bb2e84b976b7e960aa89f1c648e09c59f894dd"
-BUILD_COMMIT = "89abcdef0123456789abcdef0123456789abcdef"
 TEMPLATE = (
     "# $title\n\n$variant_table\n\n$variant_sections\n\nShared: $shared_files.\n\n"
     "Measured $measured_languages $measured_with, the weights at $weights_revision.\n\n"
-    "Built at $build_commit.\n\n$sources\n"
+    "$sources\n"
 )
 PINS = (
     SourcePin(
@@ -181,7 +180,6 @@ INPUTS = CardInputs(
         MeasuringLibrary(Device.GPU, "onnx-asr", "0.12.0"),
         MeasuringLibrary(Device.GPU, "onnxruntime-gpu", "1.31.0"),
     ),
-    build_commit=BUILD_COMMIT,
 )
 VARIANT_TABLE = """| Variant | Tested on | Size | fr_fr | en_us |
 |---|---|---|---|---|
@@ -224,6 +222,11 @@ REFUSED_INPUTS = {
         replace(INPUTS, template=f"{TEMPLATE}$license\n"),
         CardError,
         "the template holds the placeholder license, which nothing fills",
+    ),
+    "the commit of the build, which the card no longer names": (
+        replace(INPUTS, template=f"{TEMPLATE}$build_commit\n"),
+        CardError,
+        "the template holds the placeholder build_commit, which nothing fills",
     ),
     "a variant without a name": (
         change_description(variants=(EIGHT_BIT_BLOCKS,)),
@@ -296,9 +299,6 @@ class TestTheModelCard:
                 self, card: str
             ) -> None:
                 assert f" the weights at {WEIGHTS_REVISION}.\n" in card
-
-            def test_should_fill_the_commit_that_built_the_files(self, card: str) -> None:
-                assert f"\n\nBuilt at {BUILD_COMMIT}.\n\n" in card
 
             def test_should_list_each_pinned_repository_once_at_its_revision(
                 self, card: str

@@ -270,7 +270,6 @@ The card is the `README.md` of the Hugging Face repository that the files are pu
 | `measured_languages` | The languages that FLEURS measured |
 | `sources` | Each pinned repository, once, linked on the Hub at its revision |
 | `measured_with` | The versions of the libraries that measured the rates, on each device |
-| `build_commit` | The commit of this repository that built the files, so that the card links the code that built them |
 | One per pinned revision | The revision at which the pins name the repository that the description gives for it, such as an upstream work that the attribution links |
 
 The card gives no file's size or SHA-256, nor the libraries and base images of the tooling: the Hub shows each file's size and hash, a hash beside its file in the same repository proves nothing, and the integrity of the published files rests on mostt's pins of their hashes and on the check of the published revision against the build. A variant without a name in the description, a reference run that a sentence names without a title, a variant without a run, a pinned revision that no pin names or that takes a placeholder the core fills, and a placeholder of the template that nothing fills fail the render, with `CardError` or `VariantSummaryError`, since the card would have no word for them.

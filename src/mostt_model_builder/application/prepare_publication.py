@@ -83,7 +83,6 @@ def prepare_publication(
                 request.requirements,
                 request.verification.derived_rows,
             ),
-            build_commit=candidate.commit,
         )
     )
     return PreparedPublication(
