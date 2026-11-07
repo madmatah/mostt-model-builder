@@ -6,12 +6,14 @@ from mostt_model_builder.domain.onnx.inspection_report import (
     MatrixProduct,
     WeightSource,
 )
+from mostt_model_builder.domain.onnx.onnx_runtime_names import (
+    EIGHT_BIT_BLOCKS_OPERATOR,
+    ONNX_RUNTIME_DOMAIN,
+)
 
-ONNX_RUNTIME_DOMAIN = "com.microsoft"
 # ONNX's own operators, and ONNX Runtime's contrib operators, such as MatMulNBits.
 ALLOWED_DOMAINS = frozenset({"", ONNX_RUNTIME_DOMAIN})
 PLAIN_WEIGHT_RANK = 2
-EIGHT_BIT_BLOCKS_OPERATOR = "MatMulNBits"
 
 
 class GraphRuleError(ValueError):

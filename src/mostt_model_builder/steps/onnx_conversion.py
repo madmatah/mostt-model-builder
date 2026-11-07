@@ -33,7 +33,7 @@ from mostt_model_builder.domain.onnx.conversion_request import (
     FloatConversion,
     parse_conversion_request,
 )
-from mostt_model_builder.domain.onnx.graph_rules import (
+from mostt_model_builder.domain.onnx.onnx_runtime_names import (
     EIGHT_BIT_BLOCKS_OPERATOR,
     ONNX_RUNTIME_DOMAIN,
 )

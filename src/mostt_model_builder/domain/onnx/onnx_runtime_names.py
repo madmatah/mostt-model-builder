@@ -1,0 +1,2 @@
+ONNX_RUNTIME_DOMAIN = "com.microsoft"
+EIGHT_BIT_BLOCKS_OPERATOR = "MatMulNBits"
