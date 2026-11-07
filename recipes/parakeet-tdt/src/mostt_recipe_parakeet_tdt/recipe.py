@@ -7,6 +7,7 @@ from mostt_model_builder.domain.containers.container_steps import (
     PEAKS_OUTPUT,
     DeclaredOutput,
     StepLimits,
+    name_conversion_row,
 )
 from mostt_model_builder.domain.containers.devices import Device
 from mostt_model_builder.domain.contract.recipe_contract import (
@@ -337,7 +338,7 @@ CANDIDATE = (
             conversion.conversion.output,
             FileFormat.ONNX,
             (conversion.variant,),
-            StepOutputOrigin(CONVERT_STEP_NAME, conversion.conversion.output),
+            StepOutputOrigin(name_conversion_row(conversion.variant), conversion.conversion.output),
         )
         for conversion in CONVERSIONS
     ),

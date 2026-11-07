@@ -52,7 +52,6 @@ from mostt_model_builder.domain.onnx.conversion_request import (
     ConversionKind,
     ConversionRequest,
     EightBitBlocksConversion,
-    FloatConversion,
     parse_conversion_request,
 )
 
@@ -72,17 +71,17 @@ ENCODER_DATA = bytes(4096)
 EXPORT_OUTPUT_NAMES = (ENCODER_NAME, ENCODER_DATA_NAME, PEAKS_FILE_NAME)
 PEAKS = StepPeaks(memory_peak_bytes=12 * 2**30, process_count_peak=9)
 CONVERT_ROW = build_convert_row(
+    "eight-bit-blocks",
     (
         EarlierOutput("export", DeclaredOutput(ENCODER_NAME, 2**20), EXPORT_OUTPUT_NAMES),
         EarlierOutput("export", DeclaredOutput(ENCODER_DATA_NAME, 2**31), EXPORT_OUTPUT_NAMES),
     ),
-    (DeclaredOutput(FLOAT16_NAME, 2**31), DeclaredOutput(EIGHT_BIT_NAME, 2**31)),
+    DeclaredOutput(EIGHT_BIT_NAME, 2**31),
 )
 REQUEST = ConversionRequest(
     "export",
     ENCODER_NAME,
     (
-        FloatConversion(ConversionKind.FLOAT16, FLOAT16_NAME),
         EightBitBlocksConversion(
             EIGHT_BIT_NAME,
             block_size=64,
@@ -114,7 +113,7 @@ EIGHT_BIT_FILE = ConvertedFile(
     above_max_finite_count=0,
     realigned_cast_count=0,
 )
-REPORT = ConversionReport((FLOAT16_FILE, EIGHT_BIT_FILE))
+REPORT = ConversionReport((EIGHT_BIT_FILE,))
 HOST = HostIdentity(USER_ID, GROUP_ID, 20, HostAccounts(False, (), ()))
 RUN = ConversionRun(
     row=CONVERT_ROW,
@@ -125,7 +124,9 @@ RUN = ConversionRun(
     head_tree=HEAD_TREE,
     host=HOST,
 )
-REQUEST_PATH = WORK_ROOT / RUN_DIRECTORY / "requests/convert" / CONVERSION_REQUEST_FILE_NAME
+REQUEST_PATH = (
+    WORK_ROOT / RUN_DIRECTORY / "requests/convert-eight-bit-blocks" / CONVERSION_REQUEST_FILE_NAME
+)
 
 
 @dataclass(frozen=True)
@@ -151,7 +152,6 @@ def build_engine(files: FakeStepFiles, report: bytes) -> FakeContainerEngine:
         files=files,
         images={ONNX_CONVERT_IMAGE.tag: ImageFacts(IMAGE_ID, HEAD_TREE)},
         step_outputs={
-            FLOAT16_NAME: build_step_output(b"\x08\x07\x3a\x00"),
             EIGHT_BIT_NAME: build_step_output(b"\x08\x07\x3a\x00"),
             CONVERSION_REPORT_FILE_NAME: build_step_output(report),
             PEAKS_FILE_NAME: build_step_output(render_step_peaks(PEAKS)),
@@ -168,7 +168,7 @@ class TestTheConversionOfTheVariants:
                 engine = build_engine(files, render_conversion_report(REPORT))
                 return CompletedConversion(convert_variants(RUN, engine, files), engine.runs, files)
 
-            def test_should_write_the_request_of_every_conversion_for_the_container(
+            def test_should_write_the_request_of_its_variants_conversion_alone_for_the_container(
                 self, conversion: CompletedConversion
             ) -> None:
                 assert parse_conversion_request(conversion.files.contents[REQUEST_PATH]) == REQUEST
@@ -197,18 +197,15 @@ class TestTheConversionOfTheVariants:
                     for name in (ENCODER_NAME, ENCODER_DATA_NAME)
                 ]
 
-            def test_should_give_back_the_report_of_each_conversion(
+            def test_should_give_back_the_report_of_its_conversion(
                 self, conversion: CompletedConversion
             ) -> None:
                 assert conversion.outcome.report == REPORT
 
-            def test_should_give_back_the_size_of_each_converted_file(
+            def test_should_give_back_the_size_of_the_converted_file(
                 self, conversion: CompletedConversion
             ) -> None:
-                assert {
-                    name: conversion.outcome.outputs.sizes_bytes[name]
-                    for name in (FLOAT16_NAME, EIGHT_BIT_NAME)
-                } == {FLOAT16_NAME: 4, EIGHT_BIT_NAME: 4}
+                assert conversion.outcome.outputs.sizes_bytes[EIGHT_BIT_NAME] == len(ENCODER)
 
             def test_should_read_no_converted_file_since_no_parser_of_the_host_reads_them(
                 self, conversion: CompletedConversion
@@ -247,7 +244,6 @@ class TestTheConversionOfTheVariants:
                 files = build_files()
                 report = ConversionReport(
                     (
-                        FLOAT16_FILE,
                         ConvertedFile(
                             kind=ConversionKind.EIGHT_BIT_BLOCKS,
                             output=EIGHT_BIT_NAME,
@@ -272,6 +268,27 @@ class TestTheConversionOfTheVariants:
                     match=re.escape(
                         "the conversion to encoder-model.int8.onnx quantized 217 products to "
                         "8-bit blocks, not 265"
+                    ),
+                ):
+                    convert_act()
+
+        class TestWhenTheReportDescribesTheConversionOfAnotherVariant:
+            @pytest.fixture
+            def convert_act(self) -> Callable[[], ConversionOutcome]:
+                files = build_files()
+                engine = build_engine(
+                    files, render_conversion_report(ConversionReport((FLOAT16_FILE,)))
+                )
+                return partial(convert_variants, RUN, engine, files)
+
+            def test_should_refuse_it_as_right_after_any_run(
+                self, convert_act: Callable[[], ConversionOutcome]
+            ) -> None:
+                with pytest.raises(
+                    ConversionReportError,
+                    match=re.escape(
+                        "the report of the conversion to encoder-model.int8.onnx describes "
+                        "'encoder-model.fp16.onnx' as 'float16'"
                     ),
                 ):
                     convert_act()

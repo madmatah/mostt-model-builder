@@ -130,7 +130,6 @@ from mostt_model_builder.domain.contract.recipe_contract import (
     RecipeContract,
     RecipeContractError,
     RecipeFacts,
-    build_conversion_request,
     find_runnable_row,
     judge_recipe,
     list_entry_modules,
@@ -657,21 +656,24 @@ def inspect_candidate(recipe: JudgedRecipe, context: BuildContext, files: WorkFi
 
 
 def convert(recipe: JudgedRecipe, context: BuildContext, files: WorkFiles) -> None:
-    row = find_runnable_row(recipe, CONVERT_STEP_NAME)
-    outcome = convert_variants(
-        ConversionRun(
-            row=row,
-            request=build_conversion_request(recipe),
-            recipe_name=recipe.name,
-            commit=context.commit,
-            work_root=context.work_root,
-            head_tree=context.head_tree,
-            host=context.host,
-        ),
-        DockerEngine(),
-        files,
-    )
-    describe_conversion(row, outcome)
+    if not recipe.conversion_rows:
+        raise RecipeContractError(f"the recipe {recipe.name} converts none of its variants")
+    engine = DockerEngine()
+    for conversion_row in recipe.conversion_rows:
+        outcome = convert_variants(
+            ConversionRun(
+                row=conversion_row.row,
+                request=conversion_row.request,
+                recipe_name=recipe.name,
+                commit=context.commit,
+                work_root=context.work_root,
+                head_tree=context.head_tree,
+                host=context.host,
+            ),
+            engine,
+            files,
+        )
+        describe_conversion(conversion_row.row, outcome)
 
 
 def describe_conversion(row: StepRow, outcome: ConversionOutcome) -> None:
