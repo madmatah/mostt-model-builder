@@ -202,6 +202,7 @@ forbidden_modules = [
     "mostt_model_builder.domain.containers.work_directory",
     "mostt_model_builder.domain.contract.derived_rows",
     "mostt_model_builder.domain.contract.recipe_contract",
+    "mostt_model_builder.domain.onnx.graph_rules",
     "mostt_model_builder.domain.bench.hypotheses",
     "mostt_model_builder.domain.bench.bench_languages",
     "mostt_model_builder.domain.publication.model_card",
