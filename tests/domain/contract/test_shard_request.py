@@ -8,6 +8,7 @@ import pytest
 
 from mostt_model_builder.domain.containers.devices import Device
 from mostt_model_builder.domain.contract.shard_request import (
+    MAX_FILE_COUNT,
     MAX_SHARD_COUNT,
     SHARD_REQUEST_MAX_SIZE_BYTES,
     ShardRequest,
@@ -123,14 +124,29 @@ FLEURS_LANGUAGES = (
     "yue_hant_hk",
     "zu_za",
 )
-REQUEST = ShardRequest("int8-cpu", "int8", Device.CPU, BOTH_LANGUAGES, 1, 3)
+INT8_FILES = ("encoder.int8.onnx", "decoder_joint.int8.onnx", "vocab.txt")
+REQUEST = ShardRequest("int8-cpu", "int8", Device.CPU, BOTH_LANGUAGES, 1, 3, INT8_FILES)
 ACCEPTED_REQUESTS = {
-    "the only shard of a run": ShardRequest("int8-cpu", "int8", Device.CPU, ("en_us",), 0, 1),
+    "the only shard of a run": ShardRequest(
+        "int8-cpu", "int8", Device.CPU, ("en_us",), 0, 1, INT8_FILES
+    ),
+    "a run of the reference, which reads no file of the candidate": ShardRequest(
+        "nemo", "reference", Device.CPU, ("en_us",), 0, 1, ()
+    ),
+    "the most files": ShardRequest(
+        "int8-cpu",
+        "int8",
+        Device.CPU,
+        ("en_us",),
+        0,
+        1,
+        tuple(f"file-{index}.onnx" for index in range(MAX_FILE_COUNT)),
+    ),
     "the last shard of the most shards": ShardRequest(
-        "fp16-gpu", "fp16", Device.GPU, ("fr_fr",), MAX_SHARD_COUNT - 1, MAX_SHARD_COUNT
+        "fp16-gpu", "fp16", Device.GPU, ("fr_fr",), MAX_SHARD_COUNT - 1, MAX_SHARD_COUNT, ()
     ),
     "a run and a variant of 32 characters": ShardRequest(
-        "r" * 32, "v" * 32, Device.CPU, BOTH_LANGUAGES, 0, 1
+        "r" * 32, "v" * 32, Device.CPU, BOTH_LANGUAGES, 0, 1, INT8_FILES
     ),
 }
 SHARD_REQUEST_FIELDS: dict[str, object] = {
@@ -140,6 +156,7 @@ SHARD_REQUEST_FIELDS: dict[str, object] = {
     "languages": ["fr_fr", "en_us"],
     "shard": 1,
     "shard_count": 3,
+    "files": list(INT8_FILES),
 }
 
 
@@ -218,6 +235,27 @@ REFUSED_REQUESTS = {
     "a language that is a list": (
         build_request(languages=[["fr_fr"]]),
         "its languages, [['fr_fr']], are not distinct",
+    ),
+    "files written as one string": (
+        build_request(files="vocab.txt"),
+        "its files, 'vocab.txt', are not at most 64 distinct file names",
+    ),
+    "a file that is a path": (
+        build_request(files=["../vocab.txt"]),
+        "its files, ['../vocab.txt'], are not at most 64 distinct file names",
+    ),
+    "a file in a directory": (
+        build_request(files=["models/encoder.onnx"]),
+        "its files, ['models/encoder.onnx'], are not",
+    ),
+    "a file twice": (
+        build_request(files=["vocab.txt", "vocab.txt"]),
+        "its files, ['vocab.txt', 'vocab.txt'], are not",
+    ),
+    "a file that is not a string": (build_request(files=[7]), "its files, [7], are not"),
+    "more files than the bound": (
+        build_request(files=[f"f{index}" for index in range(MAX_FILE_COUNT + 1)]),
+        "are not at most 64 distinct file names",
     ),
     "no shard": (build_request(shard_count=0), "its count of shards, 0, lies outside 1 to 16"),
     "more shards than the bound": (

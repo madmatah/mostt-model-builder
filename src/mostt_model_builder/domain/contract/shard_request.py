@@ -5,14 +5,20 @@ from dataclasses import dataclass
 
 from mostt_model_builder.domain.bench.fleurs_index import LANGUAGE_GRAMMAR
 from mostt_model_builder.domain.containers.devices import Device
+from mostt_model_builder.domain.formats.file_names import is_file_name
 from mostt_model_builder.domain.json_documents.json_depth import MAX_JSON_DEPTH, refuse_deep_json
 
 SHARD_REQUEST_FILE_NAME = "shard.json"
 SHARD_REQUEST_MAX_SIZE_BYTES = 4096
 RUN_NAME_GRAMMAR = re.compile(r"[a-z0-9][a-z0-9-]{0,31}")
-SHARD_REQUEST_KEYS = frozenset({"run", "variant", "device", "languages", "shard", "shard_count"})
+SHARD_REQUEST_KEYS = frozenset(
+    {"run", "variant", "device", "languages", "shard", "shard_count", "files"}
+)
 MIN_SHARD_COUNT = 1
 MAX_SHARD_COUNT = 16
+# A variant of the candidate is served by a handful of files; the bound only refuses a list that no
+# candidate could hold.
+MAX_FILE_COUNT = 64
 
 
 class ShardRequestError(ValueError):
@@ -27,6 +33,7 @@ class ShardRequest:
     languages: tuple[str, ...]
     shard: int
     shard_count: int
+    files: tuple[str, ...]
 
 
 def render_shard_request(request: ShardRequest) -> bytes:
@@ -37,6 +44,7 @@ def render_shard_request(request: ShardRequest) -> bytes:
         "languages": list(request.languages),
         "shard": request.shard,
         "shard_count": request.shard_count,
+        "files": list(request.files),
     }
     return json.dumps(document, indent=1).encode("ascii")
 
@@ -65,6 +73,7 @@ def parse_shard_request(content: bytes) -> ShardRequest:
         languages=require_languages(document["languages"]),
         shard=require_integer(document["shard"], 0, shard_count - 1, "its shard"),
         shard_count=shard_count,
+        files=require_files(document["files"]),
     )
 
 
@@ -94,6 +103,19 @@ def require_languages(field: object) -> tuple[str, ...]:
             f"{LANGUAGE_GRAMMAR.pattern}"
         )
     return tuple(str(language) for language in field)
+
+
+def require_files(field: object) -> tuple[str, ...]:
+    if (
+        not isinstance(field, list)
+        or len(field) > MAX_FILE_COUNT
+        or not all(isinstance(name, str) and is_file_name(name) for name in field)
+        or len(set(field)) != len(field)
+    ):
+        raise ShardRequestError(
+            f"its files, {field!a}, are not at most {MAX_FILE_COUNT} distinct file names"
+        )
+    return tuple(field)
 
 
 def require_integer(field: object, minimum: int, maximum: int, what: str) -> int:

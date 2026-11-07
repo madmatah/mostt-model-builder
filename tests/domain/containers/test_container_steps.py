@@ -93,6 +93,19 @@ def judge_every_recipe() -> tuple[JudgedRecipe, ...]:
 
 
 JUDGED_RECIPES = judge_every_recipe()
+VARIANT_RUN_ROWS = tuple(
+    (derived_row.row, variant_files)
+    for recipe in JUDGED_RECIPES
+    for derived_row in recipe.derived_rows
+    if (
+        variant_files := tuple(
+            candidate_file.name
+            for candidate_file in recipe.candidate
+            if derived_row.request.variant in candidate_file.variants
+        )
+    )
+)
+VARIANT_RUN_ROW_IDS = [row.name for row, _ in VARIANT_RUN_ROWS]
 CODE_RUNNING_SOURCES = {
     SourceReference(pin.repository, pin.path)
     for recipe in JUDGED_RECIPES
@@ -262,6 +275,18 @@ REFUSED_ROWS = {
             takes_token=True,
         ),
         "takes the maintainer's token, which only the core's publish does",
+    ),
+    "the candidate's directory beside some of its files": (
+        replace(INSPECT_ROW, candidate_files=("encoder.onnx",)),
+        "binds both the candidate's directory and some of its files",
+    ),
+    "a candidate file that is a path": (
+        replace(FLEURS_CHECK_ROW, candidate_files=("../encoder.onnx",)),
+        "its candidate file '../encoder.onnx' is not a file name",
+    ),
+    "a candidate file twice": (
+        replace(FLEURS_CHECK_ROW, candidate_files=("vocab.txt", "vocab.txt")),
+        "binds a file of the candidate twice",
     ),
 }
 
@@ -540,7 +565,9 @@ class TestTheContainerSteps:
                 self, container_run: ContainerRun, row: StepRow
             ) -> None:
                 bound_files = [mount for mount in container_run.mounts if mount.is_file]
-                assert len(bound_files) == len(row.sources) + len(row.earlier_outputs)
+                assert len(bound_files) == (
+                    len(row.sources) + len(row.earlier_outputs) + len(row.candidate_files)
+                )
                 assert [mount for mount in bound_files if not mount.is_read_only] == []
 
             def test_should_bind_each_source_at_the_layout_of_its_pin(
@@ -721,6 +748,55 @@ class TestTheContainerSteps:
                     )
                     in container_run.mounts
                 )
+
+        @pytest.mark.parametrize(
+            ("row", "variant_files"), VARIANT_RUN_ROWS, ids=VARIANT_RUN_ROW_IDS
+        )
+        class TestWhenEachRunOfAVariantIsPlanned:
+            @pytest.fixture
+            def container_run(self, row: StepRow) -> ContainerRun:
+                return plan_row(row)
+
+            def test_should_bind_the_files_of_its_variant_alone_each_by_itself_read_only(
+                self, container_run: ContainerRun, variant_files: tuple[str, ...]
+            ) -> None:
+                assert [
+                    mount
+                    for mount in container_run.mounts
+                    if mount.container_path.is_relative_to(CANDIDATE_IN_THE_CONTAINER)
+                ] == [
+                    BindMount(
+                        PurePosixPath("runs/core/c0ffee/candidate") / name,
+                        CANDIDATE_IN_THE_CONTAINER / name,
+                        is_read_only=True,
+                        is_file=True,
+                    )
+                    for name in variant_files
+                ]
+
+        class TestWhenTheRunsOfVariantsArePlanned:
+            def test_should_find_runs_of_variants_in_the_recipes(self) -> None:
+                assert len(VARIANT_RUN_ROWS) > 0
+
+        class TestWhenARowThatReadsFilesOfTheCandidateIsGivenNone:
+            @pytest.fixture
+            def plan_act(self) -> Callable[[], ContainerRun]:
+                return partial(
+                    plan_container_run,
+                    replace(VARIANT_RUN_ROWS[0][0], sources=(), earlier_outputs=()),
+                    IMAGE_ID,
+                    replace(PLACEMENT, candidate_directory=None),
+                    {},
+                    WORK_ROOT,
+                    GROUP_ID,
+                    {},
+                )
+
+            def test_should_refuse_it(self, plan_act: Callable[[], ContainerRun]) -> None:
+                with pytest.raises(
+                    StepTableError, match="reads files of the candidate, and was given none"
+                ):
+                    plan_act()
 
         class TestWhenARowThatReadsTheCandidateIsGivenNone:
             @pytest.fixture

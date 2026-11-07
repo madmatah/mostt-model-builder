@@ -169,6 +169,7 @@ CPU_RUN = Run(
     "float32-cpu", "transcribe-variants", "cpu", "float32", ("fr_fr", "en_us"), 3, read_no_lines
 )
 GPU_RUN = Run("float32-gpu", "transcribe-variants", "gpu", "float32", ("fr_fr",), 1, read_no_lines)
+FLOAT32_FILES = (NAMES_FILE.name, ENCODER_FILE.name, ENCODER_DATA_FILE.name)
 RUN_CONTRACT = replace(
     CONTRACT,
     images=(EXPORT_IMAGE, TRANSCRIBE_IMAGE, TRANSCRIBE_CPU_IMAGE),
@@ -889,12 +890,13 @@ class TestTheRecipeContract:
                     if derived_row.row.uses_gpu
                 ] == ["transcribe-variants-float32-gpu-0"]
 
-            def test_should_bind_the_candidate_in_every_row_of_the_step(
+            def test_should_bind_every_row_of_the_step_to_the_files_of_its_variant_alone(
                 self, judged_recipe: JudgedRecipe
             ) -> None:
                 assert {
-                    derived_row.row.binds_candidate for derived_row in judged_recipe.derived_rows
-                } == {True}
+                    (derived_row.row.candidate_files, derived_row.request.files)
+                    for derived_row in judged_recipe.derived_rows
+                } == {(FLOAT32_FILES, FLOAT32_FILES)}
 
             def test_should_keep_the_runs_with_their_readers(
                 self, judged_recipe: JudgedRecipe
