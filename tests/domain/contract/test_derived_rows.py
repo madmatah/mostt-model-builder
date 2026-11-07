@@ -51,42 +51,55 @@ TEMPLATE = StepTemplate(
 BOTH_LANGUAGES = ("fr_fr", "en_us")
 INT8_FILES = ("encoder.int8.onnx", "vocab.txt")
 FLOAT16_FILES = ("encoder.fp16.onnx", "vocab.txt")
-CPU_RUN = ShardedRun("int8-cpu", "int8", Device.CPU, BOTH_LANGUAGES, 3, INT8_FILES)
+CPU_RUN = ShardedRun("int8-cpu", "int8", Device.CPU, BOTH_LANGUAGES, 2, INT8_FILES)
 GPU_RUN = ShardedRun("fp16-gpu", "fp16", Device.GPU, ("fr_fr",), 1, FLOAT16_FILES)
-SINGLE_SHARD_RUN = ShardedRun("int8-cpu", "int8", Device.CPU, BOTH_LANGUAGES, 1, INT8_FILES)
+SINGLE_SHARD_RUN = ShardedRun("nemo", "reference", Device.CPU, ("fr_fr",), 1, ())
+FRENCH_BENCH = (
+    SourceReference("google/fleurs", "data/fr_fr/test.tsv"),
+    SourceReference("google/fleurs", "data/fr_fr/audio/test.tar.gz"),
+)
+ENGLISH_BENCH = (
+    SourceReference("google/fleurs", "data/en_us/test.tsv"),
+    SourceReference("google/fleurs", "data/en_us/audio/test.tar.gz"),
+)
 
 
 class TestTheDerivedRows:
     class TestTheDeriveRowsFunction:
-        class TestWhenTheRunsTotalSeveralShards:
+        class TestWhenTheRunsReadSeveralLanguagesAndShards:
             @pytest.fixture
             def derived_rows(self) -> tuple[DerivedRow, ...]:
                 return derive_rows(TEMPLATE, (CPU_RUN, GPU_RUN))
 
-            def test_should_name_each_row_after_its_step_its_run_and_its_shard(
+            def test_should_name_each_row_after_its_step_its_run_its_language_and_its_shard(
                 self, derived_rows: tuple[DerivedRow, ...]
             ) -> None:
                 assert [derived.row.name for derived in derived_rows] == [
-                    "bench-int8-cpu-0",
-                    "bench-int8-cpu-1",
-                    "bench-int8-cpu-2",
-                    "bench-fp16-gpu-0",
+                    "bench-int8-cpu-fr_fr-0",
+                    "bench-int8-cpu-fr_fr-1",
+                    "bench-int8-cpu-en_us-0",
+                    "bench-int8-cpu-en_us-1",
+                    "bench-fp16-gpu-fr_fr-0",
                 ]
 
-            def test_should_keep_the_step_and_the_run_of_each_row(
+            def test_should_keep_the_step_the_run_and_the_language_of_each_row(
                 self, derived_rows: tuple[DerivedRow, ...]
             ) -> None:
-                assert [(derived.step, derived.run) for derived in derived_rows] == [
-                    ("bench", "int8-cpu"),
-                    ("bench", "int8-cpu"),
-                    ("bench", "int8-cpu"),
-                    ("bench", "fp16-gpu"),
+                assert [
+                    (derived.step, derived.run, derived.language) for derived in derived_rows
+                ] == [
+                    ("bench", "int8-cpu", "fr_fr"),
+                    ("bench", "int8-cpu", "fr_fr"),
+                    ("bench", "int8-cpu", "en_us"),
+                    ("bench", "int8-cpu", "en_us"),
+                    ("bench", "fp16-gpu", "fr_fr"),
                 ]
 
             def test_should_give_each_row_the_image_of_its_runs_device(
                 self, derived_rows: tuple[DerivedRow, ...]
             ) -> None:
                 assert [derived.row.image for derived in derived_rows] == [
+                    CPU_IMAGE,
                     CPU_IMAGE,
                     CPU_IMAGE,
                     CPU_IMAGE,
@@ -100,6 +113,7 @@ class TestTheDerivedRows:
                     CPU_LIMITS,
                     CPU_LIMITS,
                     CPU_LIMITS,
+                    CPU_LIMITS,
                     GPU_LIMITS,
                 ]
 
@@ -110,6 +124,7 @@ class TestTheDerivedRows:
                     (CPU_OUTPUT, STEP_OUTPUT),
                     (CPU_OUTPUT, STEP_OUTPUT),
                     (CPU_OUTPUT, STEP_OUTPUT),
+                    (CPU_OUTPUT, STEP_OUTPUT),
                     (GPU_OUTPUT, STEP_OUTPUT),
                 ]
 
@@ -117,6 +132,7 @@ class TestTheDerivedRows:
                 self, derived_rows: tuple[DerivedRow, ...]
             ) -> None:
                 assert [derived.row.uses_gpu for derived in derived_rows] == [
+                    False,
                     False,
                     False,
                     False,
@@ -148,34 +164,49 @@ class TestTheDerivedRows:
                     (False, INT8_FILES),
                     (False, INT8_FILES),
                     (False, INT8_FILES),
+                    (False, INT8_FILES),
                     (False, FLOAT16_FILES),
                 ]
 
-            def test_should_request_of_each_shard_its_run_variant_device_languages_and_place(
+            def test_should_request_of_each_shard_its_run_variant_device_language_and_place(
                 self, derived_rows: tuple[DerivedRow, ...]
             ) -> None:
                 assert [derived.request for derived in derived_rows] == [
-                    ShardRequest("int8-cpu", "int8", Device.CPU, BOTH_LANGUAGES, 0, 3, INT8_FILES),
-                    ShardRequest("int8-cpu", "int8", Device.CPU, BOTH_LANGUAGES, 1, 3, INT8_FILES),
-                    ShardRequest("int8-cpu", "int8", Device.CPU, BOTH_LANGUAGES, 2, 3, INT8_FILES),
+                    ShardRequest("int8-cpu", "int8", Device.CPU, ("fr_fr",), 0, 2, INT8_FILES),
+                    ShardRequest("int8-cpu", "int8", Device.CPU, ("fr_fr",), 1, 2, INT8_FILES),
+                    ShardRequest("int8-cpu", "int8", Device.CPU, ("en_us",), 0, 2, INT8_FILES),
+                    ShardRequest("int8-cpu", "int8", Device.CPU, ("en_us",), 1, 2, INT8_FILES),
                     ShardRequest("fp16-gpu", "fp16", Device.GPU, ("fr_fr",), 0, 1, FLOAT16_FILES),
                 ]
 
-        class TestWhenTheRunsTotalOneShard:
+            def test_should_bind_no_bench_beyond_the_sources_of_a_step_that_binds_none(
+                self, derived_rows: tuple[DerivedRow, ...]
+            ) -> None:
+                assert {derived.row.sources for derived in derived_rows} == {(FLEURS_SOURCE,)}
+
+        class TestWhenTheRunsMakeASingleRow:
             @pytest.fixture
             def derived_rows(self) -> tuple[DerivedRow, ...]:
                 return derive_rows(TEMPLATE, (SINGLE_SHARD_RUN,))
 
-            def test_should_name_its_row_after_the_step_alone_so_later_steps_bind_its_outputs(
+            def test_should_name_it_as_any_other_since_no_later_step_binds_a_runs_outputs(
                 self, derived_rows: tuple[DerivedRow, ...]
             ) -> None:
-                assert [derived.row.name for derived in derived_rows] == ["bench"]
+                assert [derived.row.name for derived in derived_rows] == ["bench-nemo-fr_fr-0"]
 
-            def test_should_request_the_only_shard_of_the_run(
+        class TestWhenTheStepBindsTheBenchOfItsRowsLanguage:
+            @pytest.fixture
+            def derived_rows(self) -> tuple[DerivedRow, ...]:
+                return derive_rows(replace(TEMPLATE, binds_bench=True), (CPU_RUN,))
+
+            def test_should_bind_each_row_to_its_own_languages_bench_after_the_steps_sources(
                 self, derived_rows: tuple[DerivedRow, ...]
             ) -> None:
-                assert [derived.request for derived in derived_rows] == [
-                    ShardRequest("int8-cpu", "int8", Device.CPU, BOTH_LANGUAGES, 0, 1, INT8_FILES)
+                assert [(derived.language, derived.row.sources) for derived in derived_rows] == [
+                    ("fr_fr", (FLEURS_SOURCE, *FRENCH_BENCH)),
+                    ("fr_fr", (FLEURS_SOURCE, *FRENCH_BENCH)),
+                    ("en_us", (FLEURS_SOURCE, *ENGLISH_BENCH)),
+                    ("en_us", (FLEURS_SOURCE, *ENGLISH_BENCH)),
                 ]
 
         class TestWhenTheStepBindsNoCandidate:

@@ -39,8 +39,9 @@ def build_derived_row(run: str, variant: str, image: ContainerImage) -> DerivedR
     return DerivedRow(
         step="transcribe",
         run=run,
+        language="fr_fr",
         row=StepRow(
-            name=f"transcribe-{run}-0",
+            name=f"transcribe-{run}-fr_fr-0",
             image=image,
             entry_module="mostt_recipe_family.steps.transcribe",
             sources=(),

@@ -28,6 +28,7 @@ from mostt_model_builder.domain.contract.model_description import (
     VariantDescription,
 )
 from mostt_model_builder.domain.contract.recipe_contract import (
+    BENCH_MOUNT,
     CANDIDATE_MOUNT,
     REFERENCE_VARIANT,
     CandidateFile,
@@ -182,6 +183,21 @@ RUN_CONTRACT = replace(
 RUN_FACTS = replace(FACTS, present_entry_modules=FACTS.present_entry_modules | {TRANSCRIBE_MODULE})
 CROSS_DEVICE_COMPARISON = Comparison("float32-gpu", "float32-cpu", Equivalence(0.99, 0.10))
 COMPARISON_CONTRACT = replace(RUN_CONTRACT, comparisons=(CROSS_DEVICE_COMPARISON,))
+BENCH_PINS = tuple(
+    SourcePin(RepositoryType.DATASET, "google/fleurs", REVISION, path, 1, SHA256)
+    for path in (
+        "data/fr_fr/test.tsv",
+        "data/fr_fr/audio/test.tar.gz",
+        "data/en_us/test.tsv",
+        "data/en_us/audio/test.tar.gz",
+    )
+)
+BENCH_FACTS = replace(RUN_FACTS, core_pins=(BENCH_PIN, *BENCH_PINS))
+BENCH_CONTRACT = replace(
+    RUN_CONTRACT,
+    steps=(DESCRIBE_STEP, replace(SHARDED_STEP, mounts=(CANDIDATE_MOUNT, BENCH_MOUNT))),
+)
+LINES_PARITY = Parity("lines-against-reference", "transcribe-variants", "lines.jsonl", 1e-3)
 
 
 CONVERTED_SIZE_BOUND_BYTES = 2**31
@@ -621,7 +637,41 @@ REFUSED_CONTRACTS = {
             ),
             runs=(replace(CPU_RUN, name="b-c", step="a"), replace(CPU_RUN, name="c", step="a-b")),
         ),
-        "its step 'a-b' derives the row a-b-c-0, which another row already holds",
+        "its step 'a-b' derives the row a-b-c-fr_fr-0, which another row already holds",
+    ),
+    "the bench of a row's language bound in a step without a template": (
+        change_step(1, mounts=(BENCH_MOUNT,)),
+        "its step 'transcribe' binds the bench of its row's language, which only a step with a "
+        "template derives a row per language for",
+    ),
+    "the bench of a row's language bound twice": (
+        change_sharded_step(mounts=(BENCH_MOUNT, BENCH_MOUNT)),
+        "its step 'transcribe-variants' binds the bench of its row's language twice",
+    ),
+    "the bench of a language that no source pins": (
+        replace(BENCH_CONTRACT, runs=(replace(CPU_RUN, languages=("fr_fr",)),)),
+        "binds 'data/fr_fr/test.tsv' of 'google/fleurs', which no source pins",
+    ),
+    "an output of a step whose runs derive its rows": (
+        replace(
+            RUN_CONTRACT,
+            steps=(
+                DESCRIBE_STEP,
+                SHARDED_STEP,
+                replace(
+                    DESCRIBE_STEP,
+                    name="after",
+                    mounts=(EarlierOutputMount("transcribe-variants", "peaks.json"),),
+                ),
+            ),
+        ),
+        "its step 'after' binds an output of transcribe-variants, whose runs derive a row per "
+        "language and shard, so that no single row holds its outputs",
+    ),
+    "a parity read from a step whose runs derive several rows": (
+        replace(RUN_CONTRACT, parities=(LINES_PARITY,)),
+        "its parity 'lines-against-reference' reads its report from transcribe-variants, whose "
+        "runs derive 7 rows, where a parity reads the report of one row",
     ),
     "a run that reads no language": (
         change_run(0, languages=()),
@@ -856,14 +906,17 @@ class TestTheRecipeContract:
             def judged_recipe(self) -> JudgedRecipe:
                 return judge_recipe(RUN_CONTRACT, RUN_FACTS)
 
-            def test_should_derive_a_row_per_shard_named_after_its_step_run_and_shard(
+            def test_should_derive_a_row_per_language_and_shard_named_after_them(
                 self, judged_recipe: JudgedRecipe
             ) -> None:
                 assert [derived_row.row.name for derived_row in judged_recipe.derived_rows] == [
-                    "transcribe-variants-float32-cpu-0",
-                    "transcribe-variants-float32-cpu-1",
-                    "transcribe-variants-float32-cpu-2",
-                    "transcribe-variants-float32-gpu-0",
+                    "transcribe-variants-float32-cpu-fr_fr-0",
+                    "transcribe-variants-float32-cpu-fr_fr-1",
+                    "transcribe-variants-float32-cpu-fr_fr-2",
+                    "transcribe-variants-float32-cpu-en_us-0",
+                    "transcribe-variants-float32-cpu-en_us-1",
+                    "transcribe-variants-float32-cpu-en_us-2",
+                    "transcribe-variants-float32-gpu-fr_fr-0",
                 ]
 
             def test_should_put_the_derived_rows_among_the_rows_of_the_recipe(
@@ -888,7 +941,7 @@ class TestTheRecipeContract:
                     derived_row.row.name
                     for derived_row in judged_recipe.derived_rows
                     if derived_row.row.uses_gpu
-                ] == ["transcribe-variants-float32-gpu-0"]
+                ] == ["transcribe-variants-float32-gpu-fr_fr-0"]
 
             def test_should_bind_every_row_of_the_step_to_the_files_of_its_variant_alone(
                 self, judged_recipe: JudgedRecipe
@@ -922,6 +975,76 @@ class TestTheRecipeContract:
                     "inspect",
                     "transcribe-variants",
                 )
+
+        class TestWhenAStepWithATemplateBindsTheBenchOfItsRowsLanguage:
+            @pytest.fixture
+            def judged_recipe(self) -> JudgedRecipe:
+                return judge_recipe(BENCH_CONTRACT, BENCH_FACTS)
+
+            def test_should_bind_each_row_to_the_index_and_the_audio_of_its_language_alone(
+                self, judged_recipe: JudgedRecipe
+            ) -> None:
+                assert {
+                    (derived_row.language, derived_row.row.sources)
+                    for derived_row in judged_recipe.derived_rows
+                } == {
+                    (
+                        "fr_fr",
+                        (
+                            SourceReference("google/fleurs", "data/fr_fr/test.tsv"),
+                            SourceReference("google/fleurs", "data/fr_fr/audio/test.tar.gz"),
+                        ),
+                    ),
+                    (
+                        "en_us",
+                        (
+                            SourceReference("google/fleurs", "data/en_us/test.tsv"),
+                            SourceReference("google/fleurs", "data/en_us/audio/test.tar.gz"),
+                        ),
+                    ),
+                }
+
+        class TestWhenTheBenchOfARowsLanguageIsBoundBesideOneOfItsFiles:
+            @pytest.fixture
+            def judge_act(self) -> Callable[[], JudgedRecipe]:
+                contract = replace(
+                    RUN_CONTRACT,
+                    steps=(
+                        DESCRIBE_STEP,
+                        replace(
+                            SHARDED_STEP,
+                            mounts=(
+                                BENCH_MOUNT,
+                                SourceMount("google/fleurs", "data/fr_fr/test.tsv"),
+                            ),
+                        ),
+                    ),
+                )
+                return partial(judge_recipe, contract, BENCH_FACTS)
+
+            def test_should_refuse_it_since_the_row_would_bind_the_file_twice(
+                self, judge_act: Callable[[], JudgedRecipe]
+            ) -> None:
+                with pytest.raises(
+                    RecipeContractError,
+                    match=re.escape(
+                        "binds data/fr_fr/test.tsv of google/fleurs beside the bench of its row's "
+                        "language, which binds it already"
+                    ),
+                ):
+                    judge_act()
+
+        class TestWhenAParityReadsTheReportOfAStepWhoseRunMakesASingleRow:
+            @pytest.fixture
+            def judged_recipe(self) -> JudgedRecipe:
+                return judge_recipe(
+                    replace(RUN_CONTRACT, runs=(GPU_RUN,), parities=(LINES_PARITY,)), RUN_FACTS
+                )
+
+            def test_should_read_it_from_that_row(self, judged_recipe: JudgedRecipe) -> None:
+                assert [(parity.name, parity.step) for parity in judged_recipe.parities] == [
+                    ("lines-against-reference", "transcribe-variants-float32-gpu-fr_fr-0")
+                ]
 
         class TestWhenTheContractDescribesItsModel:
             @pytest.fixture

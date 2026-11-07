@@ -1,7 +1,7 @@
 import math
 import re
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import PurePosixPath
 
 from mostt_model_builder.domain.acceptance.acceptance import (
@@ -11,6 +11,7 @@ from mostt_model_builder.domain.acceptance.acceptance import (
 )
 from mostt_model_builder.domain.acceptance.parity_reports import PARITY_NAME_GRAMMAR
 from mostt_model_builder.domain.bench.bench_languages import BENCH_LANGUAGES
+from mostt_model_builder.domain.bench.fleurs_index import FLEURS_REPOSITORY, locate_bench_files
 from mostt_model_builder.domain.bench.hypotheses import RunReader
 from mostt_model_builder.domain.bench.run_lines import RUN_LINES_FILE_NAME
 from mostt_model_builder.domain.containers.base_images import BASE_PYTHON, ENVIRONMENT_PYTHON
@@ -145,8 +146,14 @@ class CandidateMount:
     pass
 
 
+@dataclass(frozen=True, slots=True)
+class BenchMount:
+    pass
+
+
 CANDIDATE_MOUNT = CandidateMount()
-type Mount = SourceMount | EarlierOutputMount | CandidateMount
+BENCH_MOUNT = BenchMount()
+type Mount = SourceMount | EarlierOutputMount | CandidateMount | BenchMount
 
 
 @dataclass(frozen=True, slots=True)
@@ -394,7 +401,7 @@ def judge_recipe(contract: RecipeContract, facts: RecipeFacts) -> JudgedRecipe:
         images=tuple(images.by_name[image.name] for image in contract.images),
         rows=rows,
         candidate=candidate,
-        parities=judge_parities(contract.parities, rows, where),
+        parities=judge_parities(contract.parities, rows, derived_rows, where),
         runs=runs,
         derived_rows=derived_rows,
         conversion_input=judge_conversion_input(contract.conversion_input, candidate, where),
@@ -546,6 +553,7 @@ def judge_steps(
     rows: dict[str, StepRow] = {}
     derived_rows: list[DerivedRow] = []
     step_names: set[str] = set()
+    run_step_names = frozenset(step.name for step in contract.steps if step.devices)
     for step in contract.steps:
         step_where = f"{where}: its step {step.name!a}"
         if not STEP_NAME_GRAMMAR.fullmatch(step.name):
@@ -563,7 +571,7 @@ def judge_steps(
         step_runs = [run for run in runs if run.step == step.name]
         if step.devices:
             step_rows = judge_template_step(
-                step, images, pins, rows, step_runs, contract.candidate, step_where
+                step, images, pins, rows, run_step_names, step_runs, contract.candidate, step_where
             )
             derived_rows.extend(step_rows)
             new_rows = [derived_row.row for derived_row in step_rows]
@@ -573,7 +581,7 @@ def judge_steps(
                     f"{step_where} produces the run {step_runs[0].name}, and has no template of "
                     "its rows"
                 )
-            new_rows = [judge_plain_step(step, images, pins, rows, step_where)]
+            new_rows = [judge_plain_step(step, images, pins, rows, run_step_names, step_where)]
         for row in new_rows:
             if row.name in rows:
                 raise RecipeContractError(
@@ -592,12 +600,18 @@ def judge_plain_step(
     images: JudgedImages,
     pins: Sequence[SourcePin],
     rows: Mapping[str, StepRow],
+    run_step_names: frozenset[str],
     where: str,
 ) -> StepRow:
     if step.image is None or step.limits is None:
         raise RecipeContractError(f"{where} has neither an image and limits nor a template")
     image = find_image(step.image, images, where)
-    mounts = judge_mounts(step, image, images, pins, rows, where)
+    mounts = judge_mounts(step, image, images, pins, rows, run_step_names, where)
+    if mounts.binds_bench:
+        raise RecipeContractError(
+            f"{where} binds the bench of its row's language, which only a step with a template "
+            "derives a row per language for"
+        )
     return StepRow(
         name=step.name,
         image=image,
@@ -617,6 +631,7 @@ def judge_template_step(
     images: JudgedImages,
     pins: Sequence[SourcePin],
     rows: Mapping[str, StepRow],
+    run_step_names: frozenset[str],
     runs: Sequence[JudgedRun],
     candidate: Sequence[CandidateFile],
     where: str,
@@ -643,7 +658,16 @@ def judge_template_step(
                 f"{device_where} runs in the {image.device} image {image.tag}"
             )
         judge_shard_outputs(template, device, device_where)
-        mounts = judge_mounts(step, image, images, pins, rows, where)
+        mounts = judge_mounts(step, image, images, pins, rows, run_step_names, where)
+        if mounts.binds_bench:
+            judge_bench_mounts(
+                mounts.sources,
+                [run for run in runs if run.device is device],
+                image,
+                images,
+                pins,
+                where,
+            )
         device_rows[device] = DeviceRow(image, template.limits, template.outputs)
     for run in runs:
         if run.device not in device_rows:
@@ -662,6 +686,7 @@ def judge_template_step(
             binds_candidate=mounts.binds_candidate,
             outputs=step.outputs,
             devices=device_rows,
+            binds_bench=mounts.binds_bench,
         ),
         [
             ShardedRun(
@@ -725,6 +750,7 @@ class JudgedMounts:
     sources: tuple[SourceReference, ...]
     earlier_outputs: tuple[EarlierOutput, ...]
     binds_candidate: bool
+    binds_bench: bool = False
 
 
 def judge_mounts(
@@ -733,33 +759,74 @@ def judge_mounts(
     images: JudgedImages,
     pins: Sequence[SourcePin],
     earlier_rows: Mapping[str, StepRow],
+    run_step_names: frozenset[str],
     where: str,
 ) -> JudgedMounts:
     sources: list[SourceReference] = []
     earlier_outputs: list[EarlierOutput] = []
     binds_candidate = False
+    binds_bench = False
     for mount in step.mounts:
         if isinstance(mount, CandidateMount):
             if binds_candidate:
                 raise RecipeContractError(f"{where} binds the candidate twice")
             binds_candidate = True
+        elif isinstance(mount, BenchMount):
+            if binds_bench:
+                raise RecipeContractError(f"{where} binds the bench of its row's language twice")
+            binds_bench = True
         elif isinstance(mount, SourceMount):
-            pin = find_pinned_file(mount, pins, where)
-            if pin.runs_code_when_loaded and not reads_code_running_sources(image, images):
-                raise RecipeContractError(
-                    f"{where} binds {mount.path} of {mount.repository}, which runs code when it "
-                    f"loads, in the image {image.tag}, which the recipe does not declare to read it"
-                )
-            reference = SourceReference(mount.repository, mount.path)
+            reference = judge_source_mount(mount, image, images, pins, where)
             if reference in sources:
                 raise RecipeContractError(f"{where} binds {mount.path} of {mount.repository} twice")
             sources.append(reference)
         else:
+            if mount.step in run_step_names:
+                raise RecipeContractError(
+                    f"{where} binds an output of {mount.step}, whose runs derive a row per "
+                    "language and shard, so that no single row holds its outputs"
+                )
             earlier_output = find_earlier_output(mount, earlier_rows, where)
             if earlier_output in earlier_outputs:
                 raise RecipeContractError(f"{where} binds {mount.output} of {mount.step} twice")
             earlier_outputs.append(earlier_output)
-    return JudgedMounts(tuple(sources), tuple(earlier_outputs), binds_candidate)
+    return JudgedMounts(tuple(sources), tuple(earlier_outputs), binds_candidate, binds_bench)
+
+
+def judge_source_mount(
+    mount: SourceMount,
+    image: ContainerImage,
+    images: JudgedImages,
+    pins: Sequence[SourcePin],
+    where: str,
+) -> SourceReference:
+    pin = find_pinned_file(mount, pins, where)
+    if pin.runs_code_when_loaded and not reads_code_running_sources(image, images):
+        raise RecipeContractError(
+            f"{where} binds {mount.path} of {mount.repository}, which runs code when it "
+            f"loads, in the image {image.tag}, which the recipe does not declare to read it"
+        )
+    return SourceReference(mount.repository, mount.path)
+
+
+def judge_bench_mounts(
+    sources: Sequence[SourceReference],
+    runs: Sequence[JudgedRun],
+    image: ContainerImage,
+    images: JudgedImages,
+    pins: Sequence[SourcePin],
+    where: str,
+) -> None:
+    for run in runs:
+        for language in run.languages:
+            for path in locate_bench_files(language):
+                mount = SourceMount(FLEURS_REPOSITORY, path)
+                reference = judge_source_mount(mount, image, images, pins, where)
+                if reference in sources:
+                    raise RecipeContractError(
+                        f"{where} binds {path} of {FLEURS_REPOSITORY} beside the bench of its "
+                        f"row's language, which binds it already"
+                    )
 
 
 def reads_code_running_sources(image: ContainerImage, images: JudgedImages) -> bool:
@@ -1050,10 +1117,14 @@ def judge_origin(
 
 
 def judge_parities(
-    parities: Sequence[Parity], rows: Sequence[StepRow], where: str
+    parities: Sequence[Parity],
+    rows: Sequence[StepRow],
+    derived_rows: Sequence[DerivedRow],
+    where: str,
 ) -> tuple[Parity, ...]:
     outputs_by_step = {row.name: {output.name for output in row.outputs} for row in rows}
     names: set[str] = set()
+    judged: list[Parity] = []
     for parity in parities:
         parity_where = f"{where}: its parity {parity.name!a}"
         if not PARITY_NAME_GRAMMAR.fullmatch(parity.name):
@@ -1063,7 +1134,8 @@ def judge_parities(
         if parity.name in names:
             raise RecipeContractError(f"{parity_where} is declared twice")
         names.add(parity.name)
-        if parity.output not in outputs_by_step.get(parity.step, set()):
+        parity_row = find_parity_row(parity, derived_rows, parity_where)
+        if parity.output not in outputs_by_step.get(parity_row, set()):
             raise RecipeContractError(
                 f"{parity_where} reads its report from {parity.output!a} of {parity.step!a}, "
                 "which no step of the recipe declares"
@@ -1073,7 +1145,22 @@ def judge_parities(
                 f"{parity_where} reads its report from {PEAKS_FILE_NAME}, the peaks of its step"
             )
         judge_tolerance(parity.absolute_difference_tolerance, parity_where)
-    return tuple(parities)
+        judged.append(replace(parity, step=parity_row))
+    return tuple(judged)
+
+
+def find_parity_row(parity: Parity, derived_rows: Sequence[DerivedRow], where: str) -> str:
+    step_rows = [
+        derived_row.row.name for derived_row in derived_rows if derived_row.step == parity.step
+    ]
+    if not step_rows:
+        return parity.step
+    if len(step_rows) > 1:
+        raise RecipeContractError(
+            f"{where} reads its report from {parity.step}, whose runs derive {len(step_rows)} "
+            "rows, where a parity reads the report of one row"
+        )
+    return step_rows[0]
 
 
 def judge_tolerance(tolerance: float, where: str) -> None:

@@ -148,6 +148,10 @@ REFUSED_ROWS = {
         replace(FLEURS_CHECK_ROW, name="Fleurs-check"),
         "its name does not match",
     ),
+    "a name beyond the 82 characters of a step, a run, a language and a shard": (
+        replace(FLEURS_CHECK_ROW, name="a" * 83),
+        "its name does not match",
+    ),
     "an entry module outside the core's steps": (
         replace(FLEURS_CHECK_ROW, entry_module="mostt_model_builder.host_main"),
         "lies outside mostt_model_builder.steps",

@@ -56,9 +56,10 @@ CONTAINERFILE_NAME = "Containerfile"
 IMAGES_DIRECTORY_NAME = "images"
 RECIPES_DIRECTORY_NAME = "recipes"
 STEP_NAME_GRAMMAR = re.compile(r"[a-z0-9][a-z0-9-]{0,31}")
-# A row that a run derives from its step is named after the step, its run and its shard, each
-# name of up to 32 characters and a shard of up to 2 digits.
-ROW_NAME_GRAMMAR = re.compile(r"[a-z0-9][a-z0-9-]{0,69}")
+# A row that a run derives from its step is named after the step, its run, its language and its
+# shard: each name of up to 32 characters, a language of up to 13 under FLEURS's form, a shard of
+# up to 2 digits, and three separators.
+ROW_NAME_GRAMMAR = re.compile(r"[a-z0-9][a-z0-9_-]{0,81}")
 ENTRY_MODULE_GRAMMAR = re.compile(r"[a-z_][a-z0-9_]*(\.[a-z_][a-z0-9_]*)*")
 CORE_PACKAGE = "mostt_model_builder"
 RECIPE_PACKAGE_PREFIX = "mostt_recipe_"
