@@ -29,11 +29,11 @@ from mostt_model_builder.domain.onnx.node_placement import (
     render_placement_summary,
 )
 from mostt_model_builder.steps.output_modes import finish_outputs
+from mostt_recipe_parakeet_tdt.domain.cpu_counts import TRANSCRIPTION_CPU_COUNTS
 from mostt_recipe_parakeet_tdt.domain.variants.candidate_layout import (
     ONNX_ASR_MODEL_TYPE,
-    find_quantization,
+    read_quantization,
 )
-from mostt_recipe_parakeet_tdt.recipe import TRANSCRIBE_CPU_LIMITS, TRANSCRIBE_GPU_LIMITS
 from mostt_recipe_parakeet_tdt.steps.fleurs_recordings import Recording, read_shard_recordings
 
 # onnx-asr and ONNX Runtime are installed in the transcription images alone, so mypy on the host
@@ -53,17 +53,13 @@ PROFILE_NODE_CATEGORY = "Node"
 KERNEL_TIME_SUFFIX = "_kernel_time"
 TYPE_SHAPE_FIELDS = ("input_type_shape", "output_type_shape")
 MILLISECONDS_PER_SECOND = 1000.0
-THREAD_COUNTS = {
-    Device.CPU: TRANSCRIBE_CPU_LIMITS.cpu_count,
-    Device.GPU: TRANSCRIBE_GPU_LIMITS.cpu_count,
-}
 
 
 def load_model(request: ShardRequest, profile_prefix: Path | None = None) -> OnnxAsrModel:
     if request.device is Device.GPU:
         onnxruntime.preload_dlls()
     options = onnxruntime.SessionOptions()
-    options.intra_op_num_threads = THREAD_COUNTS[request.device]
+    options.intra_op_num_threads = TRANSCRIPTION_CPU_COUNTS[request.device]
     options.inter_op_num_threads = 1
     if profile_prefix is not None:
         options.enable_profiling = True
@@ -74,7 +70,7 @@ def load_model(request: ShardRequest, profile_prefix: Path | None = None) -> Onn
     return onnx_asr.load_model(
         ONNX_ASR_MODEL_TYPE,
         str(CANDIDATE_IN_THE_CONTAINER),
-        quantization=find_quantization(request.variant),
+        quantization=read_quantization(request.files),
         sess_options=options,
         providers=providers,
     ).with_timestamps()

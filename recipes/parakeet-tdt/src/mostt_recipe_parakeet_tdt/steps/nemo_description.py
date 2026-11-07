@@ -4,17 +4,17 @@ from pathlib import Path
 from mostt_model_builder.domain.containers.container_paths import OUTPUT_IN_THE_CONTAINER
 from mostt_model_builder.steps.bound_sources import find_bound_source
 from mostt_model_builder.steps.output_modes import finish_outputs
-from mostt_recipe_parakeet_tdt.domain.export.tensor_fixtures import (
-    TensorDescription,
-    render_name_list,
-)
-from mostt_recipe_parakeet_tdt.recipe import (
+from mostt_recipe_parakeet_tdt.domain.export.pinned_sources import (
     NEMO_ARCHIVE,
     NEMO_REPOSITORY,
-    NEMO_STATE_DICT_FILE_NAME,
     ULTRA_REPOSITORY,
-    ULTRA_TENSORS_FILE_NAME,
     ULTRA_WEIGHTS,
+)
+from mostt_recipe_parakeet_tdt.domain.export.tensor_fixtures import (
+    NEMO_STATE_DICT_FILE_NAME,
+    ULTRA_TENSORS_FILE_NAME,
+    TensorDescription,
+    render_name_list,
 )
 from mostt_recipe_parakeet_tdt.steps.nemo_model import build_nemo_model
 

@@ -18,20 +18,24 @@ from mostt_model_builder.domain.containers.container_paths import (
 )
 from mostt_model_builder.steps.bound_sources import find_bound_source
 from mostt_model_builder.steps.output_modes import finish_outputs
-from mostt_recipe_parakeet_tdt.domain.variants.candidate_layout import VOCABULARY_FILE_NAME
-from mostt_recipe_parakeet_tdt.recipe import (
-    DECODER_JOINT_FILE_NAME,
-    ENCODER_DATA_FILE_NAME,
-    ENCODER_FILE_NAME,
+from mostt_recipe_parakeet_tdt.domain.cpu_counts import EXPORT_CPU_COUNT
+from mostt_recipe_parakeet_tdt.domain.export.parity_checks import (
     ENCODER_PARITY_FILE_NAME,
     ENCODER_PARITY_NAME,
-    EXPORT_LIMITS,
+    PARITY_LANGUAGE,
+)
+from mostt_recipe_parakeet_tdt.domain.export.pinned_sources import (
     NEMO_ARCHIVE,
     NEMO_REPOSITORY,
-    PARITY_LANGUAGE,
     ULTRA_REPOSITORY,
     ULTRA_TOKENIZER,
     ULTRA_WEIGHTS,
+)
+from mostt_recipe_parakeet_tdt.domain.variants.candidate_layout import (
+    DECODER_JOINT_FILE_NAME,
+    ENCODER_DATA_FILE_NAME,
+    ENCODER_FILE_NAME,
+    VOCABULARY_FILE_NAME,
 )
 from mostt_recipe_parakeet_tdt.steps.fleurs_recordings import (
     list_utterance_ids,
@@ -73,7 +77,7 @@ ENCODER_DYNAMIC_AXES = {
 RAW_ENCODER_PATH = Path(SCRATCH_IN_THE_CONTAINER) / "encoder-raw.onnx"
 BLANK_PIECE = "<blk>"
 CPU_PROVIDER = "CPUExecutionProvider"
-THREAD_COUNT = EXPORT_LIMITS.cpu_count
+THREAD_COUNT = EXPORT_CPU_COUNT
 
 
 # NeMo's encoder takes its inputs by name, which the exporter cannot pass, so a module of its own

@@ -2,6 +2,8 @@ import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 
+ULTRA_TENSORS_FILE_NAME = "moondream-tensors"
+NEMO_STATE_DICT_FILE_NAME = "nemo-state-dict"
 # A name list holds one line per tensor, under a thousand of them.
 NAME_LIST_MAX_SIZE_BYTES = 2**20
 MAX_TENSOR_COUNT = 10_000

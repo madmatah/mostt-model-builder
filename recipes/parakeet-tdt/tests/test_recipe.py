@@ -25,7 +25,9 @@ from mostt_recipe_parakeet_tdt.domain.transcripts.run_readers import (
     read_token_id_lines,
 )
 from mostt_recipe_parakeet_tdt.domain.transcripts.vocabulary import VOCABULARY_SHA256
+from mostt_recipe_parakeet_tdt.domain.variants.candidate_layout import read_quantization
 from mostt_recipe_parakeet_tdt.domain.variants.comparisons import COMPARISONS
+from mostt_recipe_parakeet_tdt.domain.variants.quantizations import find_quantization
 from mostt_recipe_parakeet_tdt.recipe import (
     DESCRIBE_STEP,
     EXPORT_IMAGE_NAME,
@@ -237,6 +239,9 @@ def judge_the_recipe() -> JudgedRecipe:
     )
 
 
+TRANSCRIPTION_ROW_COUNT = len(
+    [name for name in DERIVED_ROW_NAMES if name.startswith("transcribe-")]
+)
 DESCRIBED_FILES = {
     SourceMount(ULTRA_REPOSITORY, "model.safetensors"),
     SourceMount(NEMO_REPOSITORY, "parakeet-tdt-0.6b-v3.nemo"),
@@ -340,6 +345,17 @@ class TestTheParakeetTdtRecipe:
         def test_should_bind_the_candidate_and_both_benches_alone(self) -> None:
             assert set(TRANSCRIBE_STEP.mounts) == {CANDIDATE_MOUNT, *BENCH_FILES}
 
+        def test_should_run_four_shards_of_two_cpus_on_the_cpu_and_one_of_eight_on_the_gpu(
+            self,
+        ) -> None:
+            shards_by_device = {
+                run.device: run.shard_count for run in RECIPE.runs if run.step == "transcribe"
+            }
+            assert [
+                (template.device, shards_by_device[template.device], template.limits.cpu_count)
+                for template in TRANSCRIBE_STEP.devices
+            ] == [("cpu", 4, 2), ("gpu", 1, 8)]
+
         def test_should_run_each_device_in_its_own_image(self) -> None:
             assert [(template.device, template.image) for template in TRANSCRIBE_STEP.devices] == [
                 ("cpu", "transcribe-cpu"),
@@ -394,6 +410,21 @@ class TestTheParakeetTdtRecipe:
             assert [
                 derived_row.row.name for derived_row in judged_recipe.derived_rows
             ] == DERIVED_ROW_NAMES
+
+        def test_should_name_in_each_transcription_s_request_the_encoder_of_its_quantization(
+            self, judged_recipe: JudgedRecipe
+        ) -> None:
+            transcriptions = [
+                derived_row.request
+                for derived_row in judged_recipe.derived_rows
+                if derived_row.step == TRANSCRIBE_STEP.name
+            ]
+            assert len(transcriptions) == TRANSCRIPTION_ROW_COUNT
+            assert [
+                request.variant
+                for request in transcriptions
+                if read_quantization(request.files) != find_quantization(request.variant)
+            ] == []
 
         def test_should_carry_the_description_of_its_model(
             self, judged_recipe: JudgedRecipe
