@@ -38,7 +38,6 @@ RECIPE_DIRECTORY = Path(__file__).resolve().parent.parent
 IMAGES_MANIFEST_PATH = CLONE_ROOT / "images" / "environment.toml"
 EXPECTED_CARD_PATH = RECIPE_DIRECTORY / "tests" / "fixtures" / "model-card.md"
 HOST_CPU_COUNT = 64
-BUILD_COMMIT = "89abcdef0123456789abcdef0123456789abcdef"
 LICENSE_LINK = "[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)"
 REPOSITORY_URL = "https://github.com/madmatah/mostt-model-builder"
 REPOSITORY_SENTENCE = f"The code of this build is [mostt-model-builder]({REPOSITORY_URL})."
@@ -119,7 +118,6 @@ def render_the_card() -> str:
                 read_manifest_requirements(),
                 recipe.derived_rows,
             ),
-            build_commit=BUILD_COMMIT,
         )
     )
     return card.decode("utf-8")
