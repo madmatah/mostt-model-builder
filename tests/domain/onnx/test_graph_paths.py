@@ -4,11 +4,14 @@ from dataclasses import dataclass, field
 
 import pytest
 
+from mostt_model_builder.domain.onnx.element_types import ElementType
 from mostt_model_builder.domain.onnx.graph_paths import (
     GRAPH_ATTRIBUTE,
     GRAPHS_ATTRIBUTE,
     accumulate_path_labels,
     index_graph_paths,
+    index_graph_readers,
+    list_computation_to_integer_casts,
 )
 
 PROPERTY_SEED = 20261107
@@ -17,6 +20,10 @@ MAX_NODE_COUNT = 7
 GRAPH_INPUTS = ("input_a", "input_b", "input_c")
 OMITTED = ""
 SHAPE_READERS = ("Shape", "Size")
+# The value of AttributeProto.AttributeType that holds an integer, as onnx/onnx.proto defines it.
+INT_ATTRIBUTE = 2
+CAST_TARGETS = (ElementType.INT64, ElementType.INT32, ElementType.BOOL, ElementType.FLOAT)
+INTEGER_CAST_TARGETS = (ElementType.INT64, ElementType.INT32)
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,6 +34,8 @@ class FakeTensor:
 @dataclass(frozen=True, slots=True)
 class FakeAttribute:
     type: int
+    name: str = ""
+    i: int = 0
     g: "FakeGraph" = field(default_factory=lambda: FakeGraph())
     graphs: tuple["FakeGraph", ...] = ()
 
@@ -52,6 +61,21 @@ class PathCase:
     nodes: tuple[FakeNode, ...]
     source_names: tuple[str, ...]
     target_name: str
+
+
+@dataclass(frozen=True, slots=True)
+class ComputationCase:
+    nodes: tuple[FakeNode, ...]
+    source_names: tuple[str, ...]
+
+
+def build_cast(source: str, target: str, element_type: ElementType) -> FakeNode:
+    return FakeNode(
+        (source,),
+        (target,),
+        (FakeAttribute(INT_ATTRIBUTE, name="to", i=element_type),),
+        op_type="Cast",
+    )
 
 
 def build_if(*branch_nodes: FakeNode, output: str) -> FakeNode:
@@ -249,6 +273,88 @@ PATH_CASES = {
     ),
 }
 
+COMPUTATION_CASES = {
+    "a chain keeps its cast to an integer type and none of that cast's readers": (
+        ComputationCase(
+            (
+                build_cast("input_a", "as_float", ElementType.FLOAT),
+                FakeNode(("as_float",), ("hidden",)),
+                build_cast("hidden", "as_integer", ElementType.INT64),
+                FakeNode(("as_integer",), ("mask",)),
+            ),
+            ("input_a",),
+        ),
+        (0, 1, 2),
+    ),
+    "a value that two kept nodes read keeps both": (
+        ComputationCase(
+            (
+                FakeNode(("input_a",), ("hidden",)),
+                FakeNode(("hidden",), ("next_round",)),
+                build_cast("hidden", "as_integer", ElementType.INT64),
+            ),
+            ("input_a",),
+        ),
+        (0, 1, 2),
+    ),
+    "a cast to a boolean is no cast to an integer, and the walk goes past it": (
+        ComputationCase(
+            (
+                build_cast("input_a", "as_boolean", ElementType.BOOL),
+                FakeNode(("as_boolean",), ("selected",)),
+            ),
+            ("input_a",),
+        ),
+        (0, 1),
+    ),
+    "a node that reads another input's computation too is kept, for the conversion to refuse": (
+        ComputationCase(
+            (
+                FakeNode(("input_b",), ("from_b",)),
+                FakeNode(("input_a", "from_b"), ("mixed",)),
+            ),
+            ("input_a",),
+        ),
+        (1,),
+    ),
+    "the empty name joins no nodes": (
+        ComputationCase(
+            (
+                FakeNode(("input_a",), ("unused", OMITTED)),
+                FakeNode((OMITTED,), ("unrelated",)),
+            ),
+            ("input_a",),
+        ),
+        (0,),
+    ),
+    "an If whose branch reads a tensor of the computation is kept": (
+        ComputationCase(
+            (
+                FakeNode(("input_a",), ("hidden",)),
+                build_if(FakeNode(("hidden",), ("inner",)), output="chosen"),
+            ),
+            ("input_a",),
+        ),
+        (0, 1),
+    ),
+    "a cast to an integer of a domain other than ONNX's is an ordinary node": (
+        ComputationCase(
+            (
+                FakeNode(
+                    ("input_a",),
+                    ("as_integer",),
+                    (FakeAttribute(INT_ATTRIBUTE, name="to", i=ElementType.INT64),),
+                    op_type="Cast",
+                    domain="mostt.local",
+                ),
+                FakeNode(("as_integer",), ("mask",)),
+            ),
+            ("input_a",),
+        ),
+        (0, 1),
+    ),
+}
+
 
 def generate_case(generator: random.Random) -> PathCase:
     tensors = list(GRAPH_INPUTS)
@@ -329,6 +435,66 @@ def enumerate_path_nodes(case: PathCase) -> tuple[int, ...]:
     return tuple(sorted(found))
 
 
+def generate_computation_case(generator: random.Random) -> ComputationCase:
+    tensors = list(GRAPH_INPUTS)
+    nodes = []
+    for node_index in range(generator.randint(1, MAX_NODE_COUNT)):
+        if generator.random() < 0.3:
+            nodes.append(
+                build_cast(
+                    generator.choice(tensors),
+                    f"tensor_{node_index}",
+                    generator.choice(CAST_TARGETS),
+                )
+            )
+            tensors.append(f"tensor_{node_index}")
+            continue
+        reads = tuple(generator.choice([*tensors, OMITTED]) for _ in range(generator.randint(0, 3)))
+        writes = tuple(
+            OMITTED if generator.random() < 0.2 else f"tensor_{node_index}_{write_index}"
+            for write_index in range(generator.randint(1, 2))
+        )
+        nodes.append(FakeNode(reads, writes))
+        tensors.extend(name for name in writes if name)
+    source_names = tuple(name for name in GRAPH_INPUTS if generator.random() < 0.5)
+    return ComputationCase(tuple(nodes), source_names)
+
+
+def casts_to_an_integer(node: FakeNode) -> bool:
+    return node.op_type == "Cast" and node.attribute[0].i in INTEGER_CAST_TARGETS
+
+
+# Shares no code with the walk, so that one defect cannot hide in both.
+def enumerate_computation_nodes(case: ComputationCase) -> tuple[int, ...]:
+    found: set[int] = set()
+
+    def follow(name: str, trail: Sequence[int]) -> None:
+        found.update(trail)
+        if trail and casts_to_an_integer(case.nodes[trail[-1]]):
+            return
+        for node_index, node in enumerate(case.nodes):
+            if name and name in node.input:
+                for output in node.output or (OMITTED,):
+                    follow(output, (*trail, node_index))
+
+    for source_name in case.source_names:
+        follow(source_name, ())
+    return tuple(sorted(found))
+
+
+def list_computation_nodes(case: ComputationCase) -> tuple[int, ...]:
+    return list_computation_to_integer_casts(
+        case.nodes, index_graph_readers(case.nodes), case.source_names
+    )
+
+
+def find_computation_mismatches(generator: random.Random) -> tuple[list[ComputationCase], int]:
+    cases = [generate_computation_case(generator) for _ in range(PROPERTY_CASE_COUNT)]
+    return [
+        case for case in cases if list_computation_nodes(case) != enumerate_computation_nodes(case)
+    ], len(cases)
+
+
 def find_mismatches(generator: random.Random) -> tuple[list[PathCase], int]:
     cases = [generate_case(generator) for _ in range(PROPERTY_CASE_COUNT)]
     return [case for case in cases if list_path_nodes(case) != enumerate_path_nodes(case)], len(
@@ -354,6 +520,33 @@ class TestTheGraphPaths:
         class TestWhenGivenAnyDirectedAcyclicGraphInAnyOrder:
             def test_should_gather_exactly_the_nodes_of_every_path_of_tensors(self) -> None:
                 mismatches, checked_count = find_mismatches(random.Random(PROPERTY_SEED))
+                assert (mismatches, checked_count) == ([], PROPERTY_CASE_COUNT), (
+                    f"seed {PROPERTY_SEED}"
+                )
+
+    class TestTheListComputationToIntegerCastsFunction:
+        @pytest.mark.parametrize(
+            ("case", "expected_nodes"),
+            list(COMPUTATION_CASES.values()),
+            ids=list(COMPUTATION_CASES.keys()),
+        )
+        class TestWhenGivenASmallGraph:
+            @pytest.fixture
+            def computation_nodes(self, case: ComputationCase) -> tuple[int, ...]:
+                return list_computation_nodes(case)
+
+            def test_should_keep_every_node_a_source_reaches_until_its_casts_to_integers(
+                self, computation_nodes: tuple[int, ...], expected_nodes: tuple[int, ...]
+            ) -> None:
+                assert computation_nodes == expected_nodes
+
+        class TestWhenGivenAnyDirectedAcyclicGraph:
+            def test_should_keep_exactly_the_nodes_of_every_path_until_a_cast_to_an_integer(
+                self,
+            ) -> None:
+                mismatches, checked_count = find_computation_mismatches(
+                    random.Random(PROPERTY_SEED)
+                )
                 assert (mismatches, checked_count) == ([], PROPERTY_CASE_COUNT), (
                     f"seed {PROPERTY_SEED}"
                 )

@@ -1,7 +1,9 @@
 from collections import defaultdict
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Protocol
+
+from mostt_model_builder.domain.onnx.element_types import INTEGER_ELEMENT_TYPES
 
 # The values of AttributeProto.AttributeType that hold graphs, as onnx/onnx.proto defines them: the
 # messages carry them as plain values.
@@ -11,6 +13,8 @@ ONNX_DOMAINS = frozenset({"", "ai.onnx"})
 # Shape and Size write the shape of their data input, never its values, so a computation does not
 # reach back through them: the shape of a float16 tensor is no integer computed through float16.
 SHAPE_OPERATORS = frozenset({"Shape", "Size"})
+CAST_OPERATOR = "Cast"
+CAST_TARGET_ATTRIBUTE = "to"
 
 
 class NamedTensor(Protocol):
@@ -21,6 +25,12 @@ class NamedTensor(Protocol):
 class GraphAttribute[Graph](Protocol):
     @property
     def type(self) -> int: ...
+
+    @property
+    def name(self) -> str: ...
+
+    @property
+    def i(self) -> int: ...
 
     @property
     def g(self) -> Graph: ...
@@ -114,6 +124,21 @@ def reads_shape_alone(node: PathNode) -> bool:
     return node.domain in ONNX_DOMAINS and node.op_type in SHAPE_OPERATORS
 
 
+def casts_to_integer(node: PathNode) -> bool:
+    return (
+        node.domain in ONNX_DOMAINS
+        and node.op_type == CAST_OPERATOR
+        and any(
+            attribute.name == CAST_TARGET_ATTRIBUTE and attribute.i in INTEGER_ELEMENT_TYPES
+            for attribute in node.attribute
+        )
+    )
+
+
+def ends_no_walk(_node: PathNode) -> bool:
+    return False
+
+
 def index_readers(reads: Sequence[frozenset[str]]) -> dict[str, list[int]]:
     readers: defaultdict[str, list[int]] = defaultdict(list)
     for node_index, node_reads in enumerate(reads):
@@ -135,7 +160,10 @@ def index_writers(nodes: Sequence[PathNode]) -> dict[str, list[int]]:
 # container, and an encoder's audio path chains over a thousand nodes, beyond Python's recursion
 # limit.
 def list_descendants(
-    nodes: Sequence[PathNode], readers: Mapping[str, Sequence[int]], source_names: Collection[str]
+    nodes: Sequence[PathNode],
+    readers: Mapping[str, Sequence[int]],
+    source_names: Collection[str],
+    ends_walk: Callable[[PathNode], bool] = ends_no_walk,
 ) -> set[int]:
     reached: set[int] = set()
     pending = [name for name in source_names if name]
@@ -143,7 +171,8 @@ def list_descendants(
         for node_index in readers.get(pending.pop(), ()):
             if node_index not in reached:
                 reached.add(node_index)
-                pending.extend(name for name in nodes[node_index].output if name)
+                if not ends_walk(nodes[node_index]):
+                    pending.extend(name for name in nodes[node_index].output if name)
     return reached
 
 
@@ -207,3 +236,14 @@ def accumulate_path_labels[Label](
                     accumulated[name] = known | gathered
                     is_growing = True
     return accumulated
+
+
+def index_graph_readers(nodes: Sequence[PathNode]) -> dict[str, list[int]]:
+    return index_readers([list_node_reads(node) for node in nodes])
+
+
+# Past a cast to an integer type, no float carries the computation, so none of it needs float32.
+def list_computation_to_integer_casts(
+    nodes: Sequence[PathNode], readers: Mapping[str, Sequence[int]], source_names: Collection[str]
+) -> tuple[int, ...]:
+    return tuple(sorted(list_descendants(nodes, readers, source_names, casts_to_integer)))

@@ -21,7 +21,10 @@ from mostt_model_builder.domain.onnx.conversion_request import (
 
 FLOAT16_CONVERSION = FloatConversion(ConversionKind.FLOAT16, "encoder.fp16.onnx")
 BFLOAT16_CONVERSION = FloatConversion(
-    ConversionKind.BFLOAT16, "encoder.bf16.onnx", added_float32_operators=("Range",)
+    ConversionKind.BFLOAT16,
+    "encoder.bf16.onnx",
+    added_float32_operators=("Range",),
+    kept_inputs=("length",),
 )
 EIGHT_BIT_BLOCKS_CONVERSION = EightBitBlocksConversion(
     "encoder.int8.onnx",
@@ -45,6 +48,7 @@ FLOAT16_FILE = ConvertedFile(
     below_min_positive_count=95,
     above_max_finite_count=0,
     realigned_cast_count=5,
+    kept_from_inputs_node_count=0,
 )
 BFLOAT16_FILE = ConvertedFile(
     kind=ConversionKind.BFLOAT16,
@@ -56,6 +60,7 @@ BFLOAT16_FILE = ConvertedFile(
     below_min_positive_count=95,
     above_max_finite_count=0,
     realigned_cast_count=5,
+    kept_from_inputs_node_count=23,
 )
 EIGHT_BIT_BLOCKS_FILE = ConvertedFile(
     kind=ConversionKind.EIGHT_BIT_BLOCKS,
@@ -67,6 +72,7 @@ EIGHT_BIT_BLOCKS_FILE = ConvertedFile(
     below_min_positive_count=0,
     above_max_finite_count=0,
     realigned_cast_count=0,
+    kept_from_inputs_node_count=0,
 )
 REPORT = ConversionReport((FLOAT16_FILE, BFLOAT16_FILE, EIGHT_BIT_BLOCKS_FILE))
 DOCUMENT = json.loads(render_conversion_report(REPORT))
@@ -154,6 +160,25 @@ REFUSED_REPORTS = {
     "an 8-bit conversion that quantized fewer products than declared": (
         render_with_entry(2, quantized_product_count=217),
         "the conversion to encoder.int8.onnx quantized 217 products to 8-bit blocks, not 265",
+    ),
+    "a conversion that declares an input and kept no node from it": (
+        render_with_entry(1, kept_from_inputs_node_count=0),
+        "the conversion to encoder.bf16.onnx kept no node in float32 from its inputs",
+    ),
+    "a float conversion that declares no input and kept nodes from one": (
+        render_with_entry(0, kept_from_inputs_node_count=23),
+        "the conversion to encoder.fp16.onnx kept 23 nodes in float32 from inputs, and it "
+        "declares none",
+    ),
+    "an 8-bit conversion that kept nodes from an input": (
+        render_with_entry(2, kept_from_inputs_node_count=1),
+        "the conversion to encoder.int8.onnx kept 1 node in float32 from inputs, and it declares "
+        "none",
+    ),
+    "a count of kept nodes beyond the bound": (
+        render_with_entry(1, kept_from_inputs_node_count=2**40 + 1),
+        "the conversion to encoder.bf16.onnx: its count of nodes kept in float32 from its inputs, "
+        "1099511627777, is not a count up to",
     ),
     "a float conversion that quantized products": (
         render_with_entry(0, quantized_product_count=3),

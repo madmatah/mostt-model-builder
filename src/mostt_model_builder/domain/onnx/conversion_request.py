@@ -26,7 +26,9 @@ MAX_OPERATOR_COUNT = 64
 OPERATOR_GRAMMAR = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,127}")
 STEP_GRAMMAR = re.compile(r"[a-z0-9][a-z0-9-]{0,31}")
 REQUEST_KEYS = frozenset({"input_step", "input_name", "conversions"})
-FLOAT_CONVERSION_KEYS = frozenset({"kind", "output", "added_float32_operators", "keep_io_types"})
+FLOAT_CONVERSION_KEYS = frozenset(
+    {"kind", "output", "added_float32_operators", "keep_io_types", "kept_inputs"}
+)
 EIGHT_BIT_BLOCKS_KEYS = frozenset(
     {"kind", "output", "block_size", "is_symmetric", "accuracy_level", "quantized_product_count"}
 )
@@ -51,6 +53,7 @@ class FloatConversion:
     output: str
     added_float32_operators: tuple[str, ...] = ()
     keep_io_types: bool = True
+    kept_inputs: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,6 +109,11 @@ def judge_float_conversion(conversion: FloatConversion, where: str) -> None:
     if not isinstance(conversion.keep_io_types, bool):
         raise ConversionRequestError(
             f"{where} has keep_io_types {conversion.keep_io_types!a}, not a boolean"
+        )
+    kept_inputs = conversion.kept_inputs
+    if not isinstance(kept_inputs, tuple) or not all(isinstance(name, str) for name in kept_inputs):
+        raise ConversionRequestError(
+            f"{where} keeps the computation from {kept_inputs!a}, not a tuple of input names"
         )
 
 
@@ -177,6 +185,7 @@ def render_conversion(conversion: Conversion) -> Mapping[str, object]:
             "output": conversion.output,
             "added_float32_operators": list(conversion.added_float32_operators),
             "keep_io_types": conversion.keep_io_types,
+            "kept_inputs": list(conversion.kept_inputs),
         }
     return {
         "kind": conversion.kind.value,
@@ -240,6 +249,9 @@ def parse_conversion(entry: object) -> Conversion:
     operators = fields["added_float32_operators"]
     if not isinstance(operators, list):
         raise ConversionRequestError("a conversion of the request lists no operators")
+    kept_inputs = fields["kept_inputs"]
+    if not isinstance(kept_inputs, list):
+        raise ConversionRequestError("a conversion of the request lists no kept inputs")
     return FloatConversion(
         kind=ConversionKind(kind),
         output=require_string(fields["output"]),
@@ -247,6 +259,7 @@ def parse_conversion(entry: object) -> Conversion:
             require_string(operator) for operator in operators[: MAX_OPERATOR_COUNT + 1]
         ),
         keep_io_types=require_boolean(fields["keep_io_types"]),
+        kept_inputs=tuple(require_string(kept_input) for kept_input in kept_inputs),
     )
 
 

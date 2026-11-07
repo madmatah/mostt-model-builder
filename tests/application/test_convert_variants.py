@@ -102,6 +102,7 @@ FLOAT16_FILE = ConvertedFile(
     below_min_positive_count=95,
     above_max_finite_count=0,
     realigned_cast_count=5,
+    kept_from_inputs_node_count=0,
 )
 EIGHT_BIT_FILE = ConvertedFile(
     kind=ConversionKind.EIGHT_BIT_BLOCKS,
@@ -113,6 +114,7 @@ EIGHT_BIT_FILE = ConvertedFile(
     below_min_positive_count=0,
     above_max_finite_count=0,
     realigned_cast_count=0,
+    kept_from_inputs_node_count=0,
 )
 REPORT = ConversionReport((EIGHT_BIT_FILE,))
 HOST = HostIdentity(USER_ID, GROUP_ID, 20, HostAccounts(False, (), ()))
@@ -258,6 +260,7 @@ class TestTheConversionOfTheVariants:
                             below_min_positive_count=0,
                             above_max_finite_count=0,
                             realigned_cast_count=0,
+                            kept_from_inputs_node_count=0,
                         ),
                     )
                 )

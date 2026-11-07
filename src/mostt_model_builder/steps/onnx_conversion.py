@@ -1,4 +1,5 @@
 import gc
+from collections.abc import Collection
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -41,6 +42,7 @@ from mostt_model_builder.domain.onnx.onnx_runtime_names import (
 from mostt_model_builder.domain.onnx.precision_decisions import (
     MAX_FINITE_VALUE,
     MIN_POSITIVE_VALUE,
+    decide_kept_nodes,
     list_kept_float32_operators,
     realign_cast_target,
     retype_for_bfloat16,
@@ -52,6 +54,7 @@ from mostt_model_builder.steps.output_modes import finish_outputs
 type OnnxModel = Any
 type OnnxGraph = Any
 type OnnxTensor = Any
+type OnnxValueInfo = Any
 
 CAST_OPERATOR = "Cast"
 CAST_TARGET_ATTRIBUTE = "to"
@@ -125,6 +128,20 @@ def retype_graph(graph: OnnxGraph) -> None:
                 retype_graph(attribute.g)
 
 
+# onnxconverter-common 1.16.0 casts every float tensor that a declaration names around a kept node,
+# and removes such a pair of casts only when the value has a single reader, so a value that two kept
+# nodes read would still go through float16: a tensor that nothing declares gets no cast at all.
+def set_aside_declarations(graph: OnnxGraph, tensor_names: Collection[str]) -> list[OnnxValueInfo]:
+    set_aside = []
+    for index in reversed(range(len(graph.value_info))):
+        if graph.value_info[index].name in tensor_names:
+            declaration = onnx.ValueInfoProto()
+            declaration.CopyFrom(graph.value_info[index])
+            set_aside.append(declaration)
+            del graph.value_info[index]
+    return set_aside[::-1]
+
+
 def load_with_inferred_shapes(input_path: Path) -> OnnxModel:
     model = onnx.load(str(input_path), load_external_data=False)
     model = onnx.shape_inference.infer_shapes(model, strict_mode=False, data_prop=True)
@@ -135,6 +152,8 @@ def load_with_inferred_shapes(input_path: Path) -> OnnxModel:
 def convert_float(input_path: Path, conversion: FloatConversion) -> tuple[OnnxModel, ConvertedFile]:
     model = load_with_inferred_shapes(input_path)
     clamps = count_clamped_values(model)
+    kept_nodes = decide_kept_nodes(model.graph, conversion.kept_inputs)
+    set_aside = set_aside_declarations(model.graph, frozenset(kept_nodes.set_aside_tensor_names))
     kept_operators = list_kept_float32_operators(
         conversion.kind, conversion.added_float32_operators
     )
@@ -145,7 +164,10 @@ def convert_float(input_path: Path, conversion: FloatConversion) -> tuple[OnnxMo
         keep_io_types=conversion.keep_io_types,
         disable_shape_infer=True,
         op_block_list=[*float16.DEFAULT_OP_BLOCK_LIST, *kept_operators],
+        node_block_list=list(kept_nodes.node_names),
     )
+    # Restored, the declarations give realign_casts and the inspection the kept computation's types.
+    converted.graph.value_info.extend(set_aside)
     realigned_count = realign_casts(converted)
     if conversion.kind is ConversionKind.BFLOAT16:
         retype_graph(converted.graph)
@@ -159,6 +181,7 @@ def convert_float(input_path: Path, conversion: FloatConversion) -> tuple[OnnxMo
         below_min_positive_count=clamps.below_min_positive_count,
         above_max_finite_count=clamps.above_max_finite_count,
         realigned_cast_count=realigned_count,
+        kept_from_inputs_node_count=len(kept_nodes.node_names),
     )
 
 
@@ -191,6 +214,7 @@ def convert_eight_bit_blocks(
         below_min_positive_count=0,
         above_max_finite_count=0,
         realigned_cast_count=0,
+        kept_from_inputs_node_count=0,
     )
 
 
