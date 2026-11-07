@@ -208,6 +208,7 @@ forbidden_modules = [
     "mostt_model_builder.domain.publication.model_card",
     "mostt_model_builder.domain.publication.variant_summaries",
     "mostt_model_builder.domain.publication.measuring_libraries",
+    "mostt_model_builder.domain.publication.commit_message",
     "mostt_recipe_parakeet_tdt.recipe",
     "mostt_recipe_parakeet_tdt.domain.variants.variants",
     "mostt_recipe_parakeet_tdt.domain.variants.comparisons",
