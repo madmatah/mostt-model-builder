@@ -1,3 +1,4 @@
+import itertools
 import re
 from collections.abc import Callable
 from dataclasses import replace
@@ -5,7 +6,9 @@ from functools import partial
 
 import pytest
 
+from mostt_model_builder.domain.onnx.element_types import INTEGER_ELEMENT_TYPES, ElementType
 from mostt_model_builder.domain.onnx.graph_rules import (
+    NARROW_FLOAT_ELEMENT_TYPES,
     EightBitBlocksOutput,
     GraphRuleError,
     GraphSource,
@@ -15,6 +18,7 @@ from mostt_model_builder.domain.onnx.graph_rules import (
     is_constant_weight,
     is_plain,
     judge_graph,
+    name_element_type,
 )
 from mostt_model_builder.domain.onnx.inspection_report import (
     ExternalTensor,
@@ -24,6 +28,7 @@ from mostt_model_builder.domain.onnx.inspection_report import (
     NodeCount,
     NodeScope,
     Opset,
+    TensorComputation,
     WeightSource,
 )
 
@@ -80,6 +85,205 @@ WHERE = "the graph of encoder.onnx"
 DECLARED_BLOCK_PRODUCT_COUNT = 4
 EIGHT_BIT_OUTPUT = replace(ACCEPTED_INSPECTION, products=(COMPUTED_PRODUCT,), external_tensors=())
 NOT_PLAIN = "whose constant weight is not a plain 2-D initializer"
+
+
+# A bfloat16 encoder converted without keeping its lengths: torch's export computes them in float32,
+# and the conversion rounds every node of that chain but the Floor to bfloat16.
+LENGTHS_THROUGH_BFLOAT16 = TensorComputation(
+    "encoded_lengths",
+    ElementType.INT64,
+    (ElementType.FLOAT, ElementType.INT64, ElementType.BFLOAT16),
+)
+THROUGH_FLOAT32 = (ElementType.FLOAT, ElementType.INT64)
+LENGTHS_THROUGH_FLOAT32 = TensorComputation("encoded_lengths", ElementType.INT64, THROUGH_FLOAT32)
+OUTPUTS_THROUGH_BFLOAT16 = TensorComputation(
+    "outputs", ElementType.FLOAT, (ElementType.FLOAT, ElementType.BFLOAT16)
+)
+THROUGH_FLOAT16 = (ElementType.FLOAT, ElementType.INT64, ElementType.FLOAT16)
+# onnxconverter-common leaves a float16 cast pair around a length that a cast to int64 off the path
+# from length to encoded_lengths reads, even when it keeps that path in float32.
+ROUNDED_CAST = TensorComputation("_to_copy_5", ElementType.INT64, THROUGH_FLOAT16)
+FLOAT_CONVERSION_WHERE = (
+    f"{WHERE}, a float conversion's output, computes integers through a float narrower than "
+    "float32, which cannot hold every integer they may carry, or through a type the inspection "
+    "cannot tell:"
+)
+NARROW_INTEGER_REFUSALS = {
+    "the lengths computed through bfloat16, as the converted encoder computes them": (
+        replace(ACCEPTED_INSPECTION, outputs=(OUTPUTS_THROUGH_BFLOAT16, LENGTHS_THROUGH_BFLOAT16)),
+        f"{FLOAT_CONVERSION_WHERE} the int64 output encoded_lengths through bfloat16",
+    ),
+    "the lengths computed through float16": (
+        replace(
+            ACCEPTED_INSPECTION,
+            outputs=(TensorComputation("encoded_lengths", ElementType.INT64, THROUGH_FLOAT16),),
+        ),
+        f"{FLOAT_CONVERSION_WHERE} the int64 output encoded_lengths through float16",
+    ),
+    "a cast to int64 computed through float16": (
+        replace(ACCEPTED_INSPECTION, outputs=(LENGTHS_THROUGH_FLOAT32,), casts=(ROUNDED_CAST,)),
+        f"{FLOAT_CONVERSION_WHERE} the int64 cast _to_copy_5 through float16",
+    ),
+    "the lengths computed through a type the inspection cannot tell": (
+        replace(
+            ACCEPTED_INSPECTION,
+            outputs=(
+                TensorComputation(
+                    "encoded_lengths",
+                    ElementType.INT64,
+                    (ElementType.UNDEFINED, ElementType.FLOAT, ElementType.INT64),
+                ),
+            ),
+        ),
+        f"{FLOAT_CONVERSION_WHERE} the int64 output encoded_lengths through a type the "
+        "inspection cannot tell",
+    ),
+    "a cast through float16 and a type the inspection cannot tell": (
+        replace(
+            ACCEPTED_INSPECTION,
+            casts=(
+                TensorComputation(
+                    "_to_copy_5",
+                    ElementType.INT64,
+                    (ElementType.UNDEFINED, *THROUGH_FLOAT16),
+                ),
+            ),
+        ),
+        f"{FLOAT_CONVERSION_WHERE} the int64 cast _to_copy_5 through float16 and a type the "
+        "inspection cannot tell",
+    ),
+    "a cast without a target, which may write an integer, computed through float16": (
+        replace(
+            ACCEPTED_INSPECTION,
+            casts=(TensorComputation("_to_copy_5", ElementType.UNDEFINED, THROUGH_FLOAT16),),
+        ),
+        f"{FLOAT_CONVERSION_WHERE} the cast _to_copy_5, of a type the inspection cannot tell, "
+        "through float16",
+    ),
+    "an output that is no tensor, which may hold integers, computed through bfloat16": (
+        replace(
+            ACCEPTED_INSPECTION,
+            outputs=(
+                TensorComputation(
+                    "encoded_lengths",
+                    ElementType.UNDEFINED,
+                    (ElementType.FLOAT, ElementType.BFLOAT16),
+                ),
+            ),
+        ),
+        f"{FLOAT_CONVERSION_WHERE} the output encoded_lengths, of a type the inspection cannot "
+        "tell, through bfloat16",
+    ),
+    "the published files' lengths, the output and three casts through float16, all at once": (
+        replace(
+            ACCEPTED_INSPECTION,
+            outputs=(
+                OUTPUTS_THROUGH_BFLOAT16,
+                TensorComputation("encoded_lengths", ElementType.INT64, THROUGH_FLOAT16),
+            ),
+            casts=(
+                TensorComputation("_to_copy_3", ElementType.INT64, THROUGH_FLOAT16),
+                TensorComputation("features_half", ElementType.FLOAT16, THROUGH_FLOAT16),
+                ROUNDED_CAST,
+                TensorComputation("_to_copy_7", ElementType.INT64, THROUGH_FLOAT16),
+            ),
+        ),
+        f"{FLOAT_CONVERSION_WHERE} the int64 output encoded_lengths through float16; the int64 "
+        "cast _to_copy_3 through float16; the int64 cast _to_copy_5 through float16; the int64 "
+        "cast _to_copy_7 through float16",
+    ),
+}
+LISTINGS: dict[str, Callable[[TensorComputation], FileInspection]] = {
+    "output": lambda computation: replace(ACCEPTED_INSPECTION, outputs=(computation,)),
+    "cast": lambda computation: replace(ACCEPTED_INSPECTION, casts=(computation,)),
+}
+INTEGERS_THROUGH_NARROW_FLOATS = {
+    f"{integer_type.name} through {narrow_type.name} as an {kind}": (
+        LISTINGS[kind](TensorComputation("counts", integer_type, (narrow_type, integer_type))),
+        f"{FLOAT_CONVERSION_WHERE} the {integer_type.name.lower()} {kind} counts through "
+        f"{narrow_type.name.lower()}",
+    )
+    for integer_type, narrow_type, kind in itertools.product(
+        sorted(INTEGER_ELEMENT_TYPES), sorted(NARROW_FLOAT_ELEMENT_TYPES), LISTINGS
+    )
+}
+NARROW = "narrower than float32"
+NOT_NARROW = "not narrower"
+NARROW_KINDS = {
+    ElementType.UNDEFINED: NOT_NARROW,
+    ElementType.FLOAT: NOT_NARROW,
+    ElementType.UINT8: NOT_NARROW,
+    ElementType.INT8: NOT_NARROW,
+    ElementType.UINT16: NOT_NARROW,
+    ElementType.INT16: NOT_NARROW,
+    ElementType.INT32: NOT_NARROW,
+    ElementType.INT64: NOT_NARROW,
+    ElementType.STRING: NOT_NARROW,
+    ElementType.BOOL: NOT_NARROW,
+    ElementType.FLOAT16: NARROW,
+    ElementType.DOUBLE: NOT_NARROW,
+    ElementType.UINT32: NOT_NARROW,
+    ElementType.UINT64: NOT_NARROW,
+    ElementType.COMPLEX64: NOT_NARROW,
+    ElementType.COMPLEX128: NOT_NARROW,
+    ElementType.BFLOAT16: NARROW,
+    ElementType.FLOAT8E4M3FN: NARROW,
+    ElementType.FLOAT8E4M3FNUZ: NARROW,
+    ElementType.FLOAT8E5M2: NARROW,
+    ElementType.FLOAT8E5M2FNUZ: NARROW,
+    ElementType.UINT4: NOT_NARROW,
+    ElementType.INT4: NOT_NARROW,
+    ElementType.FLOAT4E2M1: NARROW,
+    ElementType.FLOAT8E8M0: NARROW,
+    ElementType.UINT2: NOT_NARROW,
+    ElementType.INT2: NOT_NARROW,
+    ElementType.FLOAT6E2M3: NARROW,
+    ElementType.FLOAT6E3M2: NARROW,
+}
+ELEMENT_TYPE_NAMES = {
+    "float32, which onnx names FLOAT": (ElementType.FLOAT, "float32"),
+    "float64, which onnx names DOUBLE": (ElementType.DOUBLE, "float64"),
+    "bfloat16 under its own name": (ElementType.BFLOAT16, "bfloat16"),
+    "int64 under its own name": (ElementType.INT64, "int64"),
+    "the undefined type under its own name": (ElementType.UNDEFINED, "undefined"),
+}
+ACCEPTED_COMPUTATIONS = {
+    "an integer output and an integer cast computed through float32 alone": replace(
+        ACCEPTED_INSPECTION,
+        outputs=(LENGTHS_THROUGH_FLOAT32,),
+        casts=(TensorComputation("_to_copy_5", ElementType.INT64, THROUGH_FLOAT32),),
+    ),
+    "a float output computed through bfloat16": replace(
+        ACCEPTED_INSPECTION, outputs=(OUTPUTS_THROUGH_BFLOAT16,)
+    ),
+    "a cast to float16 computed through bfloat16": replace(
+        ACCEPTED_INSPECTION,
+        casts=(
+            TensorComputation(
+                "features_half",
+                ElementType.FLOAT16,
+                (ElementType.FLOAT, ElementType.FLOAT16, ElementType.BFLOAT16),
+            ),
+        ),
+    ),
+}
+OTHER_SOURCES = {
+    "the conversions' input": (
+        ACCEPTED_INSPECTION,
+        GraphSource.CONVERSION_INPUT,
+        EXTERNAL_DATA_FILE,
+    ),
+    "the 8-bit conversion's output": (
+        EIGHT_BIT_OUTPUT,
+        EightBitBlocksOutput(DECLARED_BLOCK_PRODUCT_COUNT),
+        None,
+    ),
+    "any other graph": (ACCEPTED_INSPECTION, GraphSource.OTHER, EXTERNAL_DATA_FILE),
+}
+
+
+def name_narrow_kind(element_type: ElementType) -> str:
+    return NARROW if element_type in NARROW_FLOAT_ELEMENT_TYPES else NOT_NARROW
 
 
 def add_node(node: NodeCount) -> FileInspection:
@@ -385,6 +589,114 @@ class TestTheGraphRules:
                     ),
                 ):
                     judge_act()
+
+        @pytest.mark.parametrize(
+            ("inspection", "reason"),
+            list(NARROW_INTEGER_REFUSALS.values()),
+            ids=list(NARROW_INTEGER_REFUSALS.keys()),
+        )
+        class TestWhenAFloatConversionsOutputComputesAnIntegerThroughANarrowFloat:
+            @pytest.fixture
+            def judge_act(self, inspection: FileInspection) -> Callable[[], object]:
+                return partial(
+                    judge_graph,
+                    inspection,
+                    GraphSource.FLOAT_CONVERSION_OUTPUT,
+                    EXTERNAL_DATA_FILE,
+                )
+
+            def test_should_refuse_it_since_the_bench_cannot_see_a_rounded_integer(
+                self, judge_act: Callable[[], object], reason: str
+            ) -> None:
+                with pytest.raises(GraphRuleError, match=re.escape(reason)):
+                    judge_act()
+
+        @pytest.mark.parametrize(
+            ("inspection", "reason"),
+            list(INTEGERS_THROUGH_NARROW_FLOATS.values()),
+            ids=list(INTEGERS_THROUGH_NARROW_FLOATS.keys()),
+        )
+        class TestWhenAFloatConversionsOutputComputesAnyIntegerThroughAnyNarrowFloat:
+            @pytest.fixture
+            def judge_act(self, inspection: FileInspection) -> Callable[[], object]:
+                return partial(
+                    judge_graph,
+                    inspection,
+                    GraphSource.FLOAT_CONVERSION_OUTPUT,
+                    EXTERNAL_DATA_FILE,
+                )
+
+            def test_should_refuse_it_and_name_the_integer_and_its_float(
+                self, judge_act: Callable[[], object], reason: str
+            ) -> None:
+                with pytest.raises(GraphRuleError, match=f"^{re.escape(reason)}$"):
+                    judge_act()
+
+        @pytest.mark.parametrize(
+            "inspection",
+            list(ACCEPTED_COMPUTATIONS.values()),
+            ids=list(ACCEPTED_COMPUTATIONS.keys()),
+        )
+        class TestWhenAFloatConversionsOutputComputesNoIntegerThroughANarrowFloat:
+            @pytest.fixture
+            def verdict(self, inspection: FileInspection) -> None:
+                return judge_graph(
+                    inspection, GraphSource.FLOAT_CONVERSION_OUTPUT, EXTERNAL_DATA_FILE
+                )
+
+            def test_should_accept_it(self, verdict: None) -> None:
+                assert verdict is None
+
+        @pytest.mark.parametrize(
+            ("inspection", "source", "external_data_file"),
+            list(OTHER_SOURCES.values()),
+            ids=list(OTHER_SOURCES.keys()),
+        )
+        class TestWhenAGraphOfAnotherSourceComputesAnIntegerThroughBfloat16:
+            @pytest.fixture
+            def verdict(
+                self,
+                inspection: FileInspection,
+                source: GraphSource | EightBitBlocksOutput,
+                external_data_file: str | None,
+            ) -> None:
+                return judge_graph(
+                    replace(inspection, outputs=(LENGTHS_THROUGH_BFLOAT16,), casts=(ROUNDED_CAST,)),
+                    source,
+                    external_data_file,
+                )
+
+            def test_should_accept_it_since_no_step_of_the_build_changed_its_types(
+                self, verdict: None
+            ) -> None:
+                assert verdict is None
+
+    class TestTheNarrowFloatElementTypesConstant:
+        class TestWhenEachElementTypeOfOnnxIsSorted:
+            @pytest.mark.parametrize(
+                ("element_type", "expected_kind"),
+                list(NARROW_KINDS.items()),
+                ids=[element_type.name for element_type in NARROW_KINDS],
+            )
+            def test_should_hold_every_float_narrower_than_float32_alone(
+                self, element_type: ElementType, expected_kind: str
+            ) -> None:
+                assert name_narrow_kind(element_type) == expected_kind
+
+        def test_should_sort_every_element_type_of_onnx(self) -> None:
+            assert set(NARROW_KINDS) == set(ElementType)
+
+    class TestTheNameElementTypeFunction:
+        class TestWhenAnElementTypeIsNamed:
+            @pytest.mark.parametrize(
+                ("element_type", "expected_name"),
+                list(ELEMENT_TYPE_NAMES.values()),
+                ids=list(ELEMENT_TYPE_NAMES.keys()),
+            )
+            def test_should_name_it_as_a_reader_knows_it(
+                self, element_type: ElementType, expected_name: str
+            ) -> None:
+                assert name_element_type(element_type) == expected_name
 
     class TestTheCountEightBitBlockProductsFunction:
         class TestWhenTheGraphHoldsMatMulNBitsInSeveralScopesAndDomains:

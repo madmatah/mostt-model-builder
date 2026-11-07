@@ -219,6 +219,11 @@ FLOAT16_CONVERSION = VariantConversion(
     FloatConversion(ConversionKind.FLOAT16, "encoder.fp16.onnx"),
     CONVERTED_SIZE_BOUND_BYTES,
 )
+BFLOAT16_CONVERSION = VariantConversion(
+    "bfloat16",
+    FloatConversion(ConversionKind.BFLOAT16, "encoder.bf16.onnx"),
+    CONVERTED_SIZE_BOUND_BYTES,
+)
 EIGHT_BIT_BLOCKS_CONVERSION = VariantConversion(
     "eight-bit-blocks",
     EightBitBlocksConversion(
@@ -1349,8 +1354,13 @@ class TestTheRecipeContract:
                 ),
                 pytest.param(
                     StepOutputOrigin("convert-float16", "encoder.fp16.onnx"),
-                    GraphSource.OTHER,
+                    GraphSource.FLOAT_CONVERSION_OUTPUT,
                     id="the float16 conversion's output",
+                ),
+                pytest.param(
+                    StepOutputOrigin("convert-bfloat16", "encoder.bf16.onnx"),
+                    GraphSource.FLOAT_CONVERSION_OUTPUT,
+                    id="the bfloat16 conversion's output",
                 ),
                 pytest.param(
                     StepOutputOrigin("export", "decoder.onnx"),
@@ -1367,7 +1377,11 @@ class TestTheRecipeContract:
             def graph_source(
                 self, origin: StepOutputOrigin | HostContentOrigin
             ) -> GraphSource | EightBitBlocksOutput:
-                return find_graph_source(origin, EXPORTED_ENCODER, CONVERSION_CONTRACT.conversions)
+                return find_graph_source(
+                    origin,
+                    EXPORTED_ENCODER,
+                    (*CONVERSION_CONTRACT.conversions, BFLOAT16_CONVERSION),
+                )
 
             def test_should_hold_it_to_the_rules_of_where_it_comes_from_never_of_its_name(
                 self,

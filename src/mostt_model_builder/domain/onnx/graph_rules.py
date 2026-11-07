@@ -1,9 +1,11 @@
 from dataclasses import dataclass
 from enum import Enum, auto
 
+from mostt_model_builder.domain.onnx.element_types import INTEGER_ELEMENT_TYPES, ElementType
 from mostt_model_builder.domain.onnx.inspection_report import (
     FileInspection,
     MatrixProduct,
+    TensorComputation,
     WeightSource,
 )
 from mostt_model_builder.domain.onnx.onnx_runtime_names import (
@@ -14,6 +16,26 @@ from mostt_model_builder.domain.onnx.onnx_runtime_names import (
 # ONNX's own operators, and ONNX Runtime's contrib operators, such as MatMulNBits.
 ALLOWED_DOMAINS = frozenset({"", ONNX_RUNTIME_DOMAIN})
 PLAIN_WEIGHT_RANK = 2
+# None of these holds every integer of a length: float16 holds each one only up to 2 048, bfloat16
+# up to 256, and the 8-, 6- and 4-bit floats fewer still, where float32 goes up to 2**24.
+NARROW_FLOAT_ELEMENT_TYPES = frozenset(
+    {
+        ElementType.FLOAT16,
+        ElementType.BFLOAT16,
+        ElementType.FLOAT8E4M3FN,
+        ElementType.FLOAT8E4M3FNUZ,
+        ElementType.FLOAT8E5M2,
+        ElementType.FLOAT8E5M2FNUZ,
+        ElementType.FLOAT8E8M0,
+        ElementType.FLOAT6E2M3,
+        ElementType.FLOAT6E3M2,
+        ElementType.FLOAT4E2M1,
+    }
+)
+# A cast without a target, or an output that is no tensor, may carry an integer all the same.
+POSSIBLE_INTEGER_ELEMENT_TYPES = INTEGER_ELEMENT_TYPES | {ElementType.UNDEFINED}
+# onnx names float32 FLOAT and float64 DOUBLE, which a reader of a refusal would not recognize.
+FLOAT_WIDTH_NAMES = {ElementType.FLOAT: "float32", ElementType.DOUBLE: "float64"}
 
 
 class GraphRuleError(ValueError):
@@ -22,6 +44,7 @@ class GraphRuleError(ValueError):
 
 class GraphSource(Enum):
     CONVERSION_INPUT = auto()
+    FLOAT_CONVERSION_OUTPUT = auto()
     OTHER = auto()
 
 
@@ -89,6 +112,8 @@ def judge_graph(
     refuse_foreign_external_data(inspection, external_data_file, where)
     if source is GraphSource.CONVERSION_INPUT:
         refuse_products_that_are_not_plain(inspection, where)
+    elif source is GraphSource.FLOAT_CONVERSION_OUTPUT:
+        refuse_integers_through_narrow_floats(inspection, where)
     elif isinstance(source, EightBitBlocksOutput):
         refuse_unquantized_products(inspection, source.declared_product_count, where)
 
@@ -142,6 +167,47 @@ def refuse_unquantized_products(
             f"{where}, the 8-bit conversion's output, holds {product_count} "
             f"{EIGHT_BIT_BLOCKS_OPERATOR} nodes, and its recipe declares {declared_product_count}"
         )
+
+
+# The bench cannot see an integer, such as an encoder's lengths, that a narrow float rounded: a
+# truncated length passes unseen, and one beyond the encoder's output only crashes its reader. One
+# refusal names every such integer, so that the whole defect shows at once.
+def refuse_integers_through_narrow_floats(inspection: FileInspection, where: str) -> None:
+    roundings = [
+        rounding
+        for kind, computations in (("output", inspection.outputs), ("cast", inspection.casts))
+        for computation in computations
+        if (rounding := describe_rounding(kind, computation)) is not None
+    ]
+    if roundings:
+        raise GraphRuleError(
+            f"{where}, a float conversion's output, computes integers through a float narrower "
+            "than float32, which cannot hold every integer they may carry, or through a type the "
+            f"inspection cannot tell: {'; '.join(roundings)}"
+        )
+
+
+def describe_rounding(kind: str, computation: TensorComputation) -> str | None:
+    if computation.element_type not in POSSIBLE_INTEGER_ELEMENT_TYPES:
+        return None
+    causes = [
+        name_element_type(element_type)
+        for element_type in computation.computation_types
+        if element_type in NARROW_FLOAT_ELEMENT_TYPES
+    ]
+    if ElementType.UNDEFINED in computation.computation_types:
+        causes.append("a type the inspection cannot tell")
+    if not causes:
+        return None
+    if computation.element_type is ElementType.UNDEFINED:
+        subject = f"the {kind} {computation.name}, of a type the inspection cannot tell,"
+    else:
+        subject = f"the {name_element_type(computation.element_type)} {kind} {computation.name}"
+    return f"{subject} through {' and '.join(causes)}"
+
+
+def name_element_type(element_type: ElementType) -> str:
+    return FLOAT_WIDTH_NAMES.get(element_type, element_type.name.lower())
 
 
 def describe_weight(product: MatrixProduct) -> str:
