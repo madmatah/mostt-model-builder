@@ -42,7 +42,7 @@ from mostt_model_builder.domain.publication.publication_request import (
     PUBLICATION_REQUEST_FILE_NAME,
     PublicationRequest,
     PublishedFile,
-    describe_commit_message,
+    describe_commit_title,
     render_publication_request,
 )
 from mostt_model_builder.domain.publication.published_tree import (
@@ -188,7 +188,7 @@ def build_publication_request(
         raise PublicationError("the recipe describes no model")
     return PublicationRequest(
         repository=publication.repository,
-        commit_message=describe_commit_message(model.title),
+        commit_message=describe_commit_title(model.title),
         candidate=tuple(
             PublishedFile(digest.name, digest.size_bytes, digest.sha256)
             for digest in prepared.verified.verification.candidate
