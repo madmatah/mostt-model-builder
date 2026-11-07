@@ -5,6 +5,8 @@ from typing import Protocol
 
 from mostt_model_builder.domain.onnx.element_types import ElementType
 from mostt_model_builder.domain.onnx.graph_paths import (
+    CAST_OPERATOR,
+    CAST_TARGET_ATTRIBUTE,
     ONNX_DOMAINS,
     accumulate_path_labels,
     holds_subgraph,
@@ -35,8 +37,6 @@ EXTERNAL_LENGTH_KEY = "length"
 # A TrainingInfoProto of onnx/onnx.proto holds two graphs, its initialization and its algorithm.
 GRAPHS_PER_TRAINING_INFO = 2
 MATRIX_PRODUCTS = frozenset({"MatMul", "Gemm"})
-CAST_OPERATOR = "Cast"
-CAST_TARGET_ATTRIBUTE = "to"
 WEIGHT_INPUT_INDEX = 1
 
 

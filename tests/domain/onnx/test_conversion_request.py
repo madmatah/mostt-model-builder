@@ -11,13 +11,17 @@ from mostt_model_builder.domain.onnx.conversion_request import (
     ConversionRequestError,
     EightBitBlocksConversion,
     FloatConversion,
+    judge_conversion,
     parse_conversion_request,
     render_conversion_request,
 )
 
 FLOAT16_CONVERSION = FloatConversion(ConversionKind.FLOAT16, "encoder.fp16.onnx")
 BFLOAT16_CONVERSION = FloatConversion(
-    ConversionKind.BFLOAT16, "encoder.bf16.onnx", added_float32_operators=("Range",)
+    ConversionKind.BFLOAT16,
+    "encoder.bf16.onnx",
+    added_float32_operators=("Range",),
+    kept_inputs=("length", "audio_lengths"),
 )
 EIGHT_BIT_BLOCKS_CONVERSION = EightBitBlocksConversion(
     "encoder.int8.onnx",
@@ -36,6 +40,7 @@ FLOAT16_ENTRY: dict[str, object] = {
     "output": "encoder.fp16.onnx",
     "added_float32_operators": [],
     "keep_io_types": True,
+    "kept_inputs": ["length"],
 }
 EIGHT_BIT_BLOCKS_ENTRY: dict[str, object] = {
     "kind": "eight-bit-blocks",
@@ -65,6 +70,22 @@ def render_eight_bit_blocks_with(**fields: object) -> bytes:
 
 
 REFUSED_REQUESTS = {
+    "kept inputs that are not a list": (
+        render_float16_with(kept_inputs="length"),
+        "a conversion of the request lists no kept inputs",
+    ),
+    "a float conversion without its kept inputs": (
+        render_with(
+            conversions=[
+                {name: field for name, field in FLOAT16_ENTRY.items() if name != "kept_inputs"}
+            ]
+        ),
+        "a conversion of the request is not an object of exactly",
+    ),
+    "a kept input whose name is not a string": (
+        render_float16_with(kept_inputs=[7]),
+        "a conversion of the request holds 7, not a string",
+    ),
     "a document nested 3 000 deep": (b"[" * 3000, "the document nests deeper than 32 levels"),
     "a request beyond its size bound": (
         b" " * (64 * 1024 + 1),
@@ -186,6 +207,19 @@ REFUSED_REQUESTS = {
     ),
 }
 
+REFUSED_FLOAT_CONVERSIONS = {
+    "kept inputs given as one name, which would read as its letters": (
+        FloatConversion(ConversionKind.FLOAT16, "encoder.fp16.onnx", kept_inputs="length"),  # type: ignore[arg-type]  # the test feeds a value outside the contract's types, on purpose
+        "the conversion to 'encoder.fp16.onnx' keeps the computation from 'length', not a tuple "
+        "of input names",
+    ),
+    "a kept input whose name is not a string": (
+        FloatConversion(ConversionKind.FLOAT16, "encoder.fp16.onnx", kept_inputs=(7,)),  # type: ignore[arg-type]  # the test feeds a value outside the contract's types, on purpose
+        "the conversion to 'encoder.fp16.onnx' keeps the computation from (7,), not a tuple of "
+        "input names",
+    ),
+}
+
 
 class TestTheConversionRequest:
     class TestTheParseConversionRequestFunction:
@@ -213,6 +247,23 @@ class TestTheConversionRequest:
                 with pytest.raises(ConversionRequestError, match=re.escape(reason)):
                     parse_act()
 
+    class TestTheJudgeConversionFunction:
+        @pytest.mark.parametrize(
+            ("conversion", "reason"),
+            list(REFUSED_FLOAT_CONVERSIONS.values()),
+            ids=list(REFUSED_FLOAT_CONVERSIONS),
+        )
+        class TestWhenAFloatConversionBreaksARule:
+            @pytest.fixture
+            def judge_act(self, conversion: FloatConversion) -> Callable[[], None]:
+                return partial(judge_conversion, conversion)
+
+            def test_should_refuse_it_and_say_why(
+                self, judge_act: Callable[[], None], reason: str
+            ) -> None:
+                with pytest.raises(ConversionRequestError, match=re.escape(reason)):
+                    judge_act()
+
     class TestTheEightBitBlocksConversion:
         class TestWhenItsKindIsRead:
             def test_should_be_the_8_bit_blocks_whatever_its_parameters(self) -> None:
@@ -226,3 +277,7 @@ class TestTheConversionRequest:
         class TestWhenItsRecipeAddsNoOperator:
             def test_should_keep_none_of_its_own_in_float32(self) -> None:
                 assert FLOAT16_CONVERSION.added_float32_operators == ()
+
+        class TestWhenItsRecipeDeclaresNoInput:
+            def test_should_keep_no_computation_in_float32(self) -> None:
+                assert FLOAT16_CONVERSION.kept_inputs == ()

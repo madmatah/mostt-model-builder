@@ -31,6 +31,7 @@ CONVERTED_FILE_KEYS = frozenset(
         "below_min_positive_count",
         "above_max_finite_count",
         "realigned_cast_count",
+        "kept_from_inputs_node_count",
     }
 )
 
@@ -50,6 +51,7 @@ class ConvertedFile:
     below_min_positive_count: int
     above_max_finite_count: int
     realigned_cast_count: int
+    kept_from_inputs_node_count: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,6 +72,7 @@ def render_conversion_report(report: ConversionReport) -> bytes:
                 "below_min_positive_count": converted.below_min_positive_count,
                 "above_max_finite_count": converted.above_max_finite_count,
                 "realigned_cast_count": converted.realigned_cast_count,
+                "kept_from_inputs_node_count": converted.kept_from_inputs_node_count,
             }
             for converted in report.files
         ]
@@ -142,6 +145,10 @@ def parse_converted_file(entry: object, conversion: Conversion) -> ConvertedFile
         realigned_cast_count=require_count(
             fields["realigned_cast_count"], f"{where}: its count of realigned Cast nodes"
         ),
+        kept_from_inputs_node_count=require_count(
+            fields["kept_from_inputs_node_count"],
+            f"{where}: its count of nodes kept in float32 from its inputs",
+        ),
     )
     judge_converted_file(converted, conversion, where)
     return converted
@@ -151,11 +158,13 @@ def judge_converted_file(converted: ConvertedFile, conversion: Conversion, where
     if isinstance(conversion, EightBitBlocksConversion):
         expected_operators: tuple[str, ...] = ()
         expected_product_count = conversion.quantized_product_count
+        declares_inputs = False
     else:
         expected_operators = list_kept_float32_operators(
             conversion.kind, conversion.added_float32_operators
         )
         expected_product_count = 0
+        declares_inputs = bool(conversion.kept_inputs)
     if converted.kept_float32_operators != expected_operators:
         raise ConversionReportError(
             f"{where} kept {', '.join(converted.kept_float32_operators) or 'no operator'} in "
@@ -165,6 +174,14 @@ def judge_converted_file(converted: ConvertedFile, conversion: Conversion, where
         raise ConversionReportError(
             f"{where} quantized {converted.quantized_product_count} products to 8-bit blocks, "
             f"not {expected_product_count}"
+        )
+    if declares_inputs and not converted.kept_from_inputs_node_count:
+        raise ConversionReportError(f"{where} kept no node in float32 from its inputs")
+    if not declares_inputs and converted.kept_from_inputs_node_count:
+        kept_count = converted.kept_from_inputs_node_count
+        raise ConversionReportError(
+            f"{where} kept {kept_count} {'node' if kept_count == 1 else 'nodes'} in float32 from "
+            "inputs, and it declares none"
         )
 
 

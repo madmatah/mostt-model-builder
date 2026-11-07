@@ -823,6 +823,11 @@ REFUSED_CONTRACTS = {
         change_conversion(0, keep_io_types=1),
         "has keep_io_types 1, not a boolean",
     ),
+    "kept inputs given as one name, which would read as its letters": (
+        change_conversion(0, kept_inputs="length"),
+        "the conversion to 'encoder.fp16.onnx' keeps the computation from 'length', not a tuple "
+        "of input names",
+    ),
     "blocks of a size that is not a power of two": (
         change_conversion(1, block_size=48),
         "has blocks of 48 weights, not a power of two from 16 to 256",
