@@ -65,6 +65,7 @@ PLACEMENT = StepPlacement(
     candidate_directory=PurePosixPath("runs/core/c0ffee/candidate"),
 )
 HOST_CPU_COUNT = 20
+PLACEMENT_CANDIDATE = PurePosixPath("runs/core/c0ffee/candidate")
 
 
 def judge_every_recipe() -> tuple[JudgedRecipe, ...]:
@@ -84,6 +85,12 @@ def judge_every_recipe() -> tuple[JudgedRecipe, ...]:
 
 
 JUDGED_RECIPES = judge_every_recipe()
+RUN_ROWS_WITH_CANDIDATE_FILES = tuple(
+    derived_row.row
+    for recipe in JUDGED_RECIPES
+    for derived_row in recipe.derived_rows
+    if derived_row.row.candidate_files
+)
 BUILD_ROWS = (
     FLEURS_CHECK_ROW,
     INSPECT_ROW,
@@ -380,6 +387,29 @@ class TestTheDockerEngine:
 
             def test_should_give_it_no_standard_input(self, run_arguments: list[str]) -> None:
                 assert "--interactive" not in run_arguments
+
+        @pytest.mark.parametrize(
+            "row",
+            RUN_ROWS_WITH_CANDIDATE_FILES,
+            ids=[row.name for row in RUN_ROWS_WITH_CANDIDATE_FILES],
+        )
+        class TestWhenARunOfAVariantRuns:
+            @pytest.fixture
+            def run_arguments(self, row: StepRow) -> list[str]:
+                return build_run_arguments(plan_row(row))
+
+            def test_should_mount_each_file_of_its_variant_by_itself_read_only_under_candidate(
+                self, run_arguments: list[str], row: StepRow
+            ) -> None:
+                assert [
+                    mount
+                    for mount in read_option_values(run_arguments, "--mount")
+                    if ",target=/candidate" in mount
+                ] == [
+                    f"type=bind,source={WORK_ROOT / PLACEMENT_CANDIDATE / name},"
+                    f"target=/candidate/{name},readonly"
+                    for name in row.candidate_files
+                ]
 
         class TestWhenThePublicationRuns:
             @pytest.fixture

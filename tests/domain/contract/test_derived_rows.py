@@ -1,3 +1,4 @@
+from dataclasses import replace
 from pathlib import PurePosixPath
 
 import pytest
@@ -48,9 +49,11 @@ TEMPLATE = StepTemplate(
     },
 )
 BOTH_LANGUAGES = ("fr_fr", "en_us")
-CPU_RUN = ShardedRun("int8-cpu", "int8", Device.CPU, BOTH_LANGUAGES, 3)
-GPU_RUN = ShardedRun("fp16-gpu", "fp16", Device.GPU, ("fr_fr",), 1)
-SINGLE_SHARD_RUN = ShardedRun("int8-cpu", "int8", Device.CPU, BOTH_LANGUAGES, 1)
+INT8_FILES = ("encoder.int8.onnx", "vocab.txt")
+FLOAT16_FILES = ("encoder.fp16.onnx", "vocab.txt")
+CPU_RUN = ShardedRun("int8-cpu", "int8", Device.CPU, BOTH_LANGUAGES, 3, INT8_FILES)
+GPU_RUN = ShardedRun("fp16-gpu", "fp16", Device.GPU, ("fr_fr",), 1, FLOAT16_FILES)
+SINGLE_SHARD_RUN = ShardedRun("int8-cpu", "int8", Device.CPU, BOTH_LANGUAGES, 1, INT8_FILES)
 
 
 class TestTheDerivedRows:
@@ -127,27 +130,35 @@ class TestTheDerivedRows:
                     (derived.row.has_request, derived.row.has_network) for derived in derived_rows
                 } == {(True, False)}
 
-            def test_should_give_every_row_the_entry_sources_inputs_and_candidate_of_its_step(
+            def test_should_give_every_row_the_entry_sources_and_inputs_of_its_step(
                 self, derived_rows: tuple[DerivedRow, ...]
             ) -> None:
                 assert {
-                    (
-                        derived.row.entry_module,
-                        derived.row.sources,
-                        derived.row.earlier_outputs,
-                        derived.row.binds_candidate,
-                    )
+                    (derived.row.entry_module, derived.row.sources, derived.row.earlier_outputs)
                     for derived in derived_rows
-                } == {(ENTRY_MODULE, (FLEURS_SOURCE,), (CONVERTED_ENCODER,), True)}
+                } == {(ENTRY_MODULE, (FLEURS_SOURCE,), (CONVERTED_ENCODER,))}
+
+            def test_should_bind_each_row_to_the_candidate_files_of_its_variant_alone(
+                self, derived_rows: tuple[DerivedRow, ...]
+            ) -> None:
+                assert [
+                    (derived.row.binds_candidate, derived.row.candidate_files)
+                    for derived in derived_rows
+                ] == [
+                    (False, INT8_FILES),
+                    (False, INT8_FILES),
+                    (False, INT8_FILES),
+                    (False, FLOAT16_FILES),
+                ]
 
             def test_should_request_of_each_shard_its_run_variant_device_languages_and_place(
                 self, derived_rows: tuple[DerivedRow, ...]
             ) -> None:
                 assert [derived.request for derived in derived_rows] == [
-                    ShardRequest("int8-cpu", "int8", Device.CPU, BOTH_LANGUAGES, 0, 3),
-                    ShardRequest("int8-cpu", "int8", Device.CPU, BOTH_LANGUAGES, 1, 3),
-                    ShardRequest("int8-cpu", "int8", Device.CPU, BOTH_LANGUAGES, 2, 3),
-                    ShardRequest("fp16-gpu", "fp16", Device.GPU, ("fr_fr",), 0, 1),
+                    ShardRequest("int8-cpu", "int8", Device.CPU, BOTH_LANGUAGES, 0, 3, INT8_FILES),
+                    ShardRequest("int8-cpu", "int8", Device.CPU, BOTH_LANGUAGES, 1, 3, INT8_FILES),
+                    ShardRequest("int8-cpu", "int8", Device.CPU, BOTH_LANGUAGES, 2, 3, INT8_FILES),
+                    ShardRequest("fp16-gpu", "fp16", Device.GPU, ("fr_fr",), 0, 1, FLOAT16_FILES),
                 ]
 
         class TestWhenTheRunsTotalOneShard:
@@ -164,8 +175,20 @@ class TestTheDerivedRows:
                 self, derived_rows: tuple[DerivedRow, ...]
             ) -> None:
                 assert [derived.request for derived in derived_rows] == [
-                    ShardRequest("int8-cpu", "int8", Device.CPU, BOTH_LANGUAGES, 0, 1)
+                    ShardRequest("int8-cpu", "int8", Device.CPU, BOTH_LANGUAGES, 0, 1, INT8_FILES)
                 ]
+
+        class TestWhenTheStepBindsNoCandidate:
+            @pytest.fixture
+            def derived_rows(self) -> tuple[DerivedRow, ...]:
+                return derive_rows(replace(TEMPLATE, binds_candidate=False), (CPU_RUN,))
+
+            def test_should_bind_no_file_of_the_candidate_and_request_none(
+                self, derived_rows: tuple[DerivedRow, ...]
+            ) -> None:
+                assert {
+                    (derived.row.candidate_files, derived.request.files) for derived in derived_rows
+                } == {((), ())}
 
         class TestWhenNoRunIsGiven:
             @pytest.fixture

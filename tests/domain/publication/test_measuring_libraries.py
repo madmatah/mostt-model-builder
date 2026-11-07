@@ -48,7 +48,7 @@ def build_derived_row(run: str, variant: str, image: ContainerImage) -> DerivedR
             outputs=(),
             limits=LIMITS,
         ),
-        request=ShardRequest(run, variant, image.device, ("fr_fr",), 0, 1),
+        request=ShardRequest(run, variant, image.device, ("fr_fr",), 0, 1, ()),
     )
 
 

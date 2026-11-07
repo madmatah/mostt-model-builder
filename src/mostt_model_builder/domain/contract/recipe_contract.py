@@ -562,7 +562,9 @@ def judge_steps(
         judge_entry_module(step, contract.name, facts.present_entry_modules, step_where)
         step_runs = [run for run in runs if run.step == step.name]
         if step.devices:
-            step_rows = judge_template_step(step, images, pins, rows, step_runs, step_where)
+            step_rows = judge_template_step(
+                step, images, pins, rows, step_runs, contract.candidate, step_where
+            )
             derived_rows.extend(step_rows)
             new_rows = [derived_row.row for derived_row in step_rows]
         else:
@@ -616,6 +618,7 @@ def judge_template_step(
     pins: Sequence[SourcePin],
     rows: Mapping[str, StepRow],
     runs: Sequence[JudgedRun],
+    candidate: Sequence[CandidateFile],
     where: str,
 ) -> tuple[DerivedRow, ...]:
     if step.image is not None or step.limits is not None or step.uses_gpu:
@@ -661,7 +664,18 @@ def judge_template_step(
             devices=device_rows,
         ),
         [
-            ShardedRun(run.name, run.variant, run.device, run.languages, run.shard_count)
+            ShardedRun(
+                run.name,
+                run.variant,
+                run.device,
+                run.languages,
+                run.shard_count,
+                tuple(
+                    candidate_file.name
+                    for candidate_file in candidate
+                    if run.variant in candidate_file.variants
+                ),
+            )
             for run in runs
         ],
     )

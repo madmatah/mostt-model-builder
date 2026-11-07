@@ -156,7 +156,7 @@ TRANSCRIBE_TEMPLATE = StepTemplate(
         )
     },
 )
-FLEURS_RUN = ShardedRun("fleurs", "int8", Device.GPU, ("fr_fr",), shard_count=2)
+FLEURS_RUN = ShardedRun("fleurs", "int8", Device.GPU, ("fr_fr",), 2, ("encoder.onnx", "vocab.txt"))
 SHARD_ROW = derive_rows(TRANSCRIBE_TEMPLATE, (FLEURS_RUN,))[1]
 SHARD_DIRECTORY = WORK_ROOT / RUN_DIRECTORY / SHARD_ROW.row.name
 VOCABULARY_NAME = "vocab.txt"

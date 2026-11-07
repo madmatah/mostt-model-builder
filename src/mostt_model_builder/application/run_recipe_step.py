@@ -77,7 +77,7 @@ def run_recipe_step(
     run: RecipeStepRun, engine: ContainerEngine, files: StepFiles
 ) -> RecipeStepOutcome:
     row = run.row
-    if row.binds_candidate:
+    if row.binds_candidate or row.candidate_files:
         if run.candidate is None:
             raise CandidateError(
                 f"the step {row.name} reads the candidate, and was given no request of it"

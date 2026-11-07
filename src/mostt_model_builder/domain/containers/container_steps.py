@@ -166,6 +166,7 @@ class StepRow:
     earlier_outputs: tuple[EarlierOutput, ...] = ()
     binds_candidate: bool = False
     takes_token: bool = False
+    candidate_files: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -338,6 +339,7 @@ def judge_row(row: StepRow, host_cpu_count: int) -> None:
     refuse_foreign_entry_module(row, where)
     judge_limits(row.limits, host_cpu_count, where)
     judge_outputs(row, where)
+    judge_candidate_files(row, where)
     if row.uses_gpu and row.image.device is not Device.GPU:
         raise StepTableError(
             f"{where} uses the GPU in the {row.image.device} image {row.image.tag}"
@@ -434,6 +436,16 @@ def judge_outputs(row: StepRow, where: str) -> None:
         raise StepTableError(f"{where}: its outputs lack {PEAKS_FILE_NAME}")
 
 
+def judge_candidate_files(row: StepRow, where: str) -> None:
+    if row.binds_candidate and row.candidate_files:
+        raise StepTableError(f"{where} binds both the candidate's directory and some of its files")
+    for name in row.candidate_files:
+        if not is_file_name(name):
+            raise StepTableError(f"{where}: its candidate file {name!a} is not a file name")
+    if len(set(row.candidate_files)) != len(row.candidate_files):
+        raise StepTableError(f"{where} binds a file of the candidate twice")
+
+
 def build_environment(row: StepRow) -> list[tuple[str, str]]:
     if not (row.image.owner == CORE_OWNER and row.name == PUBLISH_STEP_NAME):
         return list(CONTAINER_ENVIRONMENT)
@@ -477,6 +489,20 @@ def plan_container_run(
             BindMount(
                 placement.candidate_directory, CANDIDATE_IN_THE_CONTAINER, True, is_file=False
             )
+        )
+    if row.candidate_files:
+        if placement.candidate_directory is None:
+            raise StepTableError(
+                f"the step {row.name} reads files of the candidate, and was given none"
+            )
+        mounts.extend(
+            BindMount(
+                placement.candidate_directory / name,
+                CANDIDATE_IN_THE_CONTAINER / name,
+                is_read_only=True,
+                is_file=True,
+            )
+            for name in row.candidate_files
         )
     if row.has_request:
         if placement.request_directory is None:

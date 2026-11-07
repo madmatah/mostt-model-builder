@@ -20,6 +20,7 @@ class ShardedRun:
     device: Device
     languages: tuple[str, ...]
     shard_count: int
+    candidate_files: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,6 +68,7 @@ def derive_row(
     template: StepTemplate, run: ShardedRun, shard: int, is_single_row: bool
 ) -> DerivedRow:
     device_row = template.devices[run.device]
+    candidate_files = run.candidate_files if template.binds_candidate else ()
     return DerivedRow(
         step=template.name,
         run=run.name,
@@ -80,7 +82,7 @@ def derive_row(
             limits=device_row.limits,
             uses_gpu=run.device is Device.GPU,
             earlier_outputs=template.earlier_outputs,
-            binds_candidate=template.binds_candidate,
+            candidate_files=candidate_files,
         ),
         request=ShardRequest(
             run=run.name,
@@ -89,5 +91,6 @@ def derive_row(
             languages=run.languages,
             shard=shard,
             shard_count=run.shard_count,
+            files=candidate_files,
         ),
     )
