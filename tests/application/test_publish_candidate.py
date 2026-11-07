@@ -17,12 +17,13 @@ from accepted_build import (
     WORK_ROOT,
     build_files,
 )
-from card_arrangement import CARD_PATH, FakeClone, build_card_request
+from card_arrangement import CARD_PATH, MODEL, FakeClone, build_card_request
 from run_step_fakes import FakeContainerEngine, FakeStepFiles, build_file_facts, build_step_output
 
 from mostt_model_builder.application.check_published import RefusedListingError
 from mostt_model_builder.application.fetch_sources import DownloadError
 from mostt_model_builder.application.prepare_publication import (
+    CardRequest,
     PublicationError,
     prepare_publication,
     write_model_card,
@@ -41,6 +42,7 @@ from mostt_model_builder.application.run_step import ImageFacts
 from mostt_model_builder.application.verify_build import BuildRejectedError
 from mostt_model_builder.domain.containers.container_steps import HUB_IMAGE
 from mostt_model_builder.domain.containers.step_peaks import PEAKS_FILE_NAME
+from mostt_model_builder.domain.publication.commit_message import CommitMessage
 from mostt_model_builder.domain.publication.git_blobs import compute_git_blob_id
 from mostt_model_builder.domain.publication.hub_token import HubToken, parse_hub_token
 from mostt_model_builder.domain.publication.publication_report import (
@@ -49,6 +51,7 @@ from mostt_model_builder.domain.publication.publication_report import (
     ReportedFile,
     render_publication_report,
 )
+from mostt_model_builder.domain.publication.publication_request import parse_publication_request
 from mostt_model_builder.domain.publication.published_tree import PublishedTreeError
 from mostt_model_builder.domain.publication.repository_files import RepositoryFilesError
 
@@ -70,6 +73,37 @@ ENCODER_LINE = (
 
 
 UNREACHABLE_HUB = "curl exited with the status 28 while reading the listing: timed out"
+HEADER_AND_FILE_LINE_COUNT = 4
+COMMIT_TITLE = (
+    "Keep the encoder's lengths in float32 in float16 and bfloat16; measure five languages"
+)
+COMMIT_DESCRIPTION = (
+    "The float16 and bfloat16 encoders of revision 9dcab459 computed the encoder's output\n"
+    "lengths (encoded_lengths), and the lengths of its subsampling stages, in their own\n"
+    "reduced precision. The decoder then ignored the last frames of most recordings, and\n"
+    "onnx-asr could fail on a long one. This revision keeps that computation in float32;\n"
+    "the float32 and int8 files are unchanged.\n"
+    "\n"
+    "The card now measures English, Latin American Spanish, French, Brazilian Portuguese\n"
+    "and German on FLEURS."
+)
+COMMIT_MESSAGE = CommitMessage(COMMIT_TITLE, COMMIT_DESCRIPTION)
+COMMIT_MESSAGE_BLOCK = [
+    "with the commit message:",
+    "  | Keep the encoder's lengths in float32 in float16 and bfloat16; measure five languages",
+    "  |",
+    "  | The float16 and bfloat16 encoders of revision 9dcab459 computed the encoder's output",
+    "  | lengths (encoded_lengths), and the lengths of its subsampling stages, in their own",
+    "  | reduced precision. The decoder then ignored the last frames of most recordings, and",
+    "  | onnx-asr could fail on a long one. This revision keeps that computation in float32;",
+    "  | the float32 and int8 files are unchanged.",
+    "  |",
+    "  | The card now measures English, Latin American Spanish, French, Brazilian Portuguese",
+    "  | and German on FLEURS.",
+]
+CARD_REQUEST = build_card_request()
+PARAKEET_CARD_REQUEST = build_card_request(model=replace(MODEL, title="Parakeet Ultra in ONNX"))
+REQUEST_PATH = PUBLICATIONS_DIRECTORY / "1" / "request" / "publication-request.json"
 
 
 @dataclass
@@ -150,9 +184,9 @@ def describe(name: str, content: bytes, is_uploaded: bool = True) -> ReportedFil
     return ReportedFile(name, len(content), hashlib.sha256(content).hexdigest(), is_uploaded)
 
 
-def build_reviewed_files() -> tuple[FakeStepFiles, bytes]:
+def build_reviewed_files(card_request: CardRequest = CARD_REQUEST) -> tuple[FakeStepFiles, bytes]:
     files = build_files()
-    prepared = prepare_publication(build_card_request(), FakeClone(), files)
+    prepared = prepare_publication(card_request, FakeClone(), files)
     write_model_card(prepared, WORK_ROOT, files)
     return files, prepared.card
 
@@ -189,12 +223,17 @@ def publish_reviewed_card(
     encoder: bytes = ENCODER,
     is_uploaded: bool = True,
     revision: str = REVISION,
+    commit_message: CommitMessage | None = None,
 ) -> Publication:
     files, card = build_reviewed_files()
     engine = build_engine(files, build_report(card, encoder, is_uploaded, revision))
     prompt = prompt or FakePrompt()
     published = publish_for_real(
-        CandidatePublication(build_card_request(), REPOSITORY), FakeClone(), prompt, engine, files
+        CandidatePublication(build_card_request(), REPOSITORY, commit_message=commit_message),
+        FakeClone(),
+        prompt,
+        engine,
+        files,
     )
     return Publication(published, engine, files, prompt)
 
@@ -218,12 +257,22 @@ class SummarizedPublication:
     files: FakeStepFiles
 
 
-def summarize_beside(listing: FakeListing, is_dry_run: bool = False) -> SummarizedPublication:
-    files, card = build_reviewed_files()
+def summarize_beside(
+    listing: FakeListing,
+    is_dry_run: bool = False,
+    commit_message: CommitMessage | None = None,
+    card_request: CardRequest = CARD_REQUEST,
+) -> SummarizedPublication:
+    files, card = build_reviewed_files(card_request)
     engine = build_engine(files, build_report(card))
     prompt = FakePrompt()
     published = publish_with(
-        CandidatePublication(build_card_request(), REPOSITORY, is_dry_run),
+        CandidatePublication(
+            card_request,
+            REPOSITORY,
+            is_dry_run,
+            commit_message,
+        ),
         prompt,
         listing,
         engine,
@@ -487,6 +536,70 @@ class TestTheCandidatePublication:
             ) -> None:
                 with pytest.raises(RepositoryFilesError, match="'<user>/parakeet-ultra-onnx'"):
                     publish_act()
+
+        class TestWhenItIsADryRunWithACommitMessage:
+            @pytest.fixture
+            def summarized(self) -> SummarizedPublication:
+                return summarize_beside(
+                    FakeListing(ALIKE_AND_CHANGED_LISTING),
+                    is_dry_run=True,
+                    commit_message=COMMIT_MESSAGE,
+                )
+
+            def test_should_show_the_message_after_the_files_then_the_summary_and_the_end(
+                self, summarized: SummarizedPublication
+            ) -> None:
+                assert summarized.prompt.events[HEADER_AND_FILE_LINE_COUNT:] == [
+                    *COMMIT_MESSAGE_BLOCK,
+                    "PublicationSummary",
+                    "DryRunEnded",
+                ]
+
+        class TestWhenItIsADryRunWithoutACommitMessage:
+            @pytest.fixture
+            def summarized(self) -> SummarizedPublication:
+                return summarize_beside(
+                    FakeListing(None), is_dry_run=True, card_request=PARAKEET_CARD_REQUEST
+                )
+
+            def test_should_show_the_title_from_the_cards_title_alone(
+                self, summarized: SummarizedPublication
+            ) -> None:
+                assert summarized.prompt.events[HEADER_AND_FILE_LINE_COUNT:] == [
+                    "with the commit message:",
+                    "  | Publish Parakeet Ultra in ONNX",
+                    "SummaryUnavailable",
+                    "DryRunEnded",
+                ]
+
+        class TestWhenAPublicationCarriesACommitMessage:
+            @pytest.fixture
+            def publication(self) -> Publication:
+                return publish_reviewed_card(commit_message=COMMIT_MESSAGE)
+
+            def test_should_show_the_message_before_it_asks_for_the_repository_and_the_token(
+                self, publication: Publication
+            ) -> None:
+                ordered_events = (
+                    COMMIT_MESSAGE_BLOCK[0],
+                    COMMIT_MESSAGE_BLOCK[-1],
+                    REPOSITORY_ASKED,
+                    TOKEN_ASKED,
+                )
+                assert [
+                    event for event in publication.prompt.events if event in ordered_events
+                ] == list(ordered_events)
+
+            def test_should_write_the_messages_title_and_description_into_its_request(
+                self, publication: Publication
+            ) -> None:
+                publication_request = parse_publication_request(
+                    publication.files.contents[REQUEST_PATH]
+                )
+                assert (
+                    publication_request.commit_message,
+                    publication_request.commit_description,
+                ) == (COMMIT_TITLE, COMMIT_DESCRIPTION)
 
         class TestWhenTheHubListsTheHeadWithoutAToken:
             @pytest.fixture
