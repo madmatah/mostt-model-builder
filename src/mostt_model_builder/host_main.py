@@ -8,7 +8,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
-from mostt_model_builder.adapters.curl_downloader import CurlDownloader
+from mostt_model_builder.adapters.curl_downloader import HTTP_ERROR_STATUS, CurlDownloader
 from mostt_model_builder.adapters.docker_engine import ContainerEngineError, DockerEngine
 from mostt_model_builder.adapters.git_tree import GitError, GitTree
 from mostt_model_builder.adapters.terminal_prompt import TerminalError, TerminalPrompt
@@ -58,6 +58,11 @@ from mostt_model_builder.application.prepare_publication import (
 from mostt_model_builder.application.prune_cache import CachePruning, PrunedEntry, prune_cache
 from mostt_model_builder.application.publish_candidate import (
     CandidatePublication,
+    DryRunEnded,
+    PublicationEvent,
+    PublicationSummary,
+    SummarizedFile,
+    SummaryUnavailable,
     publish_candidate,
 )
 from mostt_model_builder.application.resolve_build import (
@@ -373,6 +378,11 @@ def build_argument_parser() -> argparse.ArgumentParser:
         required=True,
         metavar="<namespace>/<name>",
         help="the Hugging Face repository to publish into, which must exist",
+    )
+    publish_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="show what the publication would send, then stop, before the token",
     )
     check_parser = commands.add_parser(
         CHECK_PUBLISHED_COMMAND,
@@ -876,18 +886,58 @@ def write_card(recipe: JudgedRecipe, work_directory: WorkDirectory, files: WorkF
     )
 
 
+def describe_summarized_file(summarized: SummarizedFile) -> str:
+    if summarized.is_kept:
+        return f"kept {summarized.name}, already on the Hub with its sha256"
+    return f"would upload {summarized.name}, {summarized.size_bytes} bytes"
+
+
+def describe_unavailable_summary(unavailable: SummaryUnavailable) -> str:
+    return (
+        f"no summary: the Hub gave no listing of {unavailable.repository} without a token "
+        f"(curl exited with the status {HTTP_ERROR_STATUS}), as for a private repository; the "
+        "upload still compares each file before it commits"
+    )
+
+
+def describe_dry_run(ended: DryRunEnded) -> str:
+    return f"dry run: nothing was published to {ended.repository}"
+
+
+def describe_publication_event(event: PublicationEvent) -> list[str]:
+    match event:
+        case PublicationSummary(_, summarized_files):
+            return [describe_summarized_file(summarized) for summarized in summarized_files]
+        case SummaryUnavailable():
+            return [describe_unavailable_summary(event)]
+        case DryRunEnded():
+            return [describe_dry_run(event)]
+
+
+def print_publication_event(event: PublicationEvent) -> None:
+    print_lines(describe_publication_event(event))
+
+
 def publish(
-    recipe: JudgedRecipe, repository: str, work_directory: WorkDirectory, files: WorkFiles
+    recipe: JudgedRecipe,
+    repository: str,
+    is_dry_run: bool,
+    work_directory: WorkDirectory,
+    files: WorkFiles,
 ) -> None:
     context = read_build_context(work_directory)
     resolved = resolve_built(recipe, context, files)
     published = publish_candidate(
-        CandidatePublication(build_card_request(recipe, context, resolved), repository),
+        CandidatePublication(build_card_request(recipe, context, resolved), repository, is_dry_run),
         GitTree(PurePosixPath(CLONE_ROOT)),
         TerminalPrompt(STANDARD_INPUT_DESCRIPTOR, sys.stdout),
+        CurlDownloader(),
         DockerEngine(),
         files,
+        print_publication_event,
     )
+    if published is None:
+        return
     report = published.report
     for reported in report.files:
         print(describe_reported_file(reported), flush=True)
@@ -1112,7 +1162,7 @@ def run_command(arguments: argparse.Namespace) -> None:
     elif arguments.command == CARD_COMMAND:
         write_card(recipe, work_directory, files)
     elif arguments.command == PUBLISH_COMMAND:
-        publish(recipe, arguments.repository, work_directory, files)
+        publish(recipe, arguments.repository, arguments.dry_run, work_directory, files)
     elif arguments.command == CHECK_PUBLISHED_COMMAND:
         check_published_revision(
             recipe, arguments.repository, arguments.revision, work_directory, files

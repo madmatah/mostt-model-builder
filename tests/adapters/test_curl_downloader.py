@@ -11,12 +11,14 @@ from mostt_model_builder.adapters.curl_downloader import (
     build_curl_arguments,
     build_listing_arguments,
 )
+from mostt_model_builder.application.check_published import RefusedListingError
 from mostt_model_builder.application.fetch_sources import DownloadError
 
 URL = "https://huggingface.co/datasets/google/fleurs/resolve/0123/data/fr_fr/test.tsv"
 PARTIAL_PATH = PurePosixPath("/data/builds/work/sources/test.tsv.partial")
 SIZE_BYTES = 456972
 FAILING_CURL_STATUS = 22
+TIMED_OUT_CURL_STATUS = 28
 FIRST_ARGUMENTS = ["curl", "--disable"]
 LAST_ARGUMENTS = ["--", URL]
 ARGUMENT_SEQUENCES = {
@@ -247,3 +249,31 @@ class TestTheCurlDownloader:
                     ),
                 ):
                     read_act()
+
+            def test_should_say_the_hub_refused_the_listing(
+                self, read_act: Callable[[], bytes]
+            ) -> None:
+                with pytest.raises(RefusedListingError, match="exited with the status"):
+                    read_act()
+
+        class TestWhenCurlFailsOtherwiseThanOnAnHttpError:
+            @pytest.fixture
+            def read_act(
+                self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+            ) -> Callable[[], bytes]:
+                return read_with_fake_curl(
+                    tmp_path, monkeypatch, b"", TIMED_OUT_CURL_STATUS, LISTING_MAX_SIZE_BYTES
+                )
+
+            def test_should_fail_with_its_status_and_its_message_as_no_refusal_of_the_hub(
+                self, read_act: Callable[[], bytes]
+            ) -> None:
+                with pytest.raises(
+                    DownloadError,
+                    match=re.escape(
+                        f"curl exited with the status {TIMED_OUT_CURL_STATUS} while reading "
+                        f"{LISTING_URL}: curl: (22) refused"
+                    ),
+                ) as failure:
+                    read_act()
+                assert failure.type is DownloadError

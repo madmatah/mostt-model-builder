@@ -32,6 +32,7 @@ from mostt_model_builder.domain.contract.model_description import (
     ModelDescription,
     VariantDescription,
 )
+from mostt_model_builder.domain.publication.git_blobs import compute_git_blob_id
 from mostt_model_builder.domain.publication.published_tree import (
     PUBLISHED_LISTING_MAX_SIZE_BYTES,
     PublishedTreeError,
@@ -55,7 +56,12 @@ def render_listing(published: Mapping[str, bytes]) -> bytes:
     return json.dumps(
         [{"type": "file", "path": ".gitattributes", "size": 1519, "oid": "f" * 40}]
         + [
-            {"type": "file", "path": name, "size": len(content)}
+            {
+                "type": "file",
+                "path": name,
+                "size": len(content),
+                "oid": compute_git_blob_id(content),
+            }
             for name, content in published.items()
         ]
     ).encode()

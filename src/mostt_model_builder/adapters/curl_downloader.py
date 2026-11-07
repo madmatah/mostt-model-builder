@@ -1,6 +1,7 @@
 import subprocess
 from pathlib import PurePosixPath
 
+from mostt_model_builder.application.check_published import RefusedListingError
 from mostt_model_builder.application.fetch_sources import DownloadError
 from mostt_model_builder.domain.containers.printable_output import show_printable
 
@@ -8,6 +9,8 @@ CURL_PROGRAM = "curl"
 RETRY_COUNT = 3
 LISTING_TIMEOUT_S = 60
 MAX_ERROR_BYTES = 4096
+# curl's status when --fail meets an HTTP error from the server.
+HTTP_ERROR_STATUS = 22
 
 
 def build_curl_arguments(url: str, partial_path: PurePosixPath, size_bytes: int) -> list[str]:
@@ -98,9 +101,12 @@ class CurlDownloader:
                 raise DownloadError(f"the listing at {url} holds more than {max_size_bytes} bytes")
             error_output = process.stderr.read(MAX_ERROR_BYTES)
             status = process.wait()
-        if status != 0:
-            raise DownloadError(
-                f"{CURL_PROGRAM} exited with the status {status} while reading {url}: "
-                f"{show_printable(error_output).strip()}"
-            )
-        return listing
+        if status == 0:
+            return listing
+        message = (
+            f"{CURL_PROGRAM} exited with the status {status} while reading {url}: "
+            f"{show_printable(error_output).strip()}"
+        )
+        if status == HTTP_ERROR_STATUS:
+            raise RefusedListingError(message)
+        raise DownloadError(message)

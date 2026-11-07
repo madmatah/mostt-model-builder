@@ -26,10 +26,21 @@ EXPECTED_FILES = (
     ExpectedFile("vocab.txt", 21, "c" * 64),
     ExpectedFile("README.md", 900, "d" * 64),
 )
-ATTRIBUTES_ENTRY = ListedEntry("file", ".gitattributes", 1519)
+BLOB_ID = "e" * 40
+DATA_SHA256 = "b" * 64
+ATTRIBUTES_ENTRY = ListedEntry("file", ".gitattributes", 1519, BLOB_ID)
 EXACT_ENTRIES = (
     ATTRIBUTES_ENTRY,
-    *(ListedEntry("file", expected.name, expected.size_bytes) for expected in EXPECTED_FILES),
+    *(
+        ListedEntry(
+            "file",
+            expected.name,
+            expected.size_bytes,
+            BLOB_ID,
+            DATA_SHA256 if expected.name == "encoder-model.onnx.data" else None,
+        )
+        for expected in EXPECTED_FILES
+    ),
 )
 
 
@@ -38,14 +49,19 @@ def render_listing(*entries: object) -> bytes:
 
 
 def describe_entry(entry: ListedEntry) -> dict[str, object]:
-    return {"type": entry.entry_type, "oid": "e" * 40, "size": entry.size_bytes, "path": entry.path}
+    return {"type": entry.entry_type, "oid": BLOB_ID, "size": entry.size_bytes, "path": entry.path}
 
 
 EXACT_LISTING = render_listing(
     *(describe_entry(entry) for entry in EXACT_ENTRIES[:2]),
-    {**describe_entry(EXACT_ENTRIES[2]), "lfs": {"oid": "b" * 64, "size": 2_476_376_064}},
+    {
+        **describe_entry(EXACT_ENTRIES[2]),
+        "lfs": {"oid": DATA_SHA256, "size": 2_476_376_064, "pointerSize": 134},
+        "xetHash": "c" * 64,
+    },
     *(describe_entry(entry) for entry in EXACT_ENTRIES[3:]),
 )
+README_ENTRY = {"type": "file", "path": "README.md", "size": 900, "oid": BLOB_ID}
 REFUSED_LISTINGS = {
     "a document that is not JSON": (b"[{", "the listing is not a JSON document"),
     "a document that is not UTF-8": (b'["\xff"]', "the listing is not a JSON document"),
@@ -76,6 +92,22 @@ REFUSED_LISTINGS = {
     "a size that is a boolean": (
         render_listing({"type": "file", "path": "README.md", "size": True}),
         "the entry README.md of the listing has the size True",
+    ),
+    "a file without a blob id": (
+        render_listing({"type": "file", "path": "README.md", "size": 900}),
+        "the entry README.md of the listing has the blob id None, not 40 hexadecimal digits",
+    ),
+    "a blob id in upper case": (
+        render_listing({**README_ENTRY, "oid": "E" * 40}),
+        "has the blob id 'EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE'",
+    ),
+    "a large file storage that is not an object": (
+        render_listing({**README_ENTRY, "lfs": "b" * 64}),
+        "the entry README.md of the listing has a large file storage that is not an object",
+    ),
+    "a large-file-storage SHA-256 that is too short": (
+        render_listing({**README_ENTRY, "lfs": {"oid": "b" * 40}}),
+        "has the large-file-storage SHA-256 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', not 64",
     ),
 }
 REFUSED_TREES = {
@@ -133,7 +165,7 @@ class TestThePublishedTree:
             def entries(self) -> tuple[ListedEntry, ...]:
                 return parse_published_listing(EXACT_LISTING)
 
-            def test_should_read_the_type_path_and_size_of_each_entry_and_skip_the_rest(
+            def test_should_read_each_entrys_type_path_size_blob_id_and_storage_sha256_alone(
                 self, entries: tuple[ListedEntry, ...]
             ) -> None:
                 assert entries == EXACT_ENTRIES

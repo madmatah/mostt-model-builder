@@ -11,6 +11,7 @@ from mostt_model_builder.application.assemble_candidate import (
     judge_inspected_copies,
 )
 from mostt_model_builder.application.fetch_sources import (
+    DownloadError,
     SourceDownloader,
     SourceFiles,
     fetch_source,
@@ -39,6 +40,10 @@ from mostt_model_builder.domain.sources.source_urls import build_tree_url
 
 
 class PublishedCheckError(Exception):
+    pass
+
+
+class RefusedListingError(DownloadError):
     pass
 
 
