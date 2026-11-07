@@ -86,7 +86,7 @@ Every file was copied out of the container that wrote it, and refused if it bega
 
 Every step ran in a container without network, from pinned sources, libraries and base images.
 
-The code of this build is [mostt-model-builder](https://github.com/madmatah/mostt-model-builder/tree/89abcdef0123456789abcdef0123456789abcdef), at the commit `89abcdef0123456789abcdef0123456789abcdef` that the build ran from.
+The code of this build is [mostt-model-builder](https://github.com/madmatah/mostt-model-builder).
 
 ### Sources
 
