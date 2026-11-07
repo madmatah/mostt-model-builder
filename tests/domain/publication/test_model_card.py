@@ -28,21 +28,13 @@ from mostt_model_builder.domain.contract.model_description import (
     ReferenceRunDescription,
     VariantDescription,
 )
-from mostt_model_builder.domain.contract.recipe_contract import (
-    REFERENCE_VARIANT,
-    JudgedRun,
-    VariantConversion,
-)
+from mostt_model_builder.domain.contract.recipe_contract import REFERENCE_VARIANT, JudgedRun
 from mostt_model_builder.domain.formats.file_formats import FileFormat
-from mostt_model_builder.domain.onnx.conversion_request import (
-    ConversionKind,
-    EightBitBlocksConversion,
-    FloatConversion,
-)
 from mostt_model_builder.domain.publication.measuring_libraries import MeasuringLibrary
 from mostt_model_builder.domain.publication.model_card import (
     CardError,
     CardInputs,
+    join_words,
     render_model_card,
 )
 from mostt_model_builder.domain.publication.variant_summaries import VariantSummaryError
@@ -51,9 +43,9 @@ from mostt_model_builder.domain.sources.source_pins import RepositoryType, Sourc
 WEIGHTS_REVISION = "0123456789abcdef0123456789abcdef01234567"
 FLEURS_REVISION = "70bb2e84b976b7e960aa89f1c648e09c59f894dd"
 TEMPLATE = (
-    "# $title\n\n$variant_table\n\n$variant_sections\n\nShared: $shared_files.\n\n"
-    "Measured $measured_languages $measured_with, the weights at $weights_revision.\n\n"
-    "$sources\n"
+    "# $title\n\n$variant_sections\n\n"
+    "Measured $measured_languages ($measured_utterances) $measured_with, the weights at "
+    "$weights_revision.\n\n$sources\n"
 )
 PINS = (
     SourcePin(
@@ -66,14 +58,19 @@ PINS = (
 )
 NEMO = ReferenceRunDescription("nemo", "the original model in NeMo")
 TRANSFORMERS = ReferenceRunDescription("transformers", "the original model in Transformers")
-EIGHT_BIT_BLOCKS = VariantDescription(
-    "eight-bit-blocks", "int8", "For the CPU and the GPU: its blocks multiply in int8 on both."
+FLOAT32 = VariantDescription(
+    "float32",
+    "float32",
+    "The exported graph, unconverted.",
+    note="the reference of the other variants",
+    abbreviation="FP32",
 )
+EIGHT_BIT_BLOCKS = VariantDescription("eight-bit-blocks", "int8", "The encoder in 8-bit blocks.")
 DESCRIPTION = ModelDescription(
     title="Weights in ONNX",
     template_path=PurePosixPath("model-card.md"),
     measuring_library_names=("onnx-asr", "onnxruntime", "onnxruntime-gpu"),
-    variants=(VariantDescription("float32", "float32"), EIGHT_BIT_BLOCKS),
+    variants=(FLOAT32, EIGHT_BIT_BLOCKS),
     reference_runs=(NEMO, TRANSFORMERS),
     pinned_revisions=(PinnedRevision("weights_revision", "maker/weights"),),
 )
@@ -105,20 +102,21 @@ NON_INFERIORITY = NonInferiority(0.2)
 INT8_AGAINST_FLOAT32 = compare(
     "eight-bit-blocks-cpu", "float32-cpu", "fr_fr", NON_INFERIORITY, 0.05
 )
+NEMO_AGAINST_FLOAT32_IN_ENGLISH = compare("nemo", "float32-cpu", "en_us", EQUIVALENCE, 0.0)
 VERIFICATION = Verification(
     runs=(
         RunMeasure("nemo", "fr_fr", 2, 100, 5, 7, 2, 1000.0),
-        RunMeasure("nemo", "en_us", 2, 100, 4, 4, 0, 1000.0),
+        RunMeasure("nemo", "en_us", 3, 100, 4, 4, 0, 1000.0),
         RunMeasure("float32-cpu", "fr_fr", 2, 100, 5, 7, 2, 1000.0),
-        RunMeasure("float32-cpu", "en_us", 2, 100, 4, 4, 0, 1000.0),
+        RunMeasure("float32-cpu", "en_us", 3, 100, 4, 4, 0, 1000.0),
         RunMeasure("float32-gpu", "fr_fr", 2, 100, 6, 8, 2, 400.0),
-        RunMeasure("float32-gpu", "en_us", 2, 100, 3, 3, 0, 400.0),
+        RunMeasure("float32-gpu", "en_us", 3, 100, 3, 3, 0, 400.0),
         RunMeasure("eight-bit-blocks-cpu", "fr_fr", 2, 100, 6, 8, 2, 900.0),
         RunMeasure("transformers", "fr_fr", 2, 100, 7, 9, 2, 1200.0),
     ),
     comparisons=(
         compare("nemo", "float32-cpu", "fr_fr", EQUIVALENCE, 0.25),
-        compare("nemo", "float32-cpu", "en_us", EQUIVALENCE, 0.0),
+        NEMO_AGAINST_FLOAT32_IN_ENGLISH,
         compare("float32-gpu", "float32-cpu", "fr_fr", EQUIVALENCE, 1.0),
         compare("float32-gpu", "float32-cpu", "en_us", EQUIVALENCE, -1.0),
         INT8_AGAINST_FLOAT32,
@@ -160,20 +158,12 @@ RUNS = (
         read_no_lines,
     ),
 )
-CONVERSIONS = (
-    VariantConversion(
-        "eight-bit-blocks",
-        EightBitBlocksConversion("encoder.int8.onnx", 64, True, 4, 265),
-        2**31,
-    ),
-)
 INPUTS = CardInputs(
     template=TEMPLATE,
     description=DESCRIPTION,
     pins=PINS,
     verification=VERIFICATION,
     runs=RUNS,
-    conversions=CONVERSIONS,
     measuring_libraries=(
         MeasuringLibrary(Device.CPU, "onnx-asr", "0.12.0"),
         MeasuringLibrary(Device.CPU, "onnxruntime", "1.31.0"),
@@ -181,25 +171,24 @@ INPUTS = CardInputs(
         MeasuringLibrary(Device.GPU, "onnxruntime-gpu", "1.31.0"),
     ),
 )
-VARIANT_TABLE = """| Variant | Tested on | Size | fr_fr | en_us |
-|---|---|---|---|---|
-| float32 | CPU, GPU | 2.55 GB | 5.00% | 4.00% |
-| int8 | CPU | 0.77 GB | 6.00% | not measured |
+FLOAT32_RATES = """| Language | WER | Against the original model in NeMo, CPU |
+|---|---|---|
+| French (fr_fr) | 5.00 % | -0.25 points |
+| English (en_us) | 4.00 % | +0.00 points |
 """
-CONVERSIONS_OF_THE_8_BIT_VARIANT = {
-    "8-bit blocks, with their parameters": (
-        EightBitBlocksConversion("encoder.int8.onnx", 64, True, 4, 265),
-        "8-bit blocks of 64 symmetric weights, at the accuracy level 4, 265 products quantized",
-    ),
-    "bfloat16, with the operators every bfloat16 conversion keeps in float32": (
-        FloatConversion(ConversionKind.BFLOAT16, "encoder.int8.onnx"),
-        "bfloat16, with Pad, Tile and Floor kept in float32",
-    ),
-    "float16, with the operator it adds": (
-        FloatConversion(ConversionKind.FLOAT16, "encoder.int8.onnx", ("Pad",)),
-        "float16, with Pad kept in float32",
-    ),
-}
+FLOAT32_FILES = """Files:
+
+- `encoder.onnx`
+- `encoder.onnx.data`
+- `vocab.txt`, shared by every variant
+"""
+EIGHT_BIT_BLOCKS_RATES = (
+    "| Language | WER | Against float32, CPU | Against the original model in Transformers, CPU |\n"
+    "|---|---|---|---|\n"
+    "| French (fr_fr) | 6.00 % | +0.05 points | -0.30 points |\n"
+)
+GERMAN_RUN_MEASURE = RunMeasure("float32-cpu", "de_de", 2, 100, 5, 7, 2, 1000.0)
+THREE_WORDS = ("French", "English", "German")
 
 
 def change_description(**fields: object) -> CardInputs:
@@ -233,6 +222,24 @@ REFUSED_INPUTS = {
         CardError,
         "the description gives no name to the variant float32",
     ),
+    "a measured language without a name": (
+        replace(
+            INPUTS,
+            verification=replace(VERIFICATION, runs=(*VERIFICATION.runs, GERMAN_RUN_MEASURE)),
+        ),
+        CardError,
+        "the card has no name for the language de_de, which a run measured",
+    ),
+    "the table of the variants, which the card no longer gives": (
+        replace(INPUTS, template=f"{TEMPLATE}$variant_table\n"),
+        CardError,
+        "the template holds the placeholder variant_table, which nothing fills",
+    ),
+    "the files of every variant, which each variant's section now lists": (
+        replace(INPUTS, template=f"{TEMPLATE}$shared_files\n"),
+        CardError,
+        "the template holds the placeholder shared_files, which nothing fills",
+    ),
     "a compared reference run without a title": (
         change_description(reference_runs=(NEMO,)),
         CardError,
@@ -254,45 +261,50 @@ class TestTheModelCard:
             def card(cls) -> str:
                 return render_model_card(INPUTS).decode("utf-8")
 
-            def test_should_follow_the_title_with_each_variant_s_devices_size_and_rates(
-                self, card: str
-            ) -> None:
-                assert f"# Weights in ONNX\n\n{VARIANT_TABLE}" in card
-
-            def test_should_give_each_variant_its_own_files_and_its_note(self, card: str) -> None:
-                assert (
-                    "### int8\n\nFiles: `encoder.int8.onnx`.\n\nFor the CPU and the GPU: its "
-                    "blocks multiply in int8 on both.\n" in card
-                )
-
-            def test_should_turn_around_a_reference_run_judged_against_the_rated_run(
+            def test_should_head_a_variant_with_its_name_and_abbreviation_then_its_role_line(
                 self, card: str
             ) -> None:
                 assert (
-                    "Against the original model in NeMo, on the CPU: -0.25 points in fr_fr and "
-                    "+0.00 in en_us, accepted.\n" in card
+                    "# Weights in ONNX\n\n### float32 (FP32)\n\nThe exported graph, "
+                    "unconverted.\n\n- **Runs on:**" in card
                 )
 
-            def test_should_join_the_clauses_of_a_variant_compared_twice(self, card: str) -> None:
-                assert (
-                    "Against float32 on the CPU: +0.05 points in fr_fr, accepted; against the "
-                    "original model in Transformers, on the CPU: -0.30 points in fr_fr, reported "
-                    "only.\n" in card
-                )
-
-            def test_should_say_the_exported_variant_has_no_conversion(self, card: str) -> None:
-                assert "Conversion: none, the exported graph.\n" in card
-
-            def test_should_give_the_files_of_every_variant_apart(self, card: str) -> None:
-                assert "Shared: `vocab.txt`.\n" in card
-
-            def test_should_name_the_measured_languages_and_the_versions_on_each_device(
+            def test_should_give_the_devices_of_its_runs_with_its_note_then_its_whole_size(
                 self, card: str
             ) -> None:
                 assert (
-                    "Measured fr_fr and en_us with onnx-asr 0.12.0 and onnxruntime 1.31.0 on the "
-                    "CPU, and with onnx-asr 0.12.0 and onnxruntime-gpu 1.31.0 on the GPU, the "
-                    in card
+                    "- **Runs on:** CPU, GPU; the reference of the other variants\n"
+                    "- **Size:** 2.55 GB\n\n| Language |" in card
+                )
+
+            def test_should_rate_it_by_language_against_a_reference_run_turned_around(
+                self, card: str
+            ) -> None:
+                assert f"2.55 GB\n\n{FLOAT32_RATES}\nFiles:" in card
+
+            def test_should_list_its_own_files_then_the_shared_ones_each_marked(
+                self, card: str
+            ) -> None:
+                assert f"{FLOAT32_RATES}\n{FLOAT32_FILES}" in card
+
+            def test_should_show_a_variant_without_abbreviation_nor_note_by_name_and_devices_alone(
+                self, card: str
+            ) -> None:
+                assert (
+                    "### int8\n\nThe encoder in 8-bit blocks.\n\n- **Runs on:** CPU\n"
+                    "- **Size:** 0.77 GB\n\n" in card
+                )
+
+            def test_should_give_one_column_per_comparison_in_their_order(self, card: str) -> None:
+                assert f"0.77 GB\n\n{EIGHT_BIT_BLOCKS_RATES}\nFiles:" in card
+
+            def test_should_name_the_measured_languages_their_utterances_and_the_versions(
+                self, card: str
+            ) -> None:
+                assert (
+                    "Measured French and English (2 utterances in French, 3 in English) with "
+                    "onnx-asr 0.12.0 and onnxruntime 1.31.0 on the CPU, and with onnx-asr 0.12.0 "
+                    "and onnxruntime-gpu 1.31.0 on the GPU, the " in card
                 )
 
             def test_should_fill_a_pinned_revision_with_the_revision_its_pin_gives(
@@ -317,24 +329,26 @@ class TestTheModelCard:
                     replace(INPUTS, verification=replace(VERIFICATION, comparisons=()))
                 ).decode("utf-8")
 
-            def test_should_say_each_variant_is_compared_with_nothing(self, card: str) -> None:
-                assert "Compared with no other variant and no reference run.\n" in card
+            def test_should_give_each_variant_its_rates_alone(self, card: str) -> None:
+                assert (
+                    "| Language | WER |\n|---|---|\n| French (fr_fr) | 5.00 % |\n"
+                    "| English (en_us) | 4.00 % |\n\nFiles:" in card
+                )
 
-        @pytest.mark.parametrize(
-            ("conversion", "line"),
-            list(CONVERSIONS_OF_THE_8_BIT_VARIANT.values()),
-            ids=list(CONVERSIONS_OF_THE_8_BIT_VARIANT.keys()),
-        )
-        class TestWhenAVariantIsConverted:
+        class TestWhenAComparisonLacksALanguageThatTheRatedRunMeasured:
             @pytest.fixture
-            def card(self, conversion: EightBitBlocksConversion | FloatConversion) -> str:
-                variant_conversion = VariantConversion("eight-bit-blocks", conversion, 2**31)
+            def card(self) -> str:
+                comparisons = tuple(
+                    measure
+                    for measure in VERIFICATION.comparisons
+                    if measure != NEMO_AGAINST_FLOAT32_IN_ENGLISH
+                )
                 return render_model_card(
-                    replace(INPUTS, conversions=(variant_conversion,))
-                ).decode()
+                    replace(INPUTS, verification=replace(VERIFICATION, comparisons=comparisons))
+                ).decode("utf-8")
 
-            def test_should_give_its_conversion(self, card: str, line: str) -> None:
-                assert f"Conversion: {line}.\n" in card
+            def test_should_say_the_comparison_did_not_measure_it(self, card: str) -> None:
+                assert "| English (en_us) | 4.00 % | not measured |\n" in card
 
         @pytest.mark.parametrize(
             ("inputs", "error", "message"),
@@ -351,3 +365,14 @@ class TestTheModelCard:
             ) -> None:
                 with pytest.raises(error, match=re.escape(message)):
                     render()
+
+    class TestTheJoinWordsFunction:
+        class TestWhenGivenThreeLanguages:
+            @pytest.fixture
+            def joined_words(self) -> str:
+                return join_words(THREE_WORDS)
+
+            def test_should_separate_them_by_commas_and_the_last_by_and(
+                self, joined_words: str
+            ) -> None:
+                assert joined_words == "French, English and German"

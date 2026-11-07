@@ -868,7 +868,6 @@ def build_card_request(
         verification=build_verification_request(recipe, context, resolved),
         model=recipe.model,
         template=read_card_template(recipe),
-        conversions=recipe.conversions,
         requirements=read_images_requirements(),
     )
 

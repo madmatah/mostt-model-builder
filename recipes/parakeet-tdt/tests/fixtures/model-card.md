@@ -15,58 +15,86 @@ Moondream's Parakeet Ultra, a post-training of NVIDIA's Parakeet TDT 0.6B v3, ex
 
 Word error rates on the test sets of FLEURS, without the unknown tokens, which the vocabulary cannot write.
 
-| Variant | Tested on | Size | fr_fr | en_us |
-|---|---|---|---|---|
-| float32 | CPU, GPU | 0.00 GB | 4.50% | 4.50% |
-| float16 | GPU | 0.00 GB | 4.50% | 4.50% |
-| bfloat16 | GPU | 0.00 GB | 4.50% | 4.50% |
-| int8 | CPU, GPU | 0.00 GB | 4.50% | 4.50% |
+### float32 (FP32)
 
-Each variant was transcribed on every device it lists, and each of those runs passed its comparisons. A variant's rates are those of its run on the CPU, or on the GPU when it was not run on the CPU: the runtime and the hardware, not the files, make the devices differ. A size counts every file the variant loads, the files of every variant included.
+The reference: the exported model, unconverted, against which the other variants are measured.
 
-### float32
+- **Runs on:** CPU, GPU
+- **Size:** 0.00 GB
 
-Files: `encoder-model.onnx`, `encoder-model.onnx.data`, `decoder_joint-model.onnx`.
+| Language | WER | Against the original model in NeMo, CPU |
+|---|---|---|
+| French (fr_fr) | 4.50 % | -0.01 points |
+| English (en_us) | 4.50 % | -0.01 points |
 
-Against the original model in NeMo, on the CPU: -0.01 points in fr_fr and -0.01 in en_us, accepted.
+Files:
 
-Conversion: none, the exported graph.
+- `encoder-model.onnx`
+- `encoder-model.onnx.data`
+- `decoder_joint-model.onnx`
+- `vocab.txt`, shared by every variant
+- `config.json`, shared by every variant
 
-### float16
+### float16 (FP16)
 
-Files: `encoder-model.fp16.onnx`, `decoder_joint-model.fp16.onnx`.
+The encoder converted to float16, for the GPU.
 
-For the GPU: on the CPU, ONNX Runtime computes most of it in float32 again.
+- **Runs on:** GPU; on the CPU, ONNX Runtime computes most of it in float32 again
+- **Size:** 0.00 GB
 
-Against float32 on the GPU: +0.01 points in fr_fr and +0.01 in en_us, accepted.
+| Language | WER | Against float32, GPU |
+|---|---|---|
+| French (fr_fr) | 4.50 % | +0.01 points |
+| English (en_us) | 4.50 % | +0.01 points |
 
-Conversion: float16.
+Files:
 
-### bfloat16
+- `encoder-model.fp16.onnx`
+- `decoder_joint-model.fp16.onnx`
+- `vocab.txt`, shared by every variant
+- `config.json`, shared by every variant
 
-Files: `encoder-model.bf16.onnx`, `decoder_joint-model.bf16.onnx`.
+### bfloat16 (BF16)
 
-For the GPU: on the CPU, ONNX Runtime computes most of it in float32 again.
+The encoder converted to bfloat16, with Pad, Tile and Floor kept in float32, for the GPU.
 
-Against float32 on the GPU: +0.01 points in fr_fr and +0.01 in en_us, accepted.
+- **Runs on:** GPU; on the CPU, ONNX Runtime computes most of it in float32 again
+- **Size:** 0.00 GB
 
-Conversion: bfloat16, with Pad, Tile and Floor kept in float32.
+| Language | WER | Against float32, GPU |
+|---|---|---|
+| French (fr_fr) | 4.50 % | +0.01 points |
+| English (en_us) | 4.50 % | +0.01 points |
+
+Files:
+
+- `encoder-model.bf16.onnx`
+- `decoder_joint-model.bf16.onnx`
+- `vocab.txt`, shared by every variant
+- `config.json`, shared by every variant
 
 ### int8
 
-Files: `encoder-model.int8.onnx`, `decoder_joint-model.int8.onnx`.
+Recommended on the CPU: the smallest variant. The encoder is in 8-bit blocks of 64 symmetric weights.
 
-Against float32 on the CPU: +0.01 points in fr_fr and +0.01 in en_us, accepted.
+- **Runs on:** CPU, GPU
+- **Size:** 0.00 GB
 
-Conversion: 8-bit blocks of 64 symmetric weights, at the accuracy level 4, 265 products quantized.
+| Language | WER | Against float32, CPU |
+|---|---|---|
+| French (fr_fr) | 4.50 % | +0.01 points |
+| English (en_us) | 4.50 % | +0.01 points |
 
-### Files of every variant
+Files:
 
-`vocab.txt`, `config.json`.
+- `encoder-model.int8.onnx`
+- `decoder_joint-model.int8.onnx`
+- `vocab.txt`, shared by every variant
+- `config.json`, shared by every variant
 
 ## Languages
 
-The model declares 25 languages: en, es, fr, de, bg, hr, cs, da, nl, et, fi, el, hu, it, lv, lt, mt, pl, pt, ro, sk, sl, sv, ru, uk. [FLEURS](https://huggingface.co/datasets/google/fleurs/tree/70bb2e84b976b7e960aa89f1c648e09c59f894dd) measured fr_fr and en_us only: the other languages are declared, not measured here.
+The model declares 25 languages: en, es, fr, de, bg, hr, cs, da, nl, et, fi, el, hu, it, lv, lt, mt, pl, pt, ro, sk, sl, sv, ru, uk. [FLEURS](https://huggingface.co/datasets/google/fleurs/tree/70bb2e84b976b7e960aa89f1c648e09c59f894dd) measured French and English only: the other languages are declared, not measured here.
 
 ## Limitations
 
@@ -80,7 +108,7 @@ Moondream's voice activity head, which its own runtime uses to cut long recordin
 2. The export writes the ONNX files, then checks the exported encoder against NeMo's on the first 20 utterances of FLEURS fr.
 3. NeMo transcribes FLEURS fr and en in float32 on the CPU: this run of the original model in NeMo is the reference of the comparisons.
 4. Transformers reads the weights of Parakeet Ultra as Moondream publishes them, and its encoder and joint are checked against NeMo's, so that the mapping of the weights is checked from a second side.
-5. onnx-asr transcribes FLEURS fr and en with every variant, on each device that the table of the variants gives it.
+5. onnx-asr transcribes FLEURS fr and en with every variant, on each device that its section under Variants gives.
 
 Every file was copied out of the container that wrote it, and refused if it began as code, a pickle or an archive, or broke the structure of its format. Every ONNX graph was inspected against the build's rules, on its nodes, its tensors and its quantized products. The verification then measured every run on FLEURS, and held every comparison of two runs and every parity of an export with its reference framework to its rule.
 
