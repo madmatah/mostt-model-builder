@@ -15,13 +15,19 @@ from mostt_model_builder.domain.contract.recipe_contract import (
     RecipeContract,
 )
 from mostt_model_builder.domain.lock.lock_check import CheckedLock, LockedPackage
+from mostt_model_builder.domain.publication.publication_report import (
+    PublicationReport,
+    ReportedFile,
+)
 from mostt_model_builder.host_main import (
     describe_clean_event,
     describe_cleaned_entry,
     describe_lock_resolution,
     describe_prune_total,
     describe_pruned_entry,
+    describe_publication,
     describe_removed_unfinished_entry,
+    describe_reported_file,
     describe_reused_entry,
     describe_skipped_entry,
     is_card_template_present,
@@ -75,6 +81,12 @@ FLEURS_CHECK_KEY = "7b1e04c9a2f3" + "0" * 52
 CANDIDATE_KEY = "91aa3c0e7d45" + "1" * 52
 UNFINISHED_KEY = "6a0f3e81c9d4" + "2" * 52
 CLEANED_KEY = "9e41c2d07a3b" + "3" * 52
+HUB_REPOSITORY = "<user>/parakeet-ultra-onnx"
+PARENT_REVISION = "9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b"
+NEW_REVISION = "5e1f0c2a9b8d7e6f5a4b3c2d1e0f9a8b7c6d5e4f"
+KEPT_ENCODER = ReportedFile("encoder-model.onnx", 902417, "a" * 64, is_uploaded=False)
+UPLOADED_CARD = ReportedFile("README.md", 9412, "b" * 64, is_uploaded=True)
+KEPT_CARD = ReportedFile("README.md", 9412, "b" * 64, is_uploaded=False)
 PRUNED_ENTRIES = (
     PrunedEntry("convert-bfloat16", "5c0d8a3b9e21" + "4" * 52, 1241503812),
     PrunedEntry("candidate", "4e7a2b90c1d3" + "5" * 52, 5934410225),
@@ -436,3 +448,55 @@ class TestTheHostMain:
 
         def test_should_count_the_entries_and_the_bytes_freed(self, line: str) -> None:
             assert line == "pruned 5 entries, 7176745609 bytes freed"
+
+    class TestTheDescribeReportedFileFunction:
+        @pytest.fixture
+        def lines(self) -> list[str]:
+            return [describe_reported_file(reported) for reported in (KEPT_ENCODER, UPLOADED_CARD)]
+
+        def test_should_say_whether_each_file_was_kept_or_uploaded(self, lines: list[str]) -> None:
+            assert lines == [
+                "kept encoder-model.onnx, already on the Hub with its sha256",
+                "uploaded README.md, 9412 bytes",
+            ]
+
+    class TestTheDescribePublicationFunction:
+        class TestWhenAFileWasUploaded:
+            @pytest.fixture
+            def line(self) -> str:
+                return describe_publication(
+                    PublicationReport(
+                        HUB_REPOSITORY,
+                        True,
+                        PARENT_REVISION,
+                        NEW_REVISION,
+                        (KEPT_ENCODER, UPLOADED_CARD),
+                    )
+                )
+
+            def test_should_name_the_new_revision_and_its_parent(self, line: str) -> None:
+                assert line == (
+                    "published <user>/parakeet-ultra-onnx at the revision "
+                    "5e1f0c2a9b8d7e6f5a4b3c2d1e0f9a8b7c6d5e4f, on "
+                    "9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b; the repository is private"
+                )
+
+        class TestWhenNothingDiffered:
+            @pytest.fixture
+            def line(self) -> str:
+                return describe_publication(
+                    PublicationReport(
+                        HUB_REPOSITORY,
+                        True,
+                        NEW_REVISION,
+                        NEW_REVISION,
+                        (KEPT_ENCODER, KEPT_CARD),
+                    )
+                )
+
+            def test_should_say_there_was_nothing_to_publish(self, line: str) -> None:
+                assert line == (
+                    "nothing to publish: <user>/parakeet-ultra-onnx already holds every file of "
+                    "the build at the revision 5e1f0c2a9b8d7e6f5a4b3c2d1e0f9a8b7c6d5e4f; the "
+                    "repository is private"
+                )
