@@ -354,10 +354,13 @@ def find_graph_source(
         return GraphSource.CONVERSION_INPUT
     for variant_conversion in conversions:
         conversion = variant_conversion.conversion
-        if isinstance(conversion, EightBitBlocksConversion) and origin == StepOutputOrigin(
+        if origin != StepOutputOrigin(
             name_conversion_row(variant_conversion.variant), conversion.output
         ):
+            continue
+        if isinstance(conversion, EightBitBlocksConversion):
             return EightBitBlocksOutput(conversion.quantized_product_count)
+        return GraphSource.FLOAT_CONVERSION_OUTPUT
     return GraphSource.OTHER
 
 
