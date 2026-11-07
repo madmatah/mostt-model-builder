@@ -3,6 +3,11 @@ from pathlib import Path
 
 import pytest
 
+from mostt_model_builder.domain.acceptance.paired_comparison import (
+    INTERVAL_HIGH_INDEX,
+    INTERVAL_LOW_INDEX,
+    RESAMPLE_COUNT,
+)
 from mostt_model_builder.domain.onnx.conversion_request import (
     Conversion,
     EightBitBlocksConversion,
@@ -10,12 +15,14 @@ from mostt_model_builder.domain.onnx.conversion_request import (
 from mostt_model_builder.domain.onnx.precision_decisions import list_kept_float32_operators
 from mostt_model_builder.domain.publication.model_card import join_words
 from mostt_recipe_parakeet_tdt.domain.publication.model_description import MODEL_DESCRIPTION
+from mostt_recipe_parakeet_tdt.domain.variants.comparisons import VARIANT_NON_INFERIORITY
 from mostt_recipe_parakeet_tdt.domain.variants.variants import VARIANTS
 
 RECIPE_DIRECTORY = Path(__file__).resolve().parents[3]
 CONVERTED_VARIANTS = tuple(
     (variant.name, variant.conversion) for variant in VARIANTS if variant.conversion is not None
 )
+INTERVAL_COVERAGE_PERCENT = (INTERVAL_HIGH_INDEX - INTERVAL_LOW_INDEX + 1) * 100 / RESAMPLE_COUNT
 ROLE_LINES = {
     description.variant: description.role_line for description in MODEL_DESCRIPTION.variants
 }
@@ -62,3 +69,14 @@ class TestTheModelDescription:
         ) -> None:
             phrases = [describe_conversion(conversion) for _, conversion in CONVERTED_VARIANTS]
             assert f"- {state_the_conversions(phrases)} " in template
+
+        def test_should_state_the_bound_of_the_non_inferiority_that_accepts_a_variant(
+            self, template: str
+        ) -> None:
+            bound_points = VARIANT_NON_INFERIORITY.max_upper_bound_points
+            assert f"loses at most {bound_points:g} points against its reference" in template
+
+        def test_should_state_the_coverage_of_the_interval_of_the_paired_bootstrap(
+            self, template: str
+        ) -> None:
+            assert f"a {INTERVAL_COVERAGE_PERCENT:g} % interval from a paired bootstrap" in template
