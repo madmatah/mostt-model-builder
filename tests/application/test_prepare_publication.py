@@ -6,7 +6,6 @@ from functools import partial
 import pytest
 from accepted_build import (
     COMMIT,
-    RUN_DIRECTORY,
     WORK_ROOT,
     build_files,
 )
@@ -88,22 +87,21 @@ class TestThePublicationPreparation:
 
         class TestWhenAnotherCardIsWrittenAlready:
             @pytest.fixture
-            def write_act(self) -> Callable[[], WrittenCard]:
+            def written_card(self) -> WrittenCard:
                 files = build_files()
                 files.add_file(CARD_PATH, build_file_facts(8, 0o444), b"# other\n")
-                return partial(prepare_and_write, files)
+                return prepare_and_write(files)
 
-            def test_should_refuse_it_and_name_clean(
-                self, write_act: Callable[[], WrittenCard]
+            def test_should_replace_it_with_the_render_so_that_a_change_of_the_card_needs_no_clean(
+                self, written_card: WrittenCard
             ) -> None:
-                with pytest.raises(
-                    PublicationError,
-                    match=re.escape(
-                        f"{RUN_DIRECTORY}/README.md holds another card than the build's records "
-                        "give: remove it with ./model-build.sh --work <dir> --recipe <name> clean"
-                    ),
-                ):
-                    write_act()
+                assert written_card.files.contents[CARD_PATH] == written_card.prepared.card
+
+            def test_should_leave_the_new_card_read_only(self, written_card: WrittenCard) -> None:
+                assert written_card.files.file_modes[CARD_PATH] == 0o444
+
+            def test_should_say_it_replaced_it(self, written_card: WrittenCard) -> None:
+                assert written_card.outcome is CardOutcome.REPLACED
 
     class TestThePreparePublicationFunction:
         class TestWhenTheCloneHoldsAChange:

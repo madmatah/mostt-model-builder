@@ -199,7 +199,11 @@ STEP_NAMES = sorted(
 TEXT_ENCODING = "utf-8"
 FAILURE_EXIT_STATUS = 1
 NO_ACCOUNT_HOME = ""
-CARD_OUTCOME_WORDS = {CardOutcome.WRITTEN: "wrote", CardOutcome.UNCHANGED: "unchanged:"}
+CARD_OUTCOME_WORDS = {
+    CardOutcome.WRITTEN: "wrote",
+    CardOutcome.UNCHANGED: "unchanged:",
+    CardOutcome.REPLACED: "replaced",
+}
 OUTCOME_WORDS = {FetchOutcome.FETCHED: "fetched", FetchOutcome.ALREADY_FETCHED: "already fetched"}
 CLEAN_OUTCOME_WORDS = {
     CleanOutcome.CLEANED: "cleaned",
