@@ -30,9 +30,9 @@ MODEL = ModelDescription(
     title="Weights in ONNX",
     template_path=PurePosixPath("model-card.md"),
     measuring_library_names=("onnx-asr",),
-    variants=(VariantDescription("float32", "float32"),),
+    variants=(VariantDescription("float32", "float32", "The exported graph."),),
 )
-TEMPLATE = "# $title\n\n$variant_table\n\nMeasured $measured_with.\n"
+TEMPLATE = "# $title\n\n$variant_sections\n\nMeasured $measured_with.\n"
 REQUIREMENTS = (
     DeclaredRequirement("family-transcribe-cpu", "numpy", (), "2.5.4"),
     DeclaredRequirement("family-transcribe-cpu", "onnx-asr", (), "0.12.0"),
@@ -58,6 +58,5 @@ def build_card_request(
         verification=replace(verification, pins=(*verification.pins, WEIGHTS_PIN)),
         model=model,
         template=None if model is None else TEMPLATE,
-        conversions=(),
         requirements=REQUIREMENTS,
     )

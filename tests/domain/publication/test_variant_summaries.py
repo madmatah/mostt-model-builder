@@ -2,11 +2,7 @@ from dataclasses import replace
 
 import pytest
 
-from mostt_model_builder.domain.acceptance.acceptance import (
-    REPORTED_ONLY,
-    ComparisonRule,
-    NonInferiority,
-)
+from mostt_model_builder.domain.acceptance.acceptance import ComparisonRule, NonInferiority
 from mostt_model_builder.domain.acceptance.paired_comparison import PairedComparison
 from mostt_model_builder.domain.acceptance.verification import (
     CandidateDigest,
@@ -87,14 +83,11 @@ def summarize_float16(
     return next(summary for summary in summaries if summary.variant == "float16")
 
 
-def build_comparison(
-    other_run: JudgedRun, difference_points: float, is_reported_only: bool = False
-) -> VariantComparison:
+def build_comparison(other_run: JudgedRun, difference_points: float) -> VariantComparison:
     return VariantComparison(
         other_run=other_run.name,
         other_variant=other_run.variant,
         other_device=other_run.device,
-        is_reported_only=is_reported_only,
         differences=tuple(
             LanguageDifference(language, difference_points) for language in LANGUAGES
         ),
@@ -135,10 +128,6 @@ CLAUSES = {
             build_comparison(FLOAT32_CPU, ASYMMETRIC_DIFFERENCE_POINTS),
             build_comparison(NEMO, -ASYMMETRIC_DIFFERENCE_POINTS),
         ),
-    ),
-    "a figure reported only, read as such": (
-        compare("nemo", "float16-cpu", REPORTED_ONLY),
-        (build_comparison(NEMO, -ASYMMETRIC_DIFFERENCE_POINTS, is_reported_only=True),),
     ),
 }
 

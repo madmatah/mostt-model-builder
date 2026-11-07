@@ -3,22 +3,19 @@ from dataclasses import dataclass
 from string import Template
 
 from mostt_model_builder.domain.acceptance.verification import Verification
+from mostt_model_builder.domain.bench.bench_languages import LANGUAGE_NAMES
 from mostt_model_builder.domain.containers.container_files import FileFacts, FileKind
 from mostt_model_builder.domain.containers.devices import Device
-from mostt_model_builder.domain.contract.model_description import ModelDescription
-from mostt_model_builder.domain.contract.recipe_contract import (
-    REFERENCE_VARIANT,
-    JudgedRun,
-    VariantConversion,
+from mostt_model_builder.domain.contract.model_description import (
+    ModelDescription,
+    VariantDescription,
 )
-from mostt_model_builder.domain.onnx.conversion_request import FloatConversion
-from mostt_model_builder.domain.onnx.precision_decisions import list_kept_float32_operators
+from mostt_model_builder.domain.contract.recipe_contract import REFERENCE_VARIANT, JudgedRun
 from mostt_model_builder.domain.publication.measuring_libraries import (
     DEVICE_ORDER,
     MeasuringLibrary,
 )
 from mostt_model_builder.domain.publication.variant_summaries import (
-    LanguageDifference,
     VariantComparison,
     VariantSummary,
     list_shared_files,
@@ -44,23 +41,25 @@ class CardInputs:
     pins: tuple[SourcePin, ...]
     verification: Verification
     runs: tuple[JudgedRun, ...]
-    conversions: tuple[VariantConversion, ...]
     measuring_libraries: tuple[MeasuringLibrary, ...]
 
 
 def render_model_card(inputs: CardInputs) -> bytes:
     summaries = summarize_variants(inputs.verification, inputs.runs)
+    shared_files = list_shared_files(inputs.verification.candidate)
     revisions = {pin.repository: pin.revision for pin in inputs.pins}
+    measured_languages = list_measured_languages(inputs.verification)
     fills = {
         "title": inputs.description.title,
-        "variant_table": render_variant_table(inputs, summaries),
         "variant_sections": "\n\n".join(
-            render_variant_section(summary, inputs) for summary in summaries
+            render_variant_section(summary, shared_files, inputs) for summary in summaries
         ),
-        "shared_files": ", ".join(
-            f"`{name}`" for name in list_shared_files(inputs.verification.candidate)
+        "measured_languages": join_words(
+            [name_language(language) for language in measured_languages]
         ),
-        "measured_languages": " and ".join(list_measured_languages(inputs.verification)),
+        "measured_utterances": describe_measured_utterances(
+            inputs.verification, measured_languages
+        ),
         "sources": render_sources(inputs.pins),
         "measured_with": describe_measuring_libraries(inputs.measuring_libraries),
     }
@@ -130,17 +129,27 @@ def format_difference(difference_points: float) -> str:
     return "+0.00" if text == "-0.00" else text
 
 
+def format_word_error_rate(word_error_rate_percent: float) -> str:
+    return f"{word_error_rate_percent:.2f} %"
+
+
 def join_words(words: Sequence[str]) -> str:
     if len(words) < 2:
         return "".join(words)
     return f"{', '.join(words[:-1])} and {words[-1]}"
 
 
-def name_variant(variant: str, inputs: CardInputs) -> str:
-    names = {description.variant: description.name for description in inputs.description.variants}
-    if variant not in names:
+def name_language(language: str) -> str:
+    if language not in LANGUAGE_NAMES:
+        raise CardError(f"the card has no name for the language {language}, which a run measured")
+    return LANGUAGE_NAMES[language]
+
+
+def describe_variant(variant: str, inputs: CardInputs) -> VariantDescription:
+    descriptions = {description.variant: description for description in inputs.description.variants}
+    if variant not in descriptions:
         raise CardError(f"the description gives no name to the variant {variant}")
-    return names[variant]
+    return descriptions[variant]
 
 
 def title_reference_run(run: str, inputs: CardInputs) -> str:
@@ -155,85 +164,80 @@ def title_reference_run(run: str, inputs: CardInputs) -> str:
     return titles[run]
 
 
-def list_rated_languages(summaries: Sequence[VariantSummary]) -> list[str]:
-    languages: list[str] = []
-    for summary in summaries:
-        languages.extend(rate.language for rate in summary.rates if rate.language not in languages)
-    return languages
-
-
-def render_variant_table(inputs: CardInputs, summaries: Sequence[VariantSummary]) -> str:
-    languages = list_rated_languages(summaries)
-    rows = []
-    for summary in summaries:
-        rates = {rate.language: rate.word_error_rate_percent for rate in summary.rates}
-        rows.append(
-            (
-                name_variant(summary.variant, inputs),
-                ", ".join(name_device(device) for device in summary.devices),
-                format_size(summary.size_bytes),
-                *(
-                    f"{rates[language]:.2f}%" if language in rates else "not measured"
-                    for language in languages
-                ),
-            )
+def render_variant_section(
+    summary: VariantSummary, shared_files: Sequence[str], inputs: CardInputs
+) -> str:
+    description = describe_variant(summary.variant, inputs)
+    heading = f"### {description.name}" + (
+        f" ({description.abbreviation})" if description.abbreviation is not None else ""
+    )
+    devices = ", ".join(name_device(device) for device in summary.devices)
+    facts = (
+        f"- **Runs on:** {devices}"
+        + (f"; {description.note}" if description.note is not None else "")
+        + f"\n- **Size:** {format_size(summary.size_bytes)}"
+    )
+    files = "\n".join(
+        [
+            *(f"- `{name}`" for name in summary.own_files),
+            *(f"- `{name}`, shared by every variant" for name in shared_files),
+        ]
+    )
+    return "\n\n".join(
+        (
+            heading,
+            description.role_line,
+            facts,
+            render_rates(summary, inputs),
+            "Files:",
+            files,
         )
-    return render_table(("Variant", "Tested on", "Size", *languages), rows)
+    )
 
 
-def render_variant_section(summary: VariantSummary, inputs: CardInputs) -> str:
-    conversions = {conversion.variant: conversion for conversion in inputs.conversions}
-    notes = {description.variant: description.note for description in inputs.description.variants}
-    paragraphs = [f"Files: {', '.join(f'`{name}`' for name in summary.own_files)}."]
-    note = notes.get(summary.variant)
-    if note is not None:
-        paragraphs.append(note)
-    paragraphs.append(describe_comparisons(summary.comparisons, inputs))
-    paragraphs.append(f"Conversion: {describe_conversion(conversions.get(summary.variant))}.")
-    return f"### {name_variant(summary.variant, inputs)}\n\n" + "\n\n".join(paragraphs)
-
-
-def describe_comparisons(comparisons: Sequence[VariantComparison], inputs: CardInputs) -> str:
-    if not comparisons:
-        return "Compared with no other variant and no reference run."
-    clauses = "; ".join(describe_comparison(comparison, inputs) for comparison in comparisons)
-    return clauses[0].upper() + clauses[1:] + "."
-
-
-def describe_comparison(comparison: VariantComparison, inputs: CardInputs) -> str:
-    device = name_device(comparison.other_device)
-    if comparison.other_variant == REFERENCE_VARIANT:
-        against = f"against {title_reference_run(comparison.other_run, inputs)}, on the {device}"
-    else:
-        against = f"against {name_variant(comparison.other_variant, inputs)} on the {device}"
-    verdict = "reported only" if comparison.is_reported_only else "accepted"
-    return f"{against}: {describe_differences(comparison.differences)}, {verdict}"
-
-
-def describe_differences(differences: Sequence[LanguageDifference]) -> str:
-    words = [
-        f"{format_difference(difference.difference_points)}"
-        + (" points" if index == 0 else "")
-        + f" in {difference.language}"
-        for index, difference in enumerate(differences)
+def render_rates(summary: VariantSummary, inputs: CardInputs) -> str:
+    differences_by_comparison = [
+        {difference.language: difference.difference_points for difference in comparison.differences}
+        for comparison in summary.comparisons
     ]
-    return join_words(words)
-
-
-def describe_conversion(variant_conversion: VariantConversion | None) -> str:
-    if variant_conversion is None:
-        return "none, the exported graph"
-    conversion = variant_conversion.conversion
-    if isinstance(conversion, FloatConversion):
-        kept = join_words(
-            list_kept_float32_operators(conversion.kind, conversion.added_float32_operators)
+    rows = [
+        (
+            f"{name_language(rate.language)} ({rate.language})",
+            format_word_error_rate(rate.word_error_rate_percent),
+            *(
+                f"{format_difference(differences_by_language[rate.language])} points"
+                if rate.language in differences_by_language
+                else "not measured"
+                for differences_by_language in differences_by_comparison
+            ),
         )
-        return f"{conversion.kind.value}" + (f", with {kept} kept in float32" if kept else "")
-    symmetry = "symmetric" if conversion.is_symmetric else "asymmetric"
-    return (
-        f"8-bit blocks of {conversion.block_size} {symmetry} weights, at the accuracy "
-        f"level {conversion.accuracy_level}, {conversion.quantized_product_count} products "
-        "quantized"
+        for rate in summary.rates
+    ]
+    header = (
+        "Language",
+        "WER",
+        *(head_comparison(comparison, inputs) for comparison in summary.comparisons),
+    )
+    return render_table(header, rows)
+
+
+def head_comparison(comparison: VariantComparison, inputs: CardInputs) -> str:
+    if comparison.other_variant == REFERENCE_VARIANT:
+        other = title_reference_run(comparison.other_run, inputs)
+    else:
+        other = describe_variant(comparison.other_variant, inputs).name
+    return f"Against {other}, {name_device(comparison.other_device)}"
+
+
+def describe_measured_utterances(verification: Verification, languages: Sequence[str]) -> str:
+    utterance_counts: dict[str, int] = {}
+    for measure in verification.runs:
+        utterance_counts.setdefault(measure.language, measure.utterance_count)
+    return ", ".join(
+        f"{utterance_counts[language]}"
+        + (" utterances" if index == 0 else "")
+        + f" in {name_language(language)}"
+        for index, language in enumerate(languages)
     )
 
 

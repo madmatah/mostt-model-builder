@@ -112,7 +112,6 @@ def render_the_card() -> str:
             pins=recipe.pins,
             verification=build_verification(recipe),
             runs=recipe.runs,
-            conversions=recipe.conversions,
             measuring_libraries=select_measuring_libraries(
                 MODEL_DESCRIPTION.measuring_library_names,
                 read_manifest_requirements(),

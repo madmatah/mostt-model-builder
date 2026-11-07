@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 
 
@@ -6,7 +6,9 @@ from pathlib import PurePosixPath
 class VariantDescription:
     variant: str
     name: str
-    note: str | None = None
+    role_line: str
+    note: str | None = field(default=None, kw_only=True)
+    abbreviation: str | None = field(default=None, kw_only=True)
 
 
 @dataclass(frozen=True, slots=True)

@@ -1,7 +1,6 @@
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
-from mostt_model_builder.domain.acceptance.acceptance import ReportedOnly
 from mostt_model_builder.domain.acceptance.verification import (
     CandidateDigest,
     ComparisonMeasure,
@@ -37,7 +36,6 @@ class VariantComparison:
     other_run: str
     other_variant: str
     other_device: Device
-    is_reported_only: bool
     differences: tuple[LanguageDifference, ...]
 
 
@@ -144,7 +142,6 @@ def build_variant_comparison(
         other_run=other_run.name,
         other_variant=other_run.variant,
         other_device=other_run.device,
-        is_reported_only=all(isinstance(measure.rule, ReportedOnly) for measure in measures),
         differences=tuple(
             LanguageDifference(measure.language, sign * measure.paired.difference_points)
             for measure in measures

@@ -15,15 +15,7 @@ Moondream's Parakeet Ultra, a post-training of NVIDIA's Parakeet TDT 0.6B v3, ex
 
 Word error rates on the test sets of FLEURS, without the unknown tokens, which the vocabulary cannot write.
 
-$variant_table
-
-Each variant was transcribed on every device it lists, and each of those runs passed its comparisons. A variant's rates are those of its run on the CPU, or on the GPU when it was not run on the CPU: the runtime and the hardware, not the files, make the devices differ. A size counts every file the variant loads, the files of every variant included.
-
 $variant_sections
-
-### Files of every variant
-
-$shared_files.
 
 ## Languages
 
@@ -41,7 +33,7 @@ Moondream's voice activity head, which its own runtime uses to cut long recordin
 2. The export writes the ONNX files, then checks the exported encoder against NeMo's on the first 20 utterances of FLEURS fr.
 3. NeMo transcribes FLEURS fr and en in float32 on the CPU: this run of the original model in NeMo is the reference of the comparisons.
 4. Transformers reads the weights of Parakeet Ultra as Moondream publishes them, and its encoder and joint are checked against NeMo's, so that the mapping of the weights is checked from a second side.
-5. onnx-asr transcribes FLEURS fr and en with every variant, on each device that the table of the variants gives it.
+5. onnx-asr transcribes FLEURS fr and en with every variant, on each device that its section under Variants gives.
 
 Every file was copied out of the container that wrote it, and refused if it began as code, a pickle or an archive, or broke the structure of its format. Every ONNX graph was inspected against the build's rules, on its nodes, its tensors and its quantized products. The verification then measured every run on FLEURS, and held every comparison of two runs and every parity of an export with its reference framework to its rule.
 

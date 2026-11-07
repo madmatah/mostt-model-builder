@@ -48,7 +48,7 @@ MODEL = ModelDescription(
     title="Weights in ONNX",
     template_path=PurePosixPath("model-card.md"),
     measuring_library_names=("onnx-asr",),
-    variants=(VariantDescription("float32", "float32"),),
+    variants=(VariantDescription("float32", "float32", "The exported graph."),),
 )
 
 

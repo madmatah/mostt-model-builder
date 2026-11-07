@@ -14,7 +14,6 @@ from mostt_model_builder.application.verify_build import (
 from mostt_model_builder.domain.containers.container_files import FileKind
 from mostt_model_builder.domain.containers.work_directory import locate_model_card
 from mostt_model_builder.domain.contract.model_description import ModelDescription
-from mostt_model_builder.domain.contract.recipe_contract import VariantConversion
 from mostt_model_builder.domain.lock.declared_requirements import DeclaredRequirement
 from mostt_model_builder.domain.publication.measuring_libraries import select_measuring_libraries
 from mostt_model_builder.domain.publication.model_card import (
@@ -43,7 +42,6 @@ class CardRequest:
     verification: VerificationRequest
     model: ModelDescription | None
     template: str | None
-    conversions: Sequence[VariantConversion]
     requirements: Sequence[DeclaredRequirement]
 
 
@@ -82,7 +80,6 @@ def prepare_publication(
             pins=tuple(request.verification.pins),
             verification=verified.verification,
             runs=tuple(request.verification.runs),
-            conversions=tuple(request.conversions),
             measuring_libraries=select_measuring_libraries(
                 request.model.measuring_library_names,
                 request.requirements,
