@@ -88,9 +88,9 @@ class TestTheBuildVerification:
                     for measure in verification.verified.verification.runs
                 ] == [
                     ("float32-cpu", "fr_fr", 2, 0),
-                    ("float32-cpu", "en_us", 1, 2),
+                    ("float32-cpu", "en_us", 2, 3),
                     ("float32-gpu", "fr_fr", 2, 0),
-                    ("float32-gpu", "en_us", 1, 2),
+                    ("float32-gpu", "en_us", 2, 3),
                 ]
 
             def test_should_compare_the_runs_by_their_token_ids(
@@ -99,7 +99,7 @@ class TestTheBuildVerification:
                 assert [
                     (measure.language, measure.identical_count, measure.compared_count)
                     for measure in verification.verified.verification.comparisons
-                ] == [("fr_fr", 1, 2), ("en_us", 1, 1)]
+                ] == [("fr_fr", 1, 2), ("en_us", 2, 2)]
 
             def test_should_hold_each_parity_of_the_recipe(
                 self, verification: CompletedVerification
@@ -169,10 +169,14 @@ class TestTheBuildVerification:
                 ) == [
                     "export/encoder-parity.json",
                     "inspect/inspection.json",
-                    "transcribe-float32-cpu-0/lines.jsonl",
-                    "transcribe-float32-cpu-1/lines.jsonl",
-                    "transcribe-float32-gpu-0/lines.jsonl",
-                    "transcribe-float32-gpu-0/placement.json",
+                    "transcribe-float32-cpu-en_us-0/lines.jsonl",
+                    "transcribe-float32-cpu-en_us-1/lines.jsonl",
+                    "transcribe-float32-cpu-fr_fr-0/lines.jsonl",
+                    "transcribe-float32-cpu-fr_fr-1/lines.jsonl",
+                    "transcribe-float32-gpu-en_us-0/lines.jsonl",
+                    "transcribe-float32-gpu-en_us-0/placement.json",
+                    "transcribe-float32-gpu-fr_fr-0/lines.jsonl",
+                    "transcribe-float32-gpu-fr_fr-0/placement.json",
                 ]
 
         class TestWhenTheInspectionRefusedAGraphOfTheCandidate:
@@ -305,7 +309,7 @@ class TestTheBuildVerification:
                 shard_lines = {
                     name: lines
                     for name, lines in SHARD_LINES.items()
-                    if name != "transcribe-float32-cpu-1"
+                    if name != "transcribe-float32-cpu-fr_fr-1"
                 }
                 return partial(verify_build, build_request(), build_files(shard_lines=shard_lines))
 
@@ -314,7 +318,7 @@ class TestTheBuildVerification:
             ) -> None:
                 with pytest.raises(
                     ContainerFileError,
-                    match=re.escape("transcribe-float32-cpu-1 is missing"),
+                    match=re.escape("transcribe-float32-cpu-fr_fr-1 is missing"),
                 ):
                     verify_act()
 

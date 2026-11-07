@@ -591,8 +591,8 @@ def run_plain_step(
 
 
 # The decoding times are read against the trial build's, which ran the shards of a run at the
-# same time, each on CPUs of its own.
-def run_sharded_run(
+# same time, each on CPUs of its own; the languages of a run run one after the other.
+def run_sharded_rows(
     recipe: JudgedRecipe,
     run: JudgedRun,
     derived_rows: Sequence[DerivedRow],
@@ -710,10 +710,13 @@ def run_named_step(
         return
     candidate_texts = read_candidate_texts(build_candidate_request(recipe, context), files)
     for run in runs:
-        derived_rows = [
-            derived_row for derived_row in recipe.derived_rows if derived_row.run == run.name
-        ]
-        run_sharded_run(recipe, run, derived_rows, candidate_texts, context, files)
+        for language in run.languages:
+            derived_rows = [
+                derived_row
+                for derived_row in recipe.derived_rows
+                if derived_row.run == run.name and derived_row.language == language
+            ]
+            run_sharded_rows(recipe, run, derived_rows, candidate_texts, context, files)
 
 
 def build(recipe: JudgedRecipe, work_directory: WorkDirectory, files: WorkFiles) -> None:

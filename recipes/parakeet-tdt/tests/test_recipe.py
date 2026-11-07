@@ -161,22 +161,26 @@ RUNS = [
         read_onnx_asr_lines,
     ),
 ]
+TRANSCRIPTION_SHARD_COUNTS = {"cpu": 4, "gpu": 1}
 DERIVED_ROW_NAMES = [
-    "reference",
-    "transformers-reference",
-    "transcribe-float32-cpu-0",
-    "transcribe-float32-cpu-1",
-    "transcribe-float32-cpu-2",
-    "transcribe-float32-cpu-3",
-    "transcribe-float32-gpu-0",
-    "transcribe-float16-gpu-0",
-    "transcribe-bfloat16-gpu-0",
-    "transcribe-eight-bit-blocks-gpu-0",
-    "transcribe-eight-bit-blocks-cpu-0",
-    "transcribe-eight-bit-blocks-cpu-1",
-    "transcribe-eight-bit-blocks-cpu-2",
-    "transcribe-eight-bit-blocks-cpu-3",
+    "reference-nemo-fr_fr-0",
+    "reference-nemo-en_us-0",
+    "transformers-reference-transformers-fr_fr-0",
+    *(
+        f"transcribe-{run}-{language}-{shard}"
+        for run, device in (
+            ("float32-cpu", "cpu"),
+            ("float32-gpu", "gpu"),
+            ("float16-gpu", "gpu"),
+            ("bfloat16-gpu", "gpu"),
+            ("eight-bit-blocks-gpu", "gpu"),
+            ("eight-bit-blocks-cpu", "cpu"),
+        )
+        for language in BOTH_LANGUAGES
+        for shard in range(TRANSCRIPTION_SHARD_COUNTS[device])
+    ),
 ]
+TRANSFORMERS_ROW_NAME = "transformers-reference-transformers-fr_fr-0"
 ALL_VARIANTS = ("float32", "float16", "bfloat16", "eight-bit-blocks")
 EXPORTED_DECODER = StepOutputOrigin("export", "decoder_joint-model.onnx")
 PUBLISHED_LAYOUT = [
@@ -433,7 +437,7 @@ class TestTheParakeetTdtRecipe:
         def judged_recipe(cls) -> JudgedRecipe:
             return judge_the_recipe()
 
-        def test_should_derive_one_reference_row_and_a_row_per_shard_of_the_transcriptions(
+        def test_should_derive_a_row_per_language_and_shard_of_each_run(
             self, judged_recipe: JudgedRecipe
         ) -> None:
             assert [
@@ -454,6 +458,15 @@ class TestTheParakeetTdtRecipe:
                 for request in transcriptions
                 if read_quantization(request.files) != find_quantization(request.variant)
             ] == []
+
+        def test_should_read_the_parities_of_transformers_from_the_one_row_of_its_run(
+            self, judged_recipe: JudgedRecipe
+        ) -> None:
+            assert [parity.step for parity in judged_recipe.parities] == [
+                "export",
+                TRANSFORMERS_ROW_NAME,
+                TRANSFORMERS_ROW_NAME,
+            ]
 
         def test_should_carry_the_description_of_its_model(
             self, judged_recipe: JudgedRecipe
@@ -495,7 +508,7 @@ class TestTheParakeetTdtRecipe:
             assert {
                 (source.repository, source.path)
                 for row in judged_recipe.rows
-                if row.name == "transformers-reference"
+                if row.name == TRANSFORMERS_ROW_NAME
                 for source in row.sources
             } == TRANSFORMERS_ROW_SOURCES
 
@@ -505,6 +518,6 @@ class TestTheParakeetTdtRecipe:
             assert {
                 (earlier_output.step, earlier_output.output.name)
                 for row in judged_recipe.rows
-                if row.name == "transformers-reference"
+                if row.name == TRANSFORMERS_ROW_NAME
                 for earlier_output in row.earlier_outputs
             } == TRANSFORMERS_ROW_INPUTS
