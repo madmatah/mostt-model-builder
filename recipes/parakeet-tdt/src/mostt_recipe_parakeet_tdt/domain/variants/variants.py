@@ -35,8 +35,9 @@ class Variant:
     conversion: Conversion | None = None
 
 
-# float16 and bfloat16 serve the GPU, whose kernels compute in them; on the CPU, ONNX Runtime would
-# convert them back to float32 around most nodes. The 8-bit blocks serve both devices.
+# float16 and bfloat16 serve the GPU, whose kernels compute in them. On the CPU, ONNX Runtime
+# converts float16 back to float32 around most nodes, and ONNX Runtime 1.31 does not load bfloat16,
+# for want of a kernel for its MatMul.
 VARIANTS = (
     Variant(FLOAT32_VARIANT, (Device.CPU, Device.GPU)),
     Variant(

@@ -27,7 +27,7 @@ The rates and comparisons are measured as [How the rates were measured](#how-the
 
 ## How the rates were measured
 
-The word error rate (WER) counts the words a transcript gets wrong (substituted, missing or added) against FLEURS's reference, over the number of words in the reference. Each variant transcribed the test sets of FLEURS ($measured_utterances) greedily, one utterance at a time, on each device it runs on, $measured_with. The rate shown is the one measured on the CPU, or on the GPU for the variants that only run there: the runtime and the hardware, not the files, make the two differ slightly.
+The word error rate (WER) counts the words a transcript gets wrong (substituted, missing or added) against FLEURS's reference, over the number of words in the reference. Each variant transcribed the test sets of FLEURS ($measured_utterances) greedily, one utterance at a time, on each device listed in its Runs on line, $measured_with. The rate shown is the one measured on the CPU, or on the GPU for a variant not measured on the CPU: the runtime and the hardware, not the files, make the two differ slightly.
 
 Before counting errors, both the transcript and FLEURS's reference are normalized the same way: Unicode NFKC, lowercase, punctuation removed, typographic apostrophes read as plain ones.
 

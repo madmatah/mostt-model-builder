@@ -48,7 +48,7 @@ Files:
 
 The encoder converted to float16, with the computation of its lengths kept in float32, for the GPU.
 
-- **Runs on:** GPU; on the CPU, ONNX Runtime computes most of it in float32 again
+- **Runs on:** GPU
 - **Size:** 0.00 GB
 
 | Language | WER | Against float32, GPU |
@@ -70,7 +70,7 @@ Files:
 
 The encoder converted to bfloat16, with Pad, Tile, Floor and the computation of its lengths kept in float32, for the GPU.
 
-- **Runs on:** GPU; on the CPU, ONNX Runtime computes most of it in float32 again
+- **Runs on:** GPU
 - **Size:** 0.00 GB
 
 | Language | WER | Against float32, GPU |
@@ -114,7 +114,7 @@ The rates and comparisons are measured as [How the rates were measured](#how-the
 
 ## How the rates were measured
 
-The word error rate (WER) counts the words a transcript gets wrong (substituted, missing or added) against FLEURS's reference, over the number of words in the reference. Each variant transcribed the test sets of FLEURS (350 utterances in English, 350 in Latin American Spanish, 350 in French, 350 in Brazilian Portuguese, 350 in German) greedily, one utterance at a time, on each device it runs on, with onnx-asr 0.12.0 and onnxruntime 1.31.0 on the CPU, and with onnx-asr 0.12.0 and onnxruntime-gpu 1.31.0 on the GPU. The rate shown is the one measured on the CPU, or on the GPU for the variants that only run there: the runtime and the hardware, not the files, make the two differ slightly.
+The word error rate (WER) counts the words a transcript gets wrong (substituted, missing or added) against FLEURS's reference, over the number of words in the reference. Each variant transcribed the test sets of FLEURS (350 utterances in English, 350 in Latin American Spanish, 350 in French, 350 in Brazilian Portuguese, 350 in German) greedily, one utterance at a time, on each device listed in its Runs on line, with onnx-asr 0.12.0 and onnxruntime 1.31.0 on the CPU, and with onnx-asr 0.12.0 and onnxruntime-gpu 1.31.0 on the GPU. The rate shown is the one measured on the CPU, or on the GPU for a variant not measured on the CPU: the runtime and the hardware, not the files, make the two differ slightly.
 
 Before counting errors, both the transcript and FLEURS's reference are normalized the same way: Unicode NFKC, lowercase, punctuation removed, typographic apostrophes read as plain ones.
 
