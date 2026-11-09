@@ -17,7 +17,6 @@ from mostt_recipe_parakeet_tdt.domain.variants.variants import (
 
 ULTRA_REPOSITORY = "moondream/parakeet-ultra"
 NEMO_REPOSITORY = "nvidia/parakeet-tdt-0.6b-v3"
-GPU_NOTE = "on the CPU, ONNX Runtime computes most of it in float32 again"
 
 MODEL_DESCRIPTION = ModelDescription(
     title="Parakeet Ultra in ONNX",
@@ -36,7 +35,6 @@ MODEL_DESCRIPTION = ModelDescription(
             "float16",
             "The encoder converted to float16, with the computation of its lengths kept in "
             "float32, for the GPU.",
-            note=GPU_NOTE,
             abbreviation="FP16",
         ),
         VariantDescription(
@@ -44,7 +42,6 @@ MODEL_DESCRIPTION = ModelDescription(
             "bfloat16",
             "The encoder converted to bfloat16, with Pad, Tile, Floor and the computation of its "
             "lengths kept in float32, for the GPU.",
-            note=GPU_NOTE,
             abbreviation="BF16",
         ),
         # onnx-asr names the 8-bit blocks int8, in the suffix of their files and in its quantization
