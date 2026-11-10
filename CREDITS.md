@@ -46,7 +46,7 @@ mostt-model-builder reuses the work below. Each entry says what is reused, where
 
 ## Agent guidance
 
-- **mattpocock/skills:** the content of a plan in `.claude/agents/planner.md` > The plan, which records decisions rather than code, adapted from `skills/engineering/to-spec/SKILL.md`, and the interview of `.claude/skills/develop/SKILL.md` > Interview the user, adapted from `skills/productivity/grilling/SKILL.md`, of mattpocock/skills (https://github.com/mattpocock/skills), read at commit `4ae2317`, under the MIT License:
+- **mattpocock/skills:** parts of the agent guidance in `.claude/` draw on https://github.com/mattpocock/skills, by Matt Pocock, under the MIT License:
 
   ```
   MIT License

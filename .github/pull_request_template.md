@@ -28,7 +28,7 @@
 
 ### History
 
-- [ ] Each commit is atomic, and its message follows `CLAUDE.md` > Workflow: the header of "Commits", a body that says why unless the change speaks for itself, and a footer as "A commit footer holds only what tools read" says; no `fixup!`, `amend!` or `squash!` commit is left.
+- [ ] Each commit is atomic, and its message follows `.claude/skills/writing-commits/SKILL.md` > The rules of a commit message: a header as "A commit header follows the commit style" says, a body that says why unless the change speaks for itself, and a footer as "A commit footer holds only what tools read" says; no `fixup!`, `amend!` or `squash!` commit is left.
 
 ### Documentation
 

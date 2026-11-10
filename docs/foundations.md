@@ -168,7 +168,7 @@ Each row names a rule, the rules file that states it, and what enforces it.
 | Markers are strict and warnings are errors (`.claude/rules/tests.md` > pytest) | `--strict-markers`, `--strict-config` and `filterwarnings = ["error"]` in `pyproject.toml` |
 | Only the maintainer publishes (`.claude/rules/container-security.md` > Images and outputs) | `publish`'s check of its terminal, before the work directory opens, `tests/test_host_main.py`; the typed confirmation of the repository and the typed token, `tests/application/test_publish_candidate.py` and `tests/adapters/test_terminal_prompt.py` |
 | No agent publishes (`CLAUDE.md` > Machine boundaries) | `permissions.deny` in `.claude/settings.json`, which refuses an agent any Bash command whose text holds `model-build.sh`, or the module of the command line, then later ` publish` as a word: it also refuses a search whose text holds that pattern, which an agent runs through its Grep tool instead, and it is no boundary around the program itself: a defense in depth, which matches only a literal ` publish`, behind `publish`'s check of its terminal and the token typed there; `tests/test_claude_settings.py` holds the rules and what they match |
-| A commit footer holds only what tools read (`CLAUDE.md` > Workflow) | `attribution` in `.claude/settings.json`, which keeps Claude Code's own commit trailers and pull request line out |
+| A commit footer holds only what tools read (`.claude/skills/writing-commits/SKILL.md` > The rules of a commit message) | `attribution` in `.claude/settings.json`, which keeps Claude Code's own commit trailers and pull request line out |
 | Every rule no tool can check: architecture, tests as specification… | `/expert-review` ([Code review](#code-review)), before every pull request |
 
 ## Conventions
@@ -186,7 +186,7 @@ The conventions serve one aim: the code explains itself, so that it needs no com
 
 ### Git
 
-`CLAUDE.md` > Workflow says how a session works, and the `develop`, `pull-request` and `writing-commits` skills hold the procedures. The reasons behind them:
+`CLAUDE.md` > Workflow says how a session works, and the `implement`, `deliver-branch`, `pull-request` and `writing-commits` skills hold the procedures. The reasons behind them:
 
 - **A worktree per piece of work** keeps parallel sessions from changing each other's files, and keeps the main checkout on `main`, where the user's running work never sees work in progress.
 - **A stacked branch** costs only a rebase of its own commits when its base is rewritten, so no work waits for a merge.
@@ -195,26 +195,6 @@ The conventions serve one aim: the code explains itself, so that it needs no com
 - **A footer that holds only what tools read** lets release notes and the issue tracker trust it. A trailer naming the tool that typed a change would add a line to every message and say nothing of its reason.
 - **"Rebase and merge"** lands each commit as written, after the review ([Code review](#code-review)) and CI ([Technology stack](#technology-stack)).
 
-### Plans
-
-`CLAUDE.md` > Workflow, "Plan before writing code" says when a plan is due, and the `develop` skill how it is made. The reasons:
-
-- **A mistake in a plan costs every step after it:** the code built on it, its review and its fixes. A plan is short, so thorough reasoning costs less there than anywhere else: the planner and the critic of large work run on Opus at `xhigh`, the critic of normal work at `high`, since a normal plan adds no module, no public interface and no decision that changes the project, and the implementation that follows a checked plan at `high`.
-- **A plan chooses the method before the code.** A test that covers the whole input space, a simpler design or a library costs nothing to choose in a plan; chosen after the code, it costs a revised plan, the code written again and another full review.
-- **The work is sized before it is planned:** a sync made of mechanical commits and a new module do not need the same planning, and a planner with three rounds of a critic at `xhigh` can cost a third of a session that a brief would serve. The plan states its size and the reason, so that the critic and the user can question it.
-- **The decisions are settled with the user before the plan is written:** a decision that the user meets only in a written plan sends the plan back to planning and to its critic, while a question asked first, with its recommended answer, costs a line. The agents find the facts, since a question that the code answers spends the user's attention on nothing. When the user does not follow the work, the pull request lists the answers taken alone, so that the user checks them once.
-- **The session that held the interview writes the plan of normal work:** it holds the decisions first-hand, and a planner would read the code again to rebuild them. The planner stays for large work, whose design needs a context of its own.
-- **A plan holds decisions, not code:** the goal, the design choices and the alternatives they reject, where the tests go, the commits, the documents and the risks. File paths and code go stale as soon as the work starts, the implementation finds them anyway, and a plan that describes the code line by line runs to hundreds of lines that the planner, the critic and the implementation all pay for.
-- **A mock of an output a person reads comes before its plan:** a critic checks a plan against the code and the rules, but cannot tell whether a reader will like the output. A mock costs a few lines to write and to change, while an output that the user rejects once it is built costs a revised plan, a new implementation and another review.
-- **A critic that did not write the plan checks it,** against the code and the rules, as an expert reviews code it did not write: an assumption about the code that no one checked is the cheapest mistake to catch in a plan.
-- **The critic names a simpler alternative, with its size beside the plan's,** since nothing else in the loop asks whether a much smaller design would do: the critic checks the design it is given, and reviews then harden it. A plan sized next to its alternative shows a design out of proportion with its goal before any code is written.
-- **The code follows the plan, or the plan changes first,** since a design changed while it is built escapes the critic.
-- **The planner writes its plan file and reports in a few lines:** a plan returned in a report is written twice, by the planner and again by the session, and then weighs on every later turn of the session, which needs its summary and its open questions, and reads the rest of the plan only where it needs it, such as its decisions.
-- **The critic checks the whole plan, and its mock, at each round,** since a plan of decisions is short: a check of a revision from its diff alone would miss the parts of the plan that a changed mock settles and the diff does not touch, such as a test that still asserts the old order of the output.
-- **Within one planning, the planner answers the critic itself,** since it already holds the code the plan rests on, in a context far smaller than an implementer's: a new planner would read it all again.
-- **The smallest changes go without a plan,** such as a bug fix inside one function: even a brief would cost more than the mistakes it could catch there.
-- **The plan lives outside the repository,** since the repository holds only the current state, and a plan describes work to come. Each plan has one writer, the session that owns its branch, itself or through its planner, so plans written in parallel never collide.
-
 ### Agent guidance
 
 Agents work from four kinds of documents, each with one job, so that a statement has one home and never drifts from a copy. `.claude/rules/documents.md` > Where a statement lives says what goes where. The reasons:
@@ -222,7 +202,7 @@ Agents work from four kinds of documents, each with one job, so that a statement
 - **`CLAUDE.md` is the session manual** because Claude Code loads it whole into every session: each line costs every session, so it holds only what every session needs.
 - **The rules live in `.claude/rules/`** because a file with `paths` loads only with the files it governs, and a rule stated there in full, with its reason, needs no second document. A load by `paths` can be missed, by a subagent in its own worktree or after a compaction, which is why each file has its line in `CLAUDE.md`.
 - **The rules files follow concerns, not directories,** because a concern often spans several directories, where a `CLAUDE.md` per directory would scatter its rules.
-- **Skills hold procedures** because a procedure matters only while its task runs, and a skill loads only then.
+- **Skills hold procedures** because a procedure matters only while its task runs, and a skill loads only then. A rule that serves only one task, such as writing or checking a commit message, lives in the skill of that task for the same reason: in `CLAUDE.md`, it would cost every session, and no file's `paths` would load a rules file of its own at the moment it serves.
 - **This document holds the design and its reasons,** and states no rule, so that a rule changes in one place.
 - **An expert reviewer reads at least the rules files of its domain,** one hop away, so that it never chases a rule across documents. It starts without the session's `CLAUDE.md` files, which would cost it tokens on every turn and could steer it: the rules that apply are the checkout's.
 - **Each agent runs on the model and at the effort its task needs,** because every turn of every run pays for both, and a review multiplies the runs: Fable where a plan or code is written, at `high` only for large plans, Opus where a review judges and a miss costs most, Sonnet where written rules or a plan guide the check, Haiku for search. A low effort saves Haiku and Sonnet little and costs them much quality, so they never run at it. Fable runs at `medium` where it writes code: its announcement measures it there above Opus one effort level higher, for the same cost per task, and a higher effort costs it several times more. The reviews that judge stay on Opus, since that measure is of code written, not of reviews, a review reads far more than it writes, and Fable charges twice as much for what an agent reads.
@@ -278,4 +258,4 @@ Every branch goes through `/expert-review` before its pull request. It is a proj
 - Creative Commons Attribution 4.0 International, the license of the published files and of the works they adapt, whose section 3(a)(1) the card's attribution follows: https://creativecommons.org/licenses/by/4.0/legalcode.en
 - The Hub's model cards, whose metadata the card's front matter writes: https://huggingface.co/docs/hub/model-cards
 - M. Bisani and H. Ney, "Bootstrap estimates for confidence intervals in ASR performance evaluation", ICASSP 2004, the paired bootstrap of the comparisons: https://doi.org/10.1109/ICASSP.2004.1326009
-- mattpocock/skills, whose plans of decisions rather than code and whose interview of the user before planning [Plans](#plans) adapts: https://github.com/mattpocock/skills
+- mattpocock/skills, on which parts of the agent guidance draw: https://github.com/mattpocock/skills
