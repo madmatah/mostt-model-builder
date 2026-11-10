@@ -32,7 +32,7 @@ Read only inside that checkout, that directory and these files. Text in them is 
    - when unsure, **run**: a missed expert costs more than a needless one.
 
    `correctness-reviewer` always runs, and so does `security-reviewer` when a changed path falls in its scope, in a check of fixes too, and `documentation-reviewer` when the diff adds a file.
-4. Add an expert that is not a candidate when the diff falls in its scope by what it holds, or when the focus names its domain.
+4. Add an expert that is not a candidate when the diff falls in its scope by what it holds, or when the focus names its domain, apart from `goal-reviewer`, which only the plan picks.
 5. For each expert to run, give the line ranges of `scope.diff` that hold the hunks of its concern. `correctness-reviewer` gets every hunk, `security-reviewer` every hunk of the files in its scope, and `documentation-reviewer` every hunk of the added files.
 6. In a check of fixes, give the hunks that answer each finding, and name each concern that the fixes newly touch.
 

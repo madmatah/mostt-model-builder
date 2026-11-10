@@ -66,5 +66,5 @@ Each file of `.claude/rules/` holds the rules of one concern, in full. Claude Co
 - `implement`: writing the code of a brief on its branch, from its worktree to its commits and its report.
 - `deliver-branch`: from a branch whose code is written to a mergeable pull request.
 - `pull-request`: opening and updating a pull request, and reviewing someone else's.
-- `expert-review`: `/expert-review [<pr#>|<branch>|<range>] [--fixes <file>] [--post] [focus]`, the review of a diff before it reaches `main`.
-- `writing-commits`: the message of a commit, from its type and its scope to its body and its footer.
+- `expert-review`: `/expert-review [<pr#>|<branch>|<range>] [--plan <file>] [--fixes <file>] [--post] [focus]`, the review of a diff before it reaches `main`, against its plan when given one.
+- `writing-commits`: the rules of a commit message and how to apply them, from its header and its scope to its body and its footer.
