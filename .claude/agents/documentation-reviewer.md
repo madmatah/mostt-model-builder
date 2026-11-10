@@ -34,7 +34,7 @@ Read first: `.claude/rules/documents.md`, `.claude/rules/repository.md`, `.claud
   - two rules that contradict each other;
   - a rules file that sends its reader to another document for a rule;
   - `paths` that miss the files a rule is about, or a rules file without its line in `CLAUDE.md`;
-  - an expert whose "Read first" names a source of rules other than rules files and `CLAUDE.md` headings, or sends its reader more than one hop away;
+  - an expert whose "Read first" names a source of rules other than rules files and headings of `CLAUDE.md` or of the skill that holds the rules it checks, or sends its reader more than one hop away;
   - an expert check that enforces a written rule without citing it;
   - a skill or an agent whose instructions no longer match the repository;
   - a skill whose `description` lists its steps, is not in the third person, or does not say what the skill is for and when to use it;
@@ -44,7 +44,7 @@ Read first: `.claude/rules/documents.md`, `.claude/rules/repository.md`, `.claud
   - a cited file or heading that does not exist;
   - a heading renamed or removed while a reference to it remains.
 - **Modules listed** (`.claude/rules/configuration.md` > Modules, "The documents list every module"), when the diff adds, renames or removes a module, or a directory that stands for one, or changes its layer or its dependencies on other modules: a row of `docs/foundations.md` > Layers and modules that is missing, left behind for a module that is gone or a directory that no longer stands for one, or whose "Depends on" cell does not match the module's manifest, or its imports when it has none.
-- **Credits** (`.claude/rules/repository.md` > External work): reused external work (ported code, data, assets, a library shipped in a build) without its `CREDITS.md` entry in the same change, or an entry that does not say what is reused, where, from where and under which terms.
+- **Credits** (`.claude/rules/repository.md` > External work): reused external work (ported code, data, assets, a library shipped in a build) without its `CREDITS.md` entry in the same change, or an entry that lacks what External work asks of it.
 - **Repository content** (`.claude/rules/repository.md` > What belongs in the repository): project-management material (status, roadmap, decisions, handoffs), a statement of where that material lives or how it is organized, such as the path or the layout of a private repository, or a task marker, in any file, and a file committed by accident, such as build output, a log or a temporary capture.
 - **Pull request template** (`.claude/rules/documents.md` > Pull request template): a timing in its checklist.
 - **Language** (`CLAUDE.md` > Language): English with American spelling, in the documents.
