@@ -121,7 +121,7 @@ A finding about a secret is reported as `${CLAUDE_SKILL_DIR}/expert-contract.md`
 
 **With `--post`**, and only for a pull request target:
 
-1. Write the report to `<dir>/review.md` with the Write tool.
+1. Write the report to `<dir>/review.md` with the Write tool. In it, each finding of `goal-reviewer` says in its own words what the plan or the mock asks, in place of the line it quotes: the plan is project-management material, which a pull request does not publish (`.claude/rules/repository.md` > What belongs in the repository).
 2. Scan it with the patterns of [Gather and scope](#gather-and-scope). If anything matches, do not post, and say why.
 3. Otherwise, post it with `gh pr review <number> --comment --body-file <dir>/review.md`.
 
