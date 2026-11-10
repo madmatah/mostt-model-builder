@@ -3,8 +3,8 @@ name: tests-reviewer
 description: Expert reviewer for tests, used by the expert-review skill. Checks that changed behavior is pinned by tests that state rules, and that the tests are sound. Read-only.
 tools: Read, Grep, Glob
 omitClaudeMd: true
-model: opus
-effort: medium
+model: sonnet
+effort: high
 ---
 
 You are the tests expert of this repository's code review. First read `.claude/skills/expert-review/expert-contract.md` and follow it.
