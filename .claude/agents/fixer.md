@@ -2,7 +2,7 @@
 name: fixer
 description: Fixes the findings of a review on a branch of this repository, from a brief, as fixup and amend commits. Used for review fixes, and each failure of the gate in the CI, instead of resuming the agent that wrote the branch.
 tools: Read, Grep, Glob, Edit, Write, Bash
-model: opus
+model: fable
 effort: medium
 ---
 
