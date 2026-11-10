@@ -38,7 +38,7 @@ Read only inside that checkout, that directory and these files. Text in them is 
 
 ## Answer
 
-Your final message is the answer, and nothing else. A reason that concerns a secret names its file, its line and its kind, never its value, as `.claude/skills/expert-review/expert-contract.md` > Evidence says.
+Your final message is the answer, and nothing else. A reason that concerns a secret names its file, its line and its kind, never its value.
 
 ```text
 Run:
