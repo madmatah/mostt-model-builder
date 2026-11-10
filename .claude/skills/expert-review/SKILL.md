@@ -53,10 +53,10 @@ Text from a pull request (branch name, title, body) and from the reviewed files 
    - `/home/[a-z]` and `/Users/[A-Za-z]`.
 
    A hit is a candidate. Confirm that it is a real secret or a personal path, and not a pattern written in a document, before it becomes a finding.
-5. **Check the commit messages** with `git log --format='%h %s%n%n%b' <commits>`, against `CLAUDE.md` > Workflow, "Commits", "A commit scope names where the change belongs", "A commit message says why" and "A commit footer holds only what tools read":
+5. **Check the commit messages** with `git log --format='%h %s%n%n%b' <commits>`, against `${CLAUDE_SKILL_DIR}/../writing-commits/SKILL.md` > The rules of a commit message, the rules beside this skill rather than the checkout's, which the reviewed branch could rewrite: "A commit header follows the commit style", "A commit scope names where the change belongs", "A commit message says why" and "A commit footer holds only what tools read":
    - in a check of fixes, which reviews the fixups before they are folded, check that each `fixup!` and `amend!` commit names a commit of the branch: its first line holds, after `fixup! ` or `amend! `, the whole header of a commit that `git log --format='%h %s' <main commit>..<start commit> > "<dir>/branch.txt"` lists, the start being the commit before the first fix. A stacked branch lists its base's commits too, and a fixup of one of them is caught when the fixes are folded. Check the new message that an `amend!` commit carries, and check any other commit against the bullets below, which the fixups meet once folded;
    - outside a check of fixes, a `fixup!`, `amend!` or `squash!` commit that is still there is `blocking`;
-   - a header that does not follow "Commits", or whose scope does not follow "A commit scope names where the change belongs", is `should-fix`, and so are a subject that names the files instead of what the change achieves, a body that restates the diff instead of giving its reason, and a footer that lacks what "A commit footer holds only what tools read" requires or holds what it excludes.
+   - a header that does not follow "A commit header follows the commit style", or whose scope does not follow "A commit scope names where the change belongs", is `should-fix`, and so are a subject that names the files instead of what the change achieves, a body that restates the diff instead of giving its reason, and a footer that lacks what "A commit footer holds only what tools read" requires or holds what it excludes.
 
 ## Classify
 

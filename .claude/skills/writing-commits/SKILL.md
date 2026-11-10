@@ -5,15 +5,22 @@ description: Writes the commit messages of this repository, so that each one say
 
 # Writing commits
 
-`CLAUDE.md` > Workflow states the rules of a commit: "Commits", "A commit scope names where the change belongs", "A commit message says why" and "A commit footer holds only what tools read". This skill applies them to each commit that will be pushed, whether you write it at once or while you rewrite the branch before pushing. A work-in-progress commit or a `fixup!` commit needs none of it, since the rewrite replaces it, but the message that an `amend!` commit carries below its first line follows it all, since it replaces the message of its commit. Where a rule leaves a choice, the sections below say how to make it. Write from the rules, not from `git log`, whose older messages may predate them.
+`CLAUDE.md` > Workflow, "Commits" says what a commit holds, and [The rules of a commit message](#the-rules-of-a-commit-message) below states the rules of its message. This skill applies them to each commit that will be pushed, whether you write it at once or while you rewrite the branch before pushing. A work-in-progress commit or a `fixup!` commit needs none of it, since the rewrite replaces it, but the message that an `amend!` commit carries below its first line follows it all, since it replaces the message of its commit. Where a rule leaves a choice, the sections below say how to make it. Write from the rules, not from `git log`, whose older messages may predate them.
+
+## The rules of a commit message
+
+- **A commit header follows the commit style:** Conventional Commits, `<type>(<scope>): <subject>`, with a type among those of `CLAUDE.md` > Workflow, "Each piece of work has its own short-lived branch, `<type>/<topic>`, in its own worktree": `feat(domain): read the size of a pinned source in bytes`. A scope that would only repeat the type is left out, as in `ci: pin the checkout action`, and a breaking change adds `!` before the colon: `feat(domain)!: report word error rates as fractions`.
+- **A commit scope names where the change belongs:** the module, as its row of `docs/foundations.md` > Layers and modules names it, such as `domain`, `adapters`, `core` or `parakeet-tdt`, or else the area: `build` for the build, the gate and the tools' configuration, `ci` for the workflows, `docs` for `README.md`, `CREDITS.md` and a document of `docs/` that belongs to no single module, `rules` for `CLAUDE.md` and `.claude/rules/`, a skill's name for that skill and the agents it runs, and `project` for the repository's own files, such as the license, `.gitignore`, `.claude/settings.json` or the pull request template. A scope is in lowercase, and never a file name, a path or two scopes. The documents that a change must update go in its commit, under its scope. A change that spans two modules is usually two commits, and one that cannot be split takes the scope of the module or the area that owns the decision.
+- **A commit message says why.** The subject says what the change achieves, in the reader's terms, and not the files it touches, which the diff lists: in the imperative, in lowercase, acronyms and product names included, with a symbol keeping its own casing, without a final period, in a header of around 70 characters, so that it reads whole in a log. The body, after a blank line and wrapped at 72 columns, gives what the diff cannot show: the motivation and the behavior it replaces, the constraint, the observation or the rejected alternative. It never lists the changes: a body that restates the diff is noise. Only a change that speaks for itself goes without a body: a typo, a rename, a dependency bump.
+- **A commit footer holds only what tools read:** a breaking change, as `BREAKING CHANGE:` followed by what breaks and what its users must do, and the issues the commit closes, as `Closes #42`, never one that is not true. No other trailer, such as `Co-Authored-By`, `Generated with` or `Signed-off-by`: who typed a change says nothing of its reason.
 
 ## Draw the commits
 
-Each commit holds one reason to change ("Commits"), so that a reader can review it, revert it or find it with `git bisect` on its own.
+Each commit holds one reason to change (`CLAUDE.md` > Workflow, "Commits"), so that a reader can review it, revert it or find it with `git bisect` on its own.
 
 - **A subject that needs an "and"** usually holds two commits. Two unrelated fixes made the same afternoon are two commits.
 - **The test that pins a fix** goes in the commit of the fix, since every commit passes its own checks ("Commits").
-- **A correction to an earlier commit of the branch** is folded into it, as `.claude/skills/develop/SKILL.md` > Shape the history shows. The history describes the change that ships, not the path that found it.
+- **A correction to an earlier commit of the branch** is folded into it, as `.claude/skills/deliver-branch/SKILL.md` > Shape the history shows. The history describes the change that ships, not the path that found it.
 
 ## Choose the type
 
@@ -32,11 +39,11 @@ Take the type of the commit's dominant intention. When two seem to fit:
 | Undoes an earlier commit | the type of what the undoing does, such as `fix` when the undone commit broke something | `chore` |
 | The build, the dependencies, the tools' configuration, and the repository's own files that are not documents, such as `.gitignore` | `chore` | `ci`, `docs` |
 
-A breaking change keeps the type of what it does, and "Commits" says how its header shows it.
+A breaking change keeps the type of what it does, and "A commit header follows the commit style" says how its header shows it.
 
 ## Choose the scope
 
-Take the scope as `CLAUDE.md` > Workflow, "A commit scope names where the change belongs" says. Where it leaves a doubt:
+Take the scope as "A commit scope names where the change belongs" says. Where it leaves a doubt:
 
 - **A document that lives in a module,** such as its guide, takes the module's scope, not `docs`.
 - **A test** takes the scope of the code it pins.
@@ -102,7 +109,7 @@ transfer reported no error.
 
 ## Add the footer
 
-Write it as `CLAUDE.md` > Workflow, "A commit footer holds only what tools read" says, and never on a guess: a breaking change only when its users will meet it, an issue only when this commit closes it.
+Write it as "A commit footer holds only what tools read" says, and never on a guess: a breaking change only when its users will meet it, an issue only when this commit closes it.
 
 ```
 feat(domain)!: report word error rates as fractions
@@ -122,8 +129,8 @@ Closes #42
 
 Before committing, read the message against the rules:
 
-1. **The header** ("Commits"): one line, in the form of the project's style, with the type of [Choose the type](#choose-the-type) and the scope of [Choose the scope](#choose-the-scope).
+1. **The header** ("A commit header follows the commit style"): one line, in the form of the project's style, with the type of [Choose the type](#choose-the-type) and the scope of [Choose the scope](#choose-the-scope).
 2. **The subject** ("A commit message says why"): what the change achieves, not the files it touches, in the mood, the case, the punctuation and the length that the rule gives.
 3. **The body** ("A commit message says why"): laid out as the rule says, it says why and lists nothing that the diff shows. Without one, the change really speaks for itself.
 4. **The footer** ("A commit footer holds only what tools read"): what the rule requires, nothing that it excludes, and nothing untrue.
-5. **The checks:** nothing to run here: the commit passes what "Commits" asks of it, `scripts/check-commit.sh`, which `.claude/skills/develop/SKILL.md` > Shape the history runs on every commit at once, when the branch is shaped; the CI then runs the whole gate on the pull request, as `CLAUDE.md` > Workflow, "Run each check once, at its level" says.
+5. **The checks:** nothing to run here: the commit passes what `CLAUDE.md` > Workflow, "Commits" asks of it, `scripts/check-commit.sh`, which `.claude/skills/deliver-branch/SKILL.md` > Shape the history runs on every commit at once, when the branch is shaped; the CI then runs the whole gate on the pull request, as `CLAUDE.md` > Workflow, "Run each check once, at its level" says.
