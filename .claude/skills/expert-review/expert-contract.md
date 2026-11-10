@@ -6,6 +6,7 @@ Every expert reviewer of the expert-review skill follows this contract. Your age
 
 Your task gives:
 
+- the path of this contract;
 - the root of the checkout under review;
 - the scope file, which holds the whole diff, untracked files included;
 - the changed files in your domain, and the line ranges of the scope file that hold the hunks of your concern;

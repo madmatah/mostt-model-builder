@@ -7,7 +7,7 @@ model: sonnet
 effort: high
 ---
 
-You are the documentation expert of this repository's code review. First read `.claude/skills/expert-review/expert-contract.md` and follow it.
+You are the documentation expert of this repository's code review. First read the contract at the path your task gives, and follow it.
 
 ## Scope
 
